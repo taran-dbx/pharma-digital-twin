@@ -43,7 +43,7 @@ Code lives in `src/iot_twin/services/genai/`. The routes are in
 | `GENAI_MAX_RETRIES` | `1` | Retries cover timeouts, 429 and 5xx only. Permission, not-found and bad-request errors are not retried. |
 | `GENAI_MAX_CONCURRENT` | `2` | Plans generated at once, process-wide. |
 | `GENAI_USER_COOLDOWN_S` | `20` | Minimum gap between one person's requests. |
-| `GENAI_PSEUDONYM_SALT` | built-in, not secret | HMAC key for `person-<hex>` pseudonyms. Set it per deployment so pseudonyms cannot be reversed by hashing a list of logins. |
+| `GENAI_PSEUDONYM_SALT` | from the `genai-pseudonym-salt` secret resource | HMAC key (at least 16 characters) for `person-<16 hex>` pseudonyms. If it is not set, the app uses a random key persisted in Lakebase. See [People and free text](#people-and-free-text-pii). |
 | `GENAI_MLFLOW_TRACING` | off | Set to `1` and install `mlflow` to record a trace span per call. |
 
 ### Bounded endpoint calls
@@ -86,12 +86,22 @@ Results of `POST /api/alerts/{alert_id}/action-plan`:
 | `422` | A non-UUID id, unknown body fields, a bad `mode`, or a non-boolean `force`. |
 | `404` | The alert does not exist. |
 
+`GET /api/genai/status` (signed-in user) returns:
+
+* `pseudonym_key.source`: `secret`, `lakebase` or `redacted`;
+* `append_only_enforced`: `true`, `false`, or `null` without Lakebase;
+* the call limits in force.
+
 The POST body is optional: `{"mode": "realtime" | "microbatch" | "zerobus", "force": false}`.
 
 * `mode` picks the telemetry table for the readings window. Without it, the
   plan is grounded without readings, and that gap is recorded.
 * `force: true` regenerates even when the grounding is unchanged. The card's
   **Regenerate** button sends it.
+* **Reuse key.** A plan is reused only when all of these match: the grounding
+  hash, `PROMPT_TEMPLATE_VERSION` (now `v4`), the endpoint, and the grounding
+  checker version (`plan_schema.CHECKER_VERSION`, recorded in each answer).
+  After any prompt or checker change the next request therefore regenerates.
 
 ### Applying a plan
 
@@ -108,6 +118,17 @@ rules, whatever the UI does:
   signed `alert_response` and the `applied_*` update run in one transaction
   (`services/genai/apply.py`). If either fails, both roll back and the route
   returns `503`. The error says plainly that the decision was not recorded.
+
+  The decision store retries on un-upgraded tables, for example with the
+  legacy columns, or with the CNC-era action plus the real action stashed.
+  Each insert attempt therefore runs in its own savepoint
+  (`services/db/savepoint.py`), so a failed attempt does not abort the
+  enclosing transaction. The `applied_*` update works the same way.
+* **Audit table without the override column.** If the table was created
+  before `applied_override_reason` existed and its owner has not upgraded it:
+  * an apply without an override still works;
+  * an apply with an override returns `503`, with a message saying the owner
+    must run `ensure_app_schema`.
 
 ## Grounding and citations
 
@@ -136,9 +157,30 @@ becomes a recorded `grounding_gap`; it does not fail the request.
 ### People and free text (PII)
 
 * **The model never sees logins.** `acknowledged_by` and `recorded_by` become
-  stable pseudonyms (`person-<8 hex>`, an HMAC keyed by
-  `GENAI_PSEUDONYM_SALT`). Email addresses inside free text, such as reasons
-  and metadata, are replaced with `[email]`.
+  stable pseudonyms (`person-<16 hex>`, HMAC-SHA256). Email addresses inside
+  free text, such as reasons, metadata and dict keys, are replaced with
+  `[email]`.
+* **The pseudonym key never falls back to a constant.** It is resolved at boot,
+  in this order:
+  1. **`secret`:** `GENAI_PSEUDONYM_SALT`, injected from the
+     `genai-pseudonym-salt` app resource. This is a secret with `READ` on scope
+     `${var.secret_scope}` (default `pharma-twin-secrets`), key
+     `${var.genai_pseudonym_salt_key}`.
+  2. **`lakebase`:** a random 32-byte key generated once and stored in the
+     Lakebase `genai_settings` table. The app logs a warning at boot.
+  3. **`redacted`:** no key at all. Every person becomes `person`.
+
+  `GET /api/genai/status` shows which source is in use. Create the secret
+  before deploying the bundle:
+
+  ```bash
+  databricks secrets create-scope pharma-twin-secrets --profile <PROFILE>
+  databricks secrets put-secret pharma-twin-secrets genai-pseudonym-salt \
+    --string-value "$(openssl rand -hex 32)" --profile <PROFILE>
+  ```
+
+  Rotating the key changes every pseudonym. Earlier audit rows keep their old
+  pseudonyms; Lakebase still holds the real names.
 * **The UC mirror** also pseudonymises `requested_by` and `applied_by`.
 * **The Lakebase audit table** keeps the real `requested_by` and `applied_by`.
   It is the system of record for Part 11 traceability, and access to it is the
@@ -168,12 +210,27 @@ If the answer is not valid JSON or does not match the schema, the plan is
   * list counts;
   * a 0–1 score written as a percentage.
 
-  Numbers inside untrusted free text (notes, reasons, model names) are never
-  allowed values. Neither are numbers from the system prompt; only the
-  catalog rule row may carry numbers in text, such as `60 °C`. Fixed names
-  and references (`Spindle 3`, `CNC-1`, `21 CFR 820`, `ISO 13485`,
-  `Part 11`, `step 2`) are not quantities. Numbers inside identifiers,
-  dates and clock times are not checked either.
+  Further allowed values:
+  * numbers in the text of structured rows the claim cites: the catalog rule
+    (`60 °C`), and readings rows including bucket labels such as `T+30s`;
+  * numbers in the cited risk model's feature identifiers, for example
+    `spindle_temp_slope_5m` supports "the 5-minute slope";
+  * durations between timestamps in the cited rows, such as onset to opened or
+    opened to cleared. These are allowed in seconds with a ±1 s tolerance, and
+    in minutes and hours.
+
+  What still does not count:
+  * Numbers inside untrusted free text (notes, reasons, model names) are never
+    allowed values.
+  * Numbers from the system prompt are never allowed values.
+  * Fixed names and references (`Spindle 3`, `CNC-1`, `21 CFR 820`,
+    `ISO 13485`, `Part 11`, `rev C`, `5-axis`) are not quantities.
+  * Numbers inside identifiers, dates and clock times are not checked.
+
+  Hyphenated units count as numbers too, so `5-minute` is checked.
+* **A reference does not match.** "step N" must be a step in the plan.
+  "version N" and "vN" must match a cited row's or the risk model's
+  `model_version`.
 * **A lot id or serial is not a lot row's.** Every `TM-HS12-…` id must match a
   lot row's `lot_id` or `parts_at_risk`, whether it appears in the disposition
   lists or anywhere in the text.
@@ -182,6 +239,10 @@ If the answer is not valid JSON or does not match the schema, the plan is
 
 A failing plan is still shown, with a warning badge and the reasons. It cannot
 be applied without an override (see [Applying a plan](#applying-a-plan)).
+
+The rules are versioned (`CHECKER_VERSION`). To re-check every saved plan
+under the current rules, offline, run
+`python scripts/genai_recheck_evidence.py --markdown`.
 
 ## Audit schema (Part 11-style traceability)
 
@@ -207,6 +268,15 @@ The Lakebase table is `genai_action_plan_audit`. It is created by
 allows an `UPDATE` only while `applied_at` is NULL, and only to set the
 `applied_*` columns. Every attempt is a row, including timeouts and malformed
 answers.
+
+The trigger protects against the app and other non-owner roles. **The table
+owner can still drop or disable it**, for example with
+`ALTER TABLE … DISABLE TRIGGER`, and a superuser can bypass it. Restrict
+ownership accordingly. To detect a missing or disabled trigger:
+
+* `GET /api/genai/status` reports `append_only_enforced` (it reads
+  `pg_trigger`);
+* the app logs a boot warning when the trigger is missing or disabled.
 
 There are two ownership pitfalls:
 
@@ -247,11 +317,15 @@ never deletes the table.
 `intelligence_genai_audit` is now part of every Genie space's expected table
 set (`reference_tables()`).
 
-* **Creating the table.** It is created with the other `intelligence_*` tables
-  at app boot, by the alert-snapshot and AI-audit sync loops, and by the admin
-  intelligence sync (`POST /api/admin/intelligence/sync`).
+* **Creating the table.** At boot, the alert-snapshot and AI-audit sync loops
+  create it with the other `intelligence_*` tables, but only when audit sync is
+  configured: `UC_CATALOG`, `UC_SCHEMA`, `DATABRICKS_SQL_WAREHOUSE_ID` and
+  `GENIE_SPACE_ID` must all be set. Otherwise the loops stay disabled, and the
+  table is created only by the admin intelligence sync
+  (`POST /api/admin/intelligence/sync`).
 * **New spaces.** Creating a new space requires every `intelligence_*` table,
-  including this one, to exist, the same as before.
+  including this one, to exist. If it is missing, creation fails with the
+  intelligence-sync hint, so run the admin sync first.
 * **Existing spaces.** An existing space without the table stays authorized,
   because the table is listed in `genie_service.OPTIONAL_SPACE_TABLES`. The
   Genie status reports it in `missing_optional_tables`, and the app logs a
@@ -259,8 +333,8 @@ set (`reference_tables()`).
 
 To upgrade an existing space:
 
-1. Deploy the app and let it boot, or run the admin intelligence sync, so the
-   UC table exists.
+1. Make sure the UC table exists. Either boot the app with audit sync
+   configured, or run the admin intelligence sync.
 2. Re-provision each pipeline's space with
    `POST /api/admin/pipelines/{setup_id}/genie/{mode}`, or redeploy the
    pipeline; its deploy hook updates the space in place. Either way, the new
@@ -274,16 +348,17 @@ To upgrade an existing space:
    and the schema. `[TRUSTED_CONTEXT]` holds only app-controlled values: the
    allowed citation ids, owner roles, response actions and gaps. Every row goes
    in `[UNTRUSTED_GROUNDING]` and is labelled as data, not instructions.
-2. **Normalisation, then defanging.** Untrusted strings are processed in this
-   order (`redact.clean_text`):
+2. **Normalisation, then defanging.** Every untrusted string is cleaned in
+   `redact.clean_text`, and that includes dict keys:
    1. NFKC-normalised, so full-width `［` becomes `[`;
    2. stripped of zero-width and bidi control characters;
    3. any `[TRUSTED_CONTEXT]`, `[UNTRUSTED_GROUNDING]` or
       `[UNTRUSTED_OBSERVATIONS]` tag is rewritten;
    4. email addresses are redacted.
 
-   The rendered block is defanged again as a whole. Look-alike tags therefore
-   cannot close the block.
+   The rendered block then gets one more tag-only pass. That pass does not
+   re-normalise, so clean values such as `µm` or `10⁻³` reach the model
+   unchanged. Look-alike tags cannot close the block.
 3. **Bounded data.** Free text is clipped to 500 characters. Readings are capped
    at 120 buckets, events at 50, and top features at 10.
 4. **Output is checked against the input.** Fabricated citations, numbers or

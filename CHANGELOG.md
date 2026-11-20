@@ -28,6 +28,21 @@ All notable changes to this project are documented here. The format follows
   - People appear as pseudonyms in the grounding and the UC mirror.
   - Untrusted text is NFKC-normalised, then defanged.
   - Numbers are checked against each claim's own citations.
+- Second round of AI action-plan hardening:
+  - Plan-linked signing works on un-upgraded `alert_response` tables. Each
+    insert attempt runs in a savepoint inside the signing transaction.
+  - New secret resource `genai-pseudonym-salt` (scope `pharma-twin-secrets`) for
+    the pseudonym key. Without it, the app persists a random key in Lakebase
+    `genai_settings`. There is never a constant key.
+  - Pseudonyms are now 16 hex characters.
+  - New `GET /api/genai/status` reports the key source, whether the audit is
+    append-only, and the call limits.
+  - Prompt template is now `v4`. The plan-reuse key includes the
+    grounding-checker version.
+  - Checker: durations between cited timestamps, numbers from structured text
+    and model feature names, and hyphenated units are now handled. Step and
+    version references are checked.
+  - New `scripts/genai_recheck_evidence.py` re-checks every saved plan.
 
 - Declarative Automation Bundle (`databricks.yml`, `resources/app.yml`) with `dev` and
   `prod` targets and variable-driven configuration.

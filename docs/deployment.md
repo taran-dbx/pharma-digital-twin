@@ -91,6 +91,7 @@ checked against `databricks.yml` by `tests/test_bundle_config.py`.
 | `warehouse_id` | `sql-warehouse` resource (CAN_USE) → `DATABRICKS_SQL_WAREHOUSE_ID` via `value_from` | |
 | `genie_space_id` | `genie-space` resource (CAN_VIEW) → `GENIE_SPACE_ID` via `value_from` | |
 | `genai_endpoint` | `genai-endpoint` serving-endpoint resource (CAN_QUERY) → `GENAI_ENDPOINT` via `value_from` | Default `databricks-claude-sonnet-5-5`; any READY chat endpoint works. Upgrading adds the UC table `intelligence_genai_audit` to the Genie allowlist. Re-provision existing Genie spaces afterwards. See [genai-action-plan.md](genai-action-plan.md#genie-upgrade) |
+| `secret_scope`, `genai_pseudonym_salt_key` | `genai-pseudonym-salt` secret resource (READ) → `GENAI_PSEUDONYM_SALT` via `value_from` | Defaults `pharma-twin-secrets` / `genai-pseudonym-salt`. **Create the secret before deploying** (`databricks secrets put-secret pharma-twin-secrets genai-pseudonym-salt --string-value "$(openssl rand -hex 32)"`). Without it the app uses a random key persisted in Lakebase. See [genai-action-plan.md](genai-action-plan.md#people-and-free-text-pii) |
 | `lakebase_project`, `lakebase_branch`, `lakebase_database` | `lakebase` Postgres resource (CAN_CONNECT_AND_CREATE), `LAKEBASE_PROJECT`, `LAKEBASE_ENDPOINT` | |
 | `pghost` | `PGHOST` | Not injected by the Postgres resource; keep as a variable |
 | `pipelines_lakebase_project` | `PIPELINES_LAKEBASE_PROJECT` | |
