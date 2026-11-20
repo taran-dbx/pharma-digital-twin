@@ -43,12 +43,15 @@ deployment id.
 rule re-opens, so episodes are keyed by alert id plus the `opened_at` carried in every
 lifecycle event (`alert_event.payload`), exactly as the alert history is.
 
-**Onset.** The **first over-limit reading** the alert engine saw for the excursion
-(`excursion_started_at`). The engine stamps it on the alert row's `metadata` (the live
-episode) and on the `opened` event (every episode, since the row is reused on re-open). When
-neither has it, e.g. for events written before it was recorded, **onset = `alert.opened_at −
-rule.duration_s`** (shown as "est." in the table). This is the same onset the live cell uses
-for its containment window. Onset is never later than `opened_at`.
+**Onset.** `excursion_started_at`, as the alert engine stamps it when the alert opens: the
+**first violating reading's device time** (`timestamp` or `event_time`). If that is missing or
+falls outside `[opened_at − (rule.duration_s + 120 s), opened_at]`, the engine uses its own
+first-violation clock, but never later than `opened_at − rule.duration_s`. The stamp is written
+to the alert row's `metadata`, which belongs to the current episode and is replaced on reopen, and
+also to the episode's `opened` event, so earlier episodes keep their own onset. The views read
+the event copy first and the row for the current episode. They apply the same bound, and fall
+back to **`opened_at − rule.duration_s`** (shown as "est.") when the stamp is missing or out of
+bounds. This is the onset the live cell uses for its containment window.
 
 **Containment window.** Onset → `cleared_at`, or the `request_cmm_inspection` decision if that
 came first (it stops the mill, so no more parts are cut), or the window end while the excursion
@@ -147,8 +150,8 @@ always sums to the cost used.
   MRB may disposition some parts use-as-is, which lowers the true exposure.
 * **Projected RFT is not FPY.** It counts parts at risk, not measured nonconformances; CMM
   results would replace it.
-* **TTD depends on onset quality.** Onset is the engine's clock when it first saw the
-  over-limit reading, so TTD is the rule's sustain time plus evaluation lag, not producer-to-app
-  latency. Excursions with a rule-duration onset (marked "est.") show the configured debounce.
+* **TTD depends on onset quality.** With a device-time onset, TTD includes the pipeline's
+  delivery latency and the rule's sustain time. Excursions with a rule-duration onset (marked
+  "est.") show only the configured debounce.
 * **Window caps.** At most 500 excursions are read per request; TTD/TTA samples are capped at 200.
 * **No persistence of overrides.** Edited assumptions live in the browser session only.

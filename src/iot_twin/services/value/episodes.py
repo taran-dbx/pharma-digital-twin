@@ -8,10 +8,11 @@ into SQL.
 
 Definitions (see docs/value-model.md):
 
-* **onset** — the first over-limit reading the alert engine saw
-  (``excursion_started_at``: on the ``opened`` event, or on the alert row's
-  metadata for its current episode); when unknown, ``opened_at -
-  rule.duration_s``. Never later than ``opened_at``.
+* **onset** — ``excursion_started_at`` as the alert engine stamps it (the
+  first violating reading's device time, bounded to ``[opened_at -
+  (duration_s + DETECT_LOOKBACK_S), opened_at]``), read from the ``opened``
+  event or, for the row's current episode, its metadata. Missing or out of
+  bounds → ``opened_at - rule.duration_s``.
 * **containment window** — onset → ``cleared_at``, or the ``request_cmm_inspection``
   decision if earlier (it stops the mill, so no more parts are cut); the window end
   while still open.
@@ -35,6 +36,7 @@ from typing import Any
 
 from iot_twin.domain.catalog import list_alert_rules
 from iot_twin.domain.lot_context import LOT_CYCLE_S, PARTS_PER_LOT, lot_disposition, lot_id_at
+from iot_twin.services.alerts.alert_engine import DETECT_LOOKBACK_S
 
 logger = logging.getLogger(__name__)
 
@@ -255,10 +257,14 @@ class Episode:
 def episode_from_row(row: Mapping[str, Any], industry: str, window_end: datetime) -> Episode:
     """Build an episode, resolving onset as documented in the module docstring."""
     opened_at = _utc(row["episode_opened_at"])
+    duration = rule_duration_s(industry, row.get("rule_id"))
     onset = _parse_iso(row.get("onset_raw"))
     source = "first_reading"
-    if onset is None:
-        onset = opened_at - timedelta(seconds=rule_duration_s(industry, row.get("rule_id")))
+    # Same trust bound the engine applies when it stamps the onset, so stamps
+    # written by older builds resolve the same way.
+    earliest = opened_at - timedelta(seconds=duration + DETECT_LOOKBACK_S)
+    if onset is None or not earliest <= onset <= opened_at:
+        onset = opened_at - timedelta(seconds=duration)
         source = "rule_duration"
     threshold = row.get("threshold")
     peak = row.get("peak_value")

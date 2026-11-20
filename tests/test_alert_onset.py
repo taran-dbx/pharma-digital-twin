@@ -33,12 +33,15 @@ def _rule(duration_s: float):
     return replace(base, duration_s=duration_s)
 
 
-def _reading(value: float) -> dict:
-    return {
+def _reading(value: float, timestamp: str | None = None) -> dict:
+    reading = {
         "sensor_id": "mfg-sns-cnc_1_spindle_temp",
         "sensor_name": "cnc_1_spindle_temp",
         "value": value,
     }
+    if timestamp is not None:
+        reading["timestamp"] = timestamp
+    return reading
 
 
 class TestOpenedEventOnset:
@@ -54,6 +57,20 @@ class TestOpenedEventOnset:
         assert opened[0].event_type == "alert_opened"
         assert opened[0].extra[EXCURSION_STARTED_KEY] == START.isoformat()
         assert opened[0].alert.metadata[EXCURSION_STARTED_KEY] == START.isoformat()
+
+    @pytest.mark.asyncio
+    async def test_device_time_copied_to_event_c7958_smoke(self) -> None:
+        """[C7958][smoke] The event copy is the same bounded device-time stamp as the row."""
+        clock = Clock()
+        engine = AlertEngine(now_fn=clock)
+        rule = _rule(10.0)
+        device = START - timedelta(seconds=3)
+        await engine.evaluate([_reading(90, device.isoformat())], [rule], industry="manufacturing")
+        clock.instant = START + timedelta(seconds=10)
+        opened = await engine.evaluate([_reading(91)], [rule], industry="manufacturing")
+        stamp = opened[0].alert.metadata[EXCURSION_STARTED_KEY]
+        assert stamp == device.isoformat()
+        assert opened[0].extra[EXCURSION_STARTED_KEY] == stamp
 
     @pytest.mark.asyncio
     async def test_in_limit_reading_restarts_onset_c7956_regression(self) -> None:

@@ -524,6 +524,7 @@ class TestDurableSignedRecords:
         record = resp.json()["response"]
         assert record["signature_meaning"] == "legacy-unsigned"
         assert record["reason"] == "Recorded by a legacy client without a signature"
+        assert record["signature"] is None
         new = await client.post(f"/api/alerts/{alert_id}/responses", json={"action": "open_ncr"})
         assert new.status_code == 422
         forged = await client.post(
@@ -531,3 +532,45 @@ class TestDurableSignedRecords:
             json={"action": "open_ncr", "reason": "x", "signature_meaning": "legacy-unsigned"},
         )
         assert forged.status_code == 422
+
+
+@pytest.mark.asyncio
+class TestHoldAcrossUpgrade:
+    async def _alert(self):
+        engine = AlertEngine(now_fn=Clock(datetime(2026, 10, 20, 13, 48, 52, tzinfo=UTC)))
+        return (
+            await engine.evaluate(
+                [{**SPINDLE, "value": 66.3}], [_instant_spindle_rule()], industry="manufacturing"
+            )
+        )[0].alert
+
+    async def test_hold_stored_before_the_upgrade_is_not_duplicated_c7839_defect(self) -> None:
+        """[C7839][defect] quarantine_lot after the upgrade finds the pre-upgrade hold_batch row."""
+        alert = await self._alert()
+        store = AlertResponseStore()
+        audit = ResponseAudit(reason="excursion", signature_meaning="responsible")
+        stale = StaleCheckDb()
+        held, created = await store.record(alert, "quarantine_lot", "qa@x", db=stale, audit=audit)
+        assert (created, stale.rows[0]["action"]) == (True, "hold_batch")
+
+        upgraded = FakeResponseDb()
+        upgraded.rows = stale.rows  # same table, CHECK now current
+        again, created_again = await store.record(
+            alert, "quarantine_lot", "other@x", db=upgraded, audit=audit
+        )
+        assert created_again is False
+        assert again.id == held.id
+        assert again.action == "quarantine_lot"
+        assert len(upgraded.rows) == 1
+
+    async def test_genuine_legacy_hold_is_returned_as_hold_batch_c7839_regression(self) -> None:
+        """[C7839][regression] A legacy client's hold_batch counts as the episode's QA hold."""
+        alert = await self._alert()
+        store = AlertResponseStore()
+        db = FakeResponseDb()
+        legacy = ResponseAudit(reason="legacy", signature_meaning="legacy-unsigned")
+        await store.record(alert, "hold_batch", "old-client", db=db, audit=legacy)
+        audit = ResponseAudit(reason="excursion", signature_meaning="responsible")
+        hold, created = await store.record(alert, "quarantine_lot", "qa@x", db=db, audit=audit)
+        assert (created, hold.action, len(db.rows)) == (False, "hold_batch", 1)
+        assert hold.signature() is None  # legacy-unsigned prints no signature line

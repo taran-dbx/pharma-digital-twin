@@ -97,14 +97,17 @@ class TestDefinitions:
         assert ep.onset_source == "rule_duration"
         assert ep.time_to_detect_s == duration
 
-    def test_onset_never_after_opened_c7926_regression(self) -> None:
-        """[C7926][regression] A skewed reading clock cannot put onset after the alert opened."""
+    @pytest.mark.parametrize("offset_s", [9, -10_000])
+    def test_out_of_bounds_onset_falls_back_c7926_regression(self, offset_s) -> None:
+        """[C7926][regression] A stamp after opening or beyond the lookback uses the rule duration."""
         opened = LOT_START + timedelta(seconds=30)
         ep = episode_from_row(
-            _row(onset_raw=(opened + timedelta(seconds=9)).isoformat()), "manufacturing", opened
+            _row(onset_raw=(opened + timedelta(seconds=offset_s)).isoformat()),
+            "manufacturing",
+            opened,
         )
-        assert ep.onset_at == opened
-        assert ep.time_to_detect_s == 0
+        assert ep.onset_source == "rule_duration"
+        assert ep.time_to_detect_s == rule_duration_s("manufacturing", SPINDLE_RULE)
 
     def test_unknown_rule_duration_is_zero_c7927_regression(self) -> None:
         """[C7927][regression] An unknown rule or industry contributes no debounce."""
