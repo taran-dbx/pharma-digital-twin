@@ -1,0 +1,75 @@
+# ── Python ────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+# The committed React bundle MUST stay tracked: `databricks sync` honours
+# gitignore patterns, so ignoring static/dist would ship an app with no UI.
+!static/dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# ── Virtual environments ──────────────────────────────────────────────────
+.venv/
+venv/
+
+# ── Environment / secrets ─────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Node ──────────────────────────────────────────────────────────────────
+node_modules/
+
+# ── Playwright / QA output ────────────────────────────────────────────────
+test-results/
+playwright-report/
+blob-report/
+qa-reports/
+
+# ── Workspace deployment profiles ─────────────────────────────────────────
+# Real profiles hold workspace-specific values; commit only *.profile.example.
+deploy/workspaces/*.profile
+
+# ── Databricks ────────────────────────────────────────────────────────────
+.databricks/
+.databricks-resources.json
+
+# ── Agent / IDE tooling ───────────────────────────────────────────────────
+.cursor/
+.superpowers/
+.isaac/
+.claude/
+.claude-terminal
+.agents/
+.polly/
+.idea/
+.vscode/
+*.swp
+skills-lock.json
+
+# ── OS ────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Logs ──────────────────────────────────────────────────────────────────
+*.log
+
+# ── Project-specific ──────────────────────────────────────────────────────
+screenshots/
+docs/architecture/*.architecture.html
+# Design-reference mockups — kept on disk as reference, out of the repo.
+mockups/
+# Local design mockups, agent brainstorm notes; never committed.
+/brainstorming/
+# Anchored with a leading slash so only a top-level notebooks/ scratch dir is
+# excluded; src/iot_twin/assets/ (lakets.sql) stays tracked.
+# NOTE: the LakeTS ops notebooks are inlined in
+# src/iot_twin/services/lakets/lakets_deploy_service.py, not read from disk.
+/notebooks/
+capture_screenshots.py

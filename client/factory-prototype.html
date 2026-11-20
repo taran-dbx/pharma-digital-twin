@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta id="factory-theme-color" name="theme-color" content="#f7f7f7" />
+    <script>
+      (() => {
+        let preference = "system";
+        try {
+          const stored = localStorage.getItem("factory-twin-theme");
+          if (stored === "light" || stored === "dark" || stored === "system") {
+            preference = stored;
+          }
+        } catch {
+          // Storage may be unavailable; follow the operating-system theme.
+        }
+        const resolved =
+          preference === "system"
+            ? matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light"
+            : preference;
+        document.documentElement.classList.add(resolved);
+        document.documentElement.dataset.theme = resolved;
+        document.documentElement.dataset.themePreference = preference;
+        document.documentElement.style.colorScheme = resolved;
+        document.getElementById("factory-theme-color").content =
+          resolved === "dark" ? "#11171c" : "#f7f7f7";
+      })();
+    </script>
+    <title>ForgeLine — Manufacturing Twin Prototype</title>
+  </head>
+  <body>
+    <div id="factory-prototype-root"></div>
+    <script type="module" src="/src/factory-prototype-entry.tsx"></script>
+  </body>
+</html>

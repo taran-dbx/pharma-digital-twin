@@ -1,0 +1,13 @@
+{
+  "app_name": "iot-twin-dev-example",
+  "uc_catalog": "example-catalog",
+  "warehouse_id": "0123456789abcdef",
+  "genie_space_id": "00000000000000000000000000000000",
+  "lakebase_project": "iot-app-backend-example",
+  "pghost": "example-lakebase.database.us-east-1.cloud.databricks.com",
+  "pipelines_lakebase_project": "iot-pipelines-example",
+  "msk_bootstrap_servers": "b-1-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198,b-2-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198,b-3-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198",
+  "zerobus_server_endpoint": "111111111111111.zerobus.us-east-1.cloud.databricks.com",
+  "zerobus_client_id": "00000000-0000-0000-0000-00000000000b",
+  "uc_service_credential": "iot-rtm-sc"
+}

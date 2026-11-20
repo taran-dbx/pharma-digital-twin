@@ -1,0 +1,24 @@
+# gitleaks configuration: the default ruleset plus narrow, documented
+# allowlists for known false positives. Keep entries specific.
+#
+# The tracked tree is also meant to pass the stock default rules with no
+# allowlist at all (external scanners use the defaults); CI and pre-commit
+# enforce that with .gitleaks-default.toml. The allowlists below only matter
+# for older history scanned by `gitleaks git`.
+title = "iot-digital-twin gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Generated, minified React bundle; its sources under client/src are scanned."
+paths = ['''^static/dist/''']
+
+[[allowlists]]
+description = "generic-api-key false positives: chart dataKey props and a step `key` argument."
+targetRules = ["generic-api-key"]
+regexTarget = "match"
+regexes = [
+  '''dataKey\s*[=:]\s*["'][A-Za-z0-9_]+["']''',
+  '''\bkey,\s*preserve_failed\b''',
+]

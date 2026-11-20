@@ -1,0 +1,306 @@
+{
+ "config": {
+  "sample_questions": [
+   {
+    "id": "1432163f2de56d56cfb3196271d8cc6b",
+    "question": [
+     "Which fault codes or sensors had active faults most often this week?"
+    ]
+   },
+   {
+    "id": "2d5437984f3748525071bd64d7458bbc",
+    "question": [
+     "Which assets with recent faults are due for maintenance?"
+    ]
+   },
+   {
+    "id": "2eb6fe7d6cbfd8b9f5407c59338d1efa",
+    "question": [
+     "Which sensors had the most anomalies (values outside min/max) in the last hour?"
+    ]
+   },
+   {
+    "id": "32009e96582fc0c61dee679b5fddffa7",
+    "question": [
+     "How many minutes of downtime did each sensor have today?"
+    ]
+   },
+   {
+    "id": "4598b78c3d17344ad83d8092fa5b619e",
+    "question": [
+     "How has the anomaly rate trended per hour over the last day?"
+    ]
+   },
+   {
+    "id": "5eb7b4918d765086574a99418b70f9a5",
+    "question": [
+     "What is the approximate OEE per sensor over the last 24 hours?"
+    ]
+   },
+   {
+    "id": "ec6090ddc30fbda5c2552a73de2de8ea",
+    "question": [
+     "What is the average micro-batch trigger duration and throughput over the last hour?"
+    ]
+   }
+  ]
+ },
+ "data_sources": {
+  "tables": [
+   {
+    "identifier": "cat.sch.intelligence_alert_rules"
+   },
+   {
+    "identifier": "cat.sch.intelligence_alert_snapshot"
+   },
+   {
+    "identifier": "cat.sch.intelligence_assets"
+   },
+   {
+    "identifier": "cat.sch.intelligence_maintenance_records"
+   },
+   {
+    "identifier": "cat.sch.intelligence_sensor_bindings"
+   },
+   {
+    "identifier": "cat.sch.manufacturing_metrics"
+   },
+   {
+    "column_configs": [
+     {
+      "column_name": "event_time",
+      "description": [
+       "Reading timestamp (UTC). Use for all time windows."
+      ]
+     },
+     {
+      "column_name": "fault_active",
+      "description": [
+       "TRUE while the machine/sensor reports an active fault (downtime)."
+      ],
+      "synonyms": [
+       "fault",
+       "down",
+       "stopped",
+       "alarm"
+      ]
+     },
+     {
+      "column_name": "max_value",
+      "description": [
+       "Upper bound of the normal operating range."
+      ]
+     },
+     {
+      "column_name": "min_value",
+      "description": [
+       "Lower bound of the normal operating range."
+      ]
+     },
+     {
+      "column_name": "nominal_value",
+      "description": [
+       "Design/target value. Used for the OEE performance factor."
+      ],
+      "synonyms": [
+       "target",
+       "setpoint"
+      ]
+     },
+     {
+      "column_name": "sensor_name",
+      "description": [
+       "Sensor identifier; one row per reading."
+      ],
+      "enable_entity_matching": true,
+      "enable_format_assistance": true,
+      "synonyms": [
+       "sensor",
+       "tag",
+       "signal"
+      ]
+     },
+     {
+      "column_name": "sensor_type",
+      "description": [
+       "Measurement kind, e.g. temperature, vibration, pressure."
+      ],
+      "enable_entity_matching": true,
+      "enable_format_assistance": true
+     },
+     {
+      "column_name": "value",
+      "description": [
+       "Measured value in `unit`."
+      ],
+      "synonyms": [
+       "reading",
+       "measurement"
+      ]
+     }
+    ],
+    "identifier": "cat.sch.manufacturing_microbatch"
+   }
+  ]
+ },
+ "instructions": {
+  "example_question_sqls": [
+   {
+    "id": "79f6a19ccda63b69e210020b3225a992",
+    "question": [
+     "How many minutes of downtime did each sensor have in the last 24 hours?"
+    ],
+    "sql": [
+     "SELECT sensor_name, COUNT(DISTINCT date_trunc('minute', event_time)) AS downtime_minutes FROM cat.sch.manufacturing_microbatch WHERE fault_active AND event_time >= current_timestamp() - INTERVAL 24 HOURS GROUP BY sensor_name ORDER BY downtime_minutes DESC"
+    ]
+   },
+   {
+    "id": "c02abf48a51448b909f21a22d98a9e3b",
+    "question": [
+     "What is the approximate OEE per sensor over the last 24 hours?"
+    ],
+    "sql": [
+     "WITH m AS (SELECT sensor_name, COUNT(DISTINCT date_trunc('minute', event_time)) AS observed_min, COUNT(DISTINCT CASE WHEN fault_active THEN date_trunc('minute', event_time) END) AS fault_min, AVG(CASE WHEN nominal_value > 0 THEN LEAST(value / nominal_value, 1) END) AS performance, AVG(CASE WHEN min_value IS NULL OR max_value IS NULL THEN NULL WHEN value BETWEEN min_value AND max_value THEN 1.0 ELSE 0.0 END) AS quality FROM cat.sch.manufacturing_microbatch WHERE event_time >= current_timestamp() - INTERVAL 24 HOURS GROUP BY sensor_name) SELECT sensor_name, ROUND(100 * (1 - fault_min / observed_min), 2) AS availability_pct, ROUND(100 * performance, 2) AS performance_pct, ROUND(100 * quality, 2) AS quality_pct, ROUND(100 * (1 - fault_min / observed_min) * COALESCE(performance, 1) * COALESCE(quality, 1), 2) AS oee_pct FROM m ORDER BY oee_pct ASC"
+    ]
+   },
+   {
+    "id": "c3df5a7b1ece19bb383523aaae137397",
+    "question": [
+     "What is the streaming throughput and p99 latency over the last hour?"
+    ],
+    "sql": [
+     "SELECT date_trunc('minute', timestamp) AS minute, AVG(processed_rps) AS processed_rps, MAX(e2e_p99) AS e2e_p99_ms FROM cat.sch.manufacturing_metrics WHERE mode = 'microbatch' AND timestamp >= current_timestamp() - INTERVAL 1 HOUR GROUP BY 1 ORDER BY 1"
+    ]
+   },
+   {
+    "id": "c6b6a030b4ad820f93c03b79c60d7346",
+    "question": [
+     "Which sensors had the most anomalies in the last hour?"
+    ],
+    "sql": [
+     "SELECT sensor_name, COUNT(*) AS anomalies, MIN(value) AS min_seen, MAX(value) AS max_seen FROM cat.sch.manufacturing_microbatch WHERE (value < min_value OR value > max_value) AND event_time >= current_timestamp() - INTERVAL 1 HOUR GROUP BY sensor_name ORDER BY anomalies DESC"
+    ]
+   },
+   {
+    "id": "f86253366686ebe18ab71c5c71667ee5",
+    "question": [
+     "Which assets had the most faults this week and when were they last maintained?"
+    ],
+    "sql": [
+     "WITH faults AS (SELECT sensor_name, COUNT(*) AS fault_readings FROM cat.sch.manufacturing_microbatch WHERE fault_active AND event_time >= current_timestamp() - INTERVAL 7 DAYS GROUP BY sensor_name) SELECT b.asset_id, SUM(f.fault_readings) AS fault_readings, MAX(r.completed_at) AS last_maintenance FROM faults f JOIN cat.sch.intelligence_sensor_bindings b ON b.sensor_name = f.sensor_name AND b.industry = 'manufacturing' LEFT JOIN cat.sch.intelligence_maintenance_records r ON r.asset_id = b.asset_id AND r.industry = 'manufacturing' GROUP BY b.asset_id ORDER BY fault_readings DESC"
+    ]
+   }
+  ],
+  "sql_snippets": {
+   "expressions": [
+    {
+     "alias": "reading_minute",
+     "display_name": "Reading minute",
+     "id": "cabaaf661266c16d909335da62c5d4ce",
+     "sql": [
+      "date_trunc('minute', manufacturing_microbatch.event_time)"
+     ]
+    },
+    {
+     "alias": "deviation_from_nominal",
+     "display_name": "Deviation from nominal",
+     "id": "e6121ec87f73fc39205a0e007e68c0e9",
+     "sql": [
+      "manufacturing_microbatch.value - manufacturing_microbatch.nominal_value"
+     ]
+    }
+   ],
+   "filters": [
+    {
+     "display_name": "Last 24 hours",
+     "id": "0e583630f19257ee49d08686ed785d18",
+     "sql": [
+      "manufacturing_microbatch.event_time >= current_timestamp() - INTERVAL 24 HOURS"
+     ]
+    },
+    {
+     "display_name": "Anomalous reading",
+     "id": "aae0b9841c4d0613f89cd6e8230c2655",
+     "sql": [
+      "(manufacturing_microbatch.value < manufacturing_microbatch.min_value OR manufacturing_microbatch.value > manufacturing_microbatch.max_value)"
+     ],
+     "synonyms": [
+      "out of range",
+      "anomaly"
+     ]
+    },
+    {
+     "display_name": "Fault active (downtime)",
+     "id": "e5bd6db0fa35fbba17aa5d04da1c1cb2",
+     "sql": [
+      "manufacturing_microbatch.fault_active = TRUE"
+     ],
+     "synonyms": [
+      "down",
+      "faulted",
+      "stopped"
+     ]
+    }
+   ],
+   "measures": [
+    {
+     "alias": "anomaly_rate_pct",
+     "display_name": "Anomaly rate %",
+     "id": "d62202f103fe09a068c8a2005157a453",
+     "sql": [
+      "100 * AVG((CASE WHEN manufacturing_microbatch.min_value IS NULL OR manufacturing_microbatch.max_value IS NULL THEN NULL WHEN manufacturing_microbatch.value < manufacturing_microbatch.min_value OR manufacturing_microbatch.value > manufacturing_microbatch.max_value THEN 1.0 ELSE 0.0 END))"
+     ],
+     "synonyms": [
+      "out of range rate"
+     ]
+    },
+    {
+     "alias": "fault_rate_pct",
+     "display_name": "Fault rate %",
+     "id": "ece0d018cebbca63354ab3e1988a9c9c",
+     "sql": [
+      "100 * AVG(CASE WHEN manufacturing_microbatch.fault_active THEN 1.0 ELSE 0.0 END)"
+     ],
+     "synonyms": [
+      "downtime rate",
+      "fault ratio"
+     ]
+    },
+    {
+     "alias": "availability_pct",
+     "display_name": "Availability % (reading-based)",
+     "id": "f49c7cc4798ac93747fe76960ee5c7d7",
+     "sql": [
+      "100 * (1 - AVG(CASE WHEN manufacturing_microbatch.fault_active THEN 1.0 ELSE 0.0 END))"
+     ],
+     "synonyms": [
+      "availability",
+      "uptime"
+     ]
+    }
+   ]
+  },
+  "text_instructions": [
+   {
+    "content": [
+     "This space covers ONE manufacturing micro-batch pipeline. Sensor telemetry is in cat.sch.manufacturing_microbatch (one row per reading). Streaming throughput/latency metrics are in cat.sch.manufacturing_metrics. Asset, sensor-binding, maintenance, alert-rule and alert-snapshot reference data is in the intelligence_* tables.\n",
+     "Downtime = time intervals where manufacturing_microbatch.fault_active is TRUE. Approximate downtime minutes as the count of distinct minutes (date_trunc('minute', manufacturing_microbatch.event_time)) with at least one fault_active reading.\n",
+     "Availability = 1 - (fault minutes / observed minutes), where observed minutes are distinct minutes with any reading. Report as a percentage.\n",
+     "Performance = AVG(LEAST(manufacturing_microbatch.value / manufacturing_microbatch.nominal_value, 1)) for readings with nominal_value > 0 (how close output runs to its nominal rate).\n",
+     "Quality = share of readings with manufacturing_microbatch.value BETWEEN manufacturing_microbatch.min_value AND manufacturing_microbatch.max_value.\n",
+     "OEE (approximation) = Availability x Performance x Quality. Always say it is an approximation derived from sensor telemetry, not production counts.\n",
+     "Anomaly = a reading where manufacturing_microbatch.value < manufacturing_microbatch.min_value OR manufacturing_microbatch.value > manufacturing_microbatch.max_value. Ignore rows where min_value or max_value is NULL.\n",
+     "The intelligence_* tables hold several industries: ALWAYS filter every intelligence_* table with industry = 'manufacturing'.\n",
+     "Bridge from telemetry to reference data: manufacturing_microbatch.sensor_name = intelligence_sensor_bindings.sensor_name, then intelligence_sensor_bindings.sensor_id = intelligence_alert_rules.sensor_id or intelligence_alert_snapshot.sensor_id (fault codes, thresholds, severity, alert status). intelligence_sensor_bindings.asset_id links to intelligence_assets and intelligence_maintenance_records.\n",
+     "Faults: report fault_active readings and use the bridge above for fault codes and severity.\n",
+     "Maintenance: use intelligence_maintenance_records joined to intelligence_sensor_bindings on asset_id to relate faults to assets and their last maintenance.\n",
+     "Default time window when unspecified: the last 24 hours, using manufacturing_microbatch.event_time >= current_timestamp() - INTERVAL 24 HOURS.\n",
+     "Filter cat.sch.manufacturing_metrics with mode = 'microbatch' for this pipeline's streaming metrics.\n",
+     "Never modify data. Answer read-only with SELECT queries.\n"
+    ],
+    "id": "f7454d11703dafe1f2f3a9662c081e0c"
+   }
+  ]
+ },
+ "version": 2
+}

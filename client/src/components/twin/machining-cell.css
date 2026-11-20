@@ -1,0 +1,603 @@
+/*
+ * Machining cell twin. Grey is normal: colour appears only for an approaching
+ * or exceeded approved limit (amber / red) and for recorded decisions (amber).
+ */
+.machining-cell {
+  --glass: color-mix(in srgb, var(--db-background) 76%, transparent);
+  --glass-line: color-mix(in srgb, var(--db-foreground) 12%, transparent);
+  --pin: #c9d3da;
+  --ok: #3fb950;
+  --warn: #f2a33a;
+  --crit: #ff3621;
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.machining-cell--dark {
+  background:
+    radial-gradient(90% 70% at 28% 8%, #22313b 0%, transparent 62%),
+    radial-gradient(80% 60% at 85% 100%, #182229 0%, transparent 70%),
+    linear-gradient(180deg, #121a20 0%, #0d1317 100%);
+}
+
+.machining-cell--light {
+  --pin: #36434c;
+  background:
+    radial-gradient(90% 70% at 30% 10%, #fbfaf7 0%, transparent 62%),
+    linear-gradient(180deg, #f6f4ef 0%, #eeebe4 100%);
+}
+
+.machining-cell canvas {
+  display: block;
+}
+
+.tone-ok { --tone: var(--ok, #3fb950); }
+.tone-warn { --tone: var(--warn, #f2a33a); }
+.tone-crit { --tone: var(--crit, #ff3621); }
+.tone-idle { --tone: #8b98a0; }
+
+/* ── Top bar: status + camera views ───────────────────────────── */
+.machining-cell__top {
+  position: absolute;
+  z-index: 40;
+  top: 12px;
+  right: 12px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.machining-cell__status {
+  padding: 4px 11px;
+  border: 1px solid var(--glass-line);
+  border-radius: 999px;
+  background: var(--glass);
+  color: var(--db-foreground);
+  font-size: 11.5px;
+  font-weight: 600;
+  backdrop-filter: blur(10px);
+}
+
+.machining-cell__views {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--glass-line);
+  border-radius: 8px;
+  background: var(--glass);
+  backdrop-filter: blur(10px);
+  pointer-events: auto;
+}
+
+.machining-cell__views button {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--db-muted-foreground);
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.machining-cell__views button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--db-foreground) 10%, transparent);
+  color: var(--db-foreground);
+}
+
+.machining-cell__views button:hover {
+  color: var(--db-foreground);
+}
+
+.machining-cell__views .machining-cell__expand {
+  margin-left: 4px;
+  border-left: 1px solid var(--glass-line);
+  border-radius: 0 6px 6px 0;
+}
+
+.machining-cell__views button:focus-visible,
+.machining-cell__stations button:focus-visible {
+  outline: 2px solid var(--db-ring);
+  outline-offset: -2px;
+}
+
+/* ── Station tags above each machine ───────────────────────────── */
+.cell-tag {
+  display: grid;
+  min-width: 118px;
+  padding: 7px 10px 8px;
+  border: 1px solid var(--glass-line);
+  border-top: 2px solid var(--tone, #8b98a0);
+  border-radius: 6px;
+  background: var(--glass);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(10px);
+  white-space: nowrap;
+}
+
+.cell-tag__code {
+  color: var(--db-muted-foreground);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.cell-tag strong {
+  color: var(--db-foreground);
+  font: 600 13px/1.25 var(--db-font-display);
+}
+
+.cell-tag__readout {
+  color: var(--db-foreground);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.cell-tag.tone-warn .cell-tag__readout,
+.cell-tag.tone-crit .cell-tag__readout {
+  color: var(--tone);
+}
+
+.cell-tag__decision {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--glass-line);
+  color: var(--warn);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.cell-tag__decision::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 1px;
+  background: var(--warn);
+}
+
+/* ── Sensor pins: dot on the machine, leader line, reading ─────── */
+.cell-pin {
+  position: relative;
+  width: 0;
+  height: 0;
+  --pin-color: var(--pin);
+}
+
+.cell-pin.is-over {
+  --pin-color: var(--crit);
+}
+
+.cell-pin > i {
+  position: absolute;
+  top: -5px;
+  left: -5px;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--pin-color);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--pin-color) 30%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pin-color) 16%, transparent);
+}
+
+.cell-pin::before {
+  content: "";
+  position: absolute;
+  bottom: 3px;
+  left: 3px;
+  width: 18px;
+  height: 1px;
+  background: var(--pin-color);
+  opacity: 0.7;
+  transform: rotate(-45deg);
+  transform-origin: left center;
+}
+
+.cell-pin--left::before {
+  right: 3px;
+  left: auto;
+  transform: rotate(45deg);
+  transform-origin: right center;
+}
+
+.cell-pin__label {
+  position: absolute;
+  bottom: 14px;
+  left: 14px;
+  display: grid;
+  gap: 1px;
+  padding: 5px 8px 6px;
+  border: 1px solid var(--glass-line);
+  border-left: 2px solid var(--pin-color);
+  border-radius: 4px;
+  background: var(--glass);
+  backdrop-filter: blur(8px);
+  white-space: nowrap;
+}
+
+.cell-pin--left .cell-pin__label {
+  right: 14px;
+  left: auto;
+  border-right: 2px solid var(--pin-color);
+  border-left: 1px solid var(--glass-line);
+  text-align: right;
+}
+
+.cell-pin__label span {
+  color: var(--db-muted-foreground);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+
+.cell-pin__label b {
+  color: var(--db-foreground);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cell-pin__label small {
+  color: var(--db-muted-foreground);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+
+.cell-pin.is-over .cell-pin__label b {
+  color: var(--crit);
+}
+
+.cell-pin--hero .cell-pin__label {
+  padding: 7px 11px 9px;
+}
+
+.cell-pin--hero .cell-pin__label b {
+  font: 600 22px/1.1 var(--db-font-display);
+  letter-spacing: -0.01em;
+}
+
+.cell-pin__gauge {
+  position: relative;
+  display: block;
+  width: 118px;
+  height: 4px;
+  margin-top: 5px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--db-foreground) 14%, transparent);
+}
+
+.cell-pin__gauge::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: calc(var(--fill) * 100%);
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--pin) 0%, var(--warn) 70%, var(--crit) 100%);
+  background-size: 118px 100%;
+}
+
+.cell-pin__gauge::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  left: calc(var(--limit) * 100%);
+  width: 2px;
+  background: var(--db-foreground);
+}
+
+/* ── Numbered pins + legend (station views) ───────────────────── */
+.cell-marker {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border: 1.5px solid var(--pin);
+  border-radius: 50%;
+  background: var(--glass);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pin) 14%, transparent);
+  color: var(--db-foreground);
+  font-size: 10px;
+  font-weight: 700;
+  backdrop-filter: blur(6px);
+}
+
+.cell-marker.is-over,
+.cell-legend li.is-over .cell-marker {
+  border-color: var(--crit);
+  color: var(--crit);
+}
+
+.cell-legend {
+  position: absolute;
+  z-index: 40;
+  bottom: 60px;
+  left: 12px;
+  width: 224px;
+  padding: 9px 10px 6px;
+  border: 1px solid var(--glass-line);
+  border-radius: 8px;
+  background: var(--glass);
+  backdrop-filter: blur(12px);
+}
+
+.cell-legend header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 4px;
+  color: var(--db-foreground);
+  font: 600 12px var(--db-font-display);
+}
+
+.cell-legend header span {
+  color: var(--db-muted-foreground);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+.cell-legend ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cell-legend li {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  border-top: 1px solid var(--glass-line);
+}
+
+.cell-legend li:first-child {
+  border-top: 0;
+}
+
+.cell-legend__label {
+  overflow: hidden;
+  color: var(--db-muted-foreground);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cell-legend b {
+  color: var(--db-foreground);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.cell-legend li.is-over b {
+  color: var(--crit);
+}
+
+.cell-legend small {
+  color: var(--db-muted-foreground);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+
+/* ── Production stop / restart ─────────────────────────────────── */
+.machining-cell canvas {
+  transition: filter 0.9s ease;
+}
+
+.machining-cell.is-held canvas {
+  filter: saturate(0.45) brightness(0.9);
+}
+
+.machining-cell.is-held::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  border: 2px solid color-mix(in srgb, var(--warn) 55%, transparent);
+  border-radius: inherit;
+  box-shadow: inset 0 0 60px color-mix(in srgb, var(--warn) 18%, transparent);
+  pointer-events: none;
+  animation: cell-hold-in 0.6s ease-out;
+}
+
+.machining-cell__hold {
+  position: absolute;
+  z-index: 45;
+  top: 52px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: max-content;
+  max-width: min(460px, calc(100% - 24px));
+  padding: 9px 10px 9px 14px;
+  border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent);
+  border-radius: 10px;
+  background: var(--glass);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  transform: translateX(-50%);
+  backdrop-filter: blur(12px);
+  animation: cell-hold-banner 0.45s ease-out;
+}
+
+.machining-cell__hold-icon {
+  position: relative;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--warn) 22%, transparent);
+}
+
+.machining-cell__hold-icon::before,
+.machining-cell__hold-icon::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  width: 3px;
+  height: 10px;
+  border-radius: 1px;
+  background: var(--warn);
+}
+
+.machining-cell__hold-icon::before {
+  left: 7px;
+}
+
+.machining-cell__hold-icon::after {
+  right: 7px;
+}
+
+.machining-cell__hold div {
+  display: grid;
+  min-width: 0;
+}
+
+.machining-cell__hold b {
+  color: var(--warn);
+  font: 600 13px/1.3 var(--db-font-display);
+}
+
+.machining-cell__hold span {
+  color: var(--db-muted-foreground);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.machining-cell__hold button {
+  flex: none;
+  padding: 6px 11px;
+  border: 1px solid var(--glass-line);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--db-foreground) 8%, transparent);
+  color: var(--db-foreground);
+  cursor: pointer;
+  font: 600 12px var(--db-font-display);
+}
+
+.machining-cell__hold button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--db-foreground) 14%, transparent);
+}
+
+.machining-cell__hold button:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.machining-cell__hold.is-restarting {
+  border-color: var(--glass-line);
+}
+
+.machining-cell__hold.is-restarting b {
+  color: var(--db-foreground);
+}
+
+.machining-cell__hold.is-restarting .machining-cell__hold-icon {
+  border: 2px solid color-mix(in srgb, var(--db-foreground) 20%, transparent);
+  border-top-color: var(--db-foreground);
+  background: none;
+  animation: cell-restart-spin 0.9s linear infinite;
+}
+
+.machining-cell__hold.is-restarting .machining-cell__hold-icon::before,
+.machining-cell__hold.is-restarting .machining-cell__hold-icon::after {
+  content: none;
+}
+
+@keyframes cell-restart-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@keyframes cell-hold-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes cell-hold-banner {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+}
+
+/* ── Station strip ─────────────────────────────────────────────── */
+.machining-cell__stations {
+  position: absolute;
+  z-index: 40;
+  right: 12px;
+  bottom: 12px;
+  left: 12px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.machining-cell__stations button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 8px 11px;
+  border: 1px solid var(--glass-line);
+  border-radius: 8px;
+  background: var(--glass);
+  color: var(--db-foreground);
+  cursor: pointer;
+  font: 600 12px var(--db-font-display);
+  text-align: left;
+  white-space: nowrap;
+  backdrop-filter: blur(10px);
+}
+
+.machining-cell__stations button.active {
+  border-color: color-mix(in srgb, var(--db-foreground) 45%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--db-foreground) 25%, transparent);
+}
+
+.machining-cell__stations button:hover {
+  border-color: color-mix(in srgb, var(--db-foreground) 30%, transparent);
+}
+
+.machining-cell__stations i {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tone);
+}
+
+.machining-cell__stations i.tone-crit {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--crit) 25%, transparent);
+}
+
+.machining-cell__stations span {
+  color: var(--db-muted-foreground);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+}
+
+.machining-cell__stations em {
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--db-muted-foreground);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 500;
+  text-overflow: ellipsis;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .machining-cell *,
+  .machining-cell::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}

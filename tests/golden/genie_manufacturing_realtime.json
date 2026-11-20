@@ -1,0 +1,329 @@
+{
+ "config": {
+  "sample_questions": [
+   {
+    "id": "42c27d2f525b4451acb05a25b4ab2635",
+    "question": [
+     "Which assets with recent faults are due for maintenance?"
+    ]
+   },
+   {
+    "id": "6b7b27a5328f1198baa0659c51573a27",
+    "question": [
+     "Which sensors are faulting right now (last 5 minutes)?"
+    ]
+   },
+   {
+    "id": "b6ddac90fe3c95b781d36ab185906e97",
+    "question": [
+     "Which fault codes or sensors had active faults most often this week?"
+    ]
+   },
+   {
+    "id": "bea5a516a6f8b659ba6caa76aa3a9d4a",
+    "question": [
+     "What is the approximate OEE per sensor over the last 24 hours?"
+    ]
+   },
+   {
+    "id": "c3c912f6900fe3a22a37ee619de01cdb",
+    "question": [
+     "Which sensors had the most anomalies (values outside min/max) in the last hour?"
+    ]
+   },
+   {
+    "id": "c4b4195ecd680a430569640c51cca7c2",
+    "question": [
+     "How many minutes of downtime did each sensor have today?"
+    ]
+   },
+   {
+    "id": "fbe81ba99bab0f3ac1b82ed04c852ee1",
+    "question": [
+     "What is the end-to-end p99 latency of the real-time stream over the last hour?"
+    ]
+   }
+  ]
+ },
+ "data_sources": {
+  "tables": [
+   {
+    "identifier": "cat.sch.intelligence_alert_rules"
+   },
+   {
+    "identifier": "cat.sch.intelligence_alert_snapshot"
+   },
+   {
+    "identifier": "cat.sch.intelligence_assets"
+   },
+   {
+    "identifier": "cat.sch.intelligence_maintenance_records"
+   },
+   {
+    "identifier": "cat.sch.intelligence_sensor_bindings"
+   },
+   {
+    "column_configs": [
+     {
+      "column_name": "_pg_change_type",
+      "description": [
+       "Lakehouse Sync change type; readings are rows with value 'insert'."
+      ]
+     },
+     {
+      "column_name": "_pg_lsn",
+      "exclude": true
+     },
+     {
+      "column_name": "_pg_xid",
+      "exclude": true
+     },
+     {
+      "column_name": "_sort_by",
+      "exclude": true
+     },
+     {
+      "column_name": "_timestamp",
+      "exclude": true
+     },
+     {
+      "column_name": "event_time",
+      "description": [
+       "Reading timestamp (UTC). Use for all time windows."
+      ]
+     },
+     {
+      "column_name": "fault_active",
+      "description": [
+       "TRUE while the machine/sensor reports an active fault (downtime)."
+      ],
+      "synonyms": [
+       "fault",
+       "down",
+       "stopped",
+       "alarm"
+      ]
+     },
+     {
+      "column_name": "max_value",
+      "description": [
+       "Upper bound of the normal operating range."
+      ]
+     },
+     {
+      "column_name": "min_value",
+      "description": [
+       "Lower bound of the normal operating range."
+      ]
+     },
+     {
+      "column_name": "nominal_value",
+      "description": [
+       "Design/target value. Used for the OEE performance factor."
+      ],
+      "synonyms": [
+       "target",
+       "setpoint"
+      ]
+     },
+     {
+      "column_name": "sensor_name",
+      "description": [
+       "Sensor identifier; one row per reading."
+      ],
+      "enable_entity_matching": true,
+      "enable_format_assistance": true,
+      "synonyms": [
+       "sensor",
+       "tag",
+       "signal"
+      ]
+     },
+     {
+      "column_name": "sensor_type",
+      "description": [
+       "Measurement kind, e.g. temperature, vibration, pressure."
+      ],
+      "enable_entity_matching": true,
+      "enable_format_assistance": true
+     },
+     {
+      "column_name": "value",
+      "description": [
+       "Measured value in `unit`."
+      ],
+      "synonyms": [
+       "reading",
+       "measurement"
+      ]
+     }
+    ],
+    "identifier": "cat.sch.lb__shadow_manufacturing_sensor_readings_history"
+   },
+   {
+    "identifier": "cat.sch.manufacturing_metrics"
+   }
+  ]
+ },
+ "instructions": {
+  "example_question_sqls": [
+   {
+    "id": "69dcc902d9813c3f6cc8336e2cb4e67d",
+    "question": [
+     "What is the streaming throughput and p99 latency over the last hour?"
+    ],
+    "sql": [
+     "SELECT date_trunc('minute', timestamp) AS minute, AVG(processed_rps) AS processed_rps, MAX(e2e_p99) AS e2e_p99_ms FROM cat.sch.manufacturing_metrics WHERE mode = 'realtime' AND timestamp >= current_timestamp() - INTERVAL 1 HOUR GROUP BY 1 ORDER BY 1"
+    ]
+   },
+   {
+    "id": "ae3054310b9ef2d256e06d966ad3c98c",
+    "question": [
+     "Which sensors had the most anomalies in the last hour?"
+    ],
+    "sql": [
+     "SELECT sensor_name, COUNT(*) AS anomalies, MIN(value) AS min_seen, MAX(value) AS max_seen FROM cat.sch.lb__shadow_manufacturing_sensor_readings_history WHERE _pg_change_type IN ('insert', 'update_postimage') AND industry = 'manufacturing' AND (value < min_value OR value > max_value) AND event_time >= current_timestamp() - INTERVAL 1 HOUR GROUP BY sensor_name ORDER BY anomalies DESC"
+    ]
+   },
+   {
+    "id": "c0563b80f1e729f86bc9a930439cbb02",
+    "question": [
+     "How many minutes of downtime did each sensor have in the last 24 hours?"
+    ],
+    "sql": [
+     "SELECT sensor_name, COUNT(DISTINCT date_trunc('minute', event_time)) AS downtime_minutes FROM cat.sch.lb__shadow_manufacturing_sensor_readings_history WHERE _pg_change_type IN ('insert', 'update_postimage') AND industry = 'manufacturing' AND fault_active AND event_time >= current_timestamp() - INTERVAL 24 HOURS GROUP BY sensor_name ORDER BY downtime_minutes DESC"
+    ]
+   },
+   {
+    "id": "c7a6e534eeb3b343fa3e9274d516041a",
+    "question": [
+     "What is the approximate OEE per sensor over the last 24 hours?"
+    ],
+    "sql": [
+     "WITH m AS (SELECT sensor_name, COUNT(DISTINCT date_trunc('minute', event_time)) AS observed_min, COUNT(DISTINCT CASE WHEN fault_active THEN date_trunc('minute', event_time) END) AS fault_min, AVG(CASE WHEN nominal_value > 0 THEN LEAST(value / nominal_value, 1) END) AS performance, AVG(CASE WHEN min_value IS NULL OR max_value IS NULL THEN NULL WHEN value BETWEEN min_value AND max_value THEN 1.0 ELSE 0.0 END) AS quality FROM cat.sch.lb__shadow_manufacturing_sensor_readings_history WHERE _pg_change_type IN ('insert', 'update_postimage') AND industry = 'manufacturing' AND event_time >= current_timestamp() - INTERVAL 24 HOURS GROUP BY sensor_name) SELECT sensor_name, ROUND(100 * (1 - fault_min / observed_min), 2) AS availability_pct, ROUND(100 * performance, 2) AS performance_pct, ROUND(100 * quality, 2) AS quality_pct, ROUND(100 * (1 - fault_min / observed_min) * COALESCE(performance, 1) * COALESCE(quality, 1), 2) AS oee_pct FROM m ORDER BY oee_pct ASC"
+    ]
+   },
+   {
+    "id": "f879bdc6685c91e464e752eb1af7f573",
+    "question": [
+     "Which assets had the most faults this week and when were they last maintained?"
+    ],
+    "sql": [
+     "WITH faults AS (SELECT sensor_name, COUNT(*) AS fault_readings FROM cat.sch.lb__shadow_manufacturing_sensor_readings_history WHERE _pg_change_type IN ('insert', 'update_postimage') AND industry = 'manufacturing' AND fault_active AND event_time >= current_timestamp() - INTERVAL 7 DAYS GROUP BY sensor_name) SELECT b.asset_id, SUM(f.fault_readings) AS fault_readings, MAX(r.completed_at) AS last_maintenance FROM faults f JOIN cat.sch.intelligence_sensor_bindings b ON b.sensor_name = f.sensor_name AND b.industry = 'manufacturing' LEFT JOIN cat.sch.intelligence_maintenance_records r ON r.asset_id = b.asset_id AND r.industry = 'manufacturing' GROUP BY b.asset_id ORDER BY fault_readings DESC"
+    ]
+   }
+  ],
+  "sql_snippets": {
+   "expressions": [
+    {
+     "alias": "deviation_from_nominal",
+     "display_name": "Deviation from nominal",
+     "id": "3622eec19ba38806a3e8d76095070767",
+     "sql": [
+      "lb__shadow_manufacturing_sensor_readings_history.value - lb__shadow_manufacturing_sensor_readings_history.nominal_value"
+     ]
+    },
+    {
+     "alias": "reading_minute",
+     "display_name": "Reading minute",
+     "id": "c328771309ac49b6bb5e26433ac1ff55",
+     "sql": [
+      "date_trunc('minute', lb__shadow_manufacturing_sensor_readings_history.event_time)"
+     ]
+    }
+   ],
+   "filters": [
+    {
+     "display_name": "Anomalous reading",
+     "id": "5f9c70c0d498a9f39b66ab14920f0c18",
+     "sql": [
+      "(lb__shadow_manufacturing_sensor_readings_history._pg_change_type IN ('insert', 'update_postimage') AND lb__shadow_manufacturing_sensor_readings_history.industry = 'manufacturing' AND (lb__shadow_manufacturing_sensor_readings_history.value < lb__shadow_manufacturing_sensor_readings_history.min_value OR lb__shadow_manufacturing_sensor_readings_history.value > lb__shadow_manufacturing_sensor_readings_history.max_value))"
+     ],
+     "synonyms": [
+      "out of range",
+      "anomaly"
+     ]
+    },
+    {
+     "display_name": "Last 24 hours",
+     "id": "6181258edceb09eaa9c033fed96a754d",
+     "sql": [
+      "(lb__shadow_manufacturing_sensor_readings_history._pg_change_type IN ('insert', 'update_postimage') AND lb__shadow_manufacturing_sensor_readings_history.industry = 'manufacturing' AND lb__shadow_manufacturing_sensor_readings_history.event_time >= current_timestamp() - INTERVAL 24 HOURS)"
+     ]
+    },
+    {
+     "display_name": "Fault active (downtime)",
+     "id": "e09e3506867bbf661d040a05906717bb",
+     "sql": [
+      "(lb__shadow_manufacturing_sensor_readings_history._pg_change_type IN ('insert', 'update_postimage') AND lb__shadow_manufacturing_sensor_readings_history.industry = 'manufacturing' AND lb__shadow_manufacturing_sensor_readings_history.fault_active = TRUE)"
+     ],
+     "synonyms": [
+      "down",
+      "faulted",
+      "stopped"
+     ]
+    }
+   ],
+   "measures": [
+    {
+     "alias": "availability_pct",
+     "display_name": "Availability % (reading-based)",
+     "id": "93d712b3eb32237eacc4ffd647180ee7",
+     "sql": [
+      "100 * (1 - AVG(CASE WHEN lb__shadow_manufacturing_sensor_readings_history._pg_change_type IN ('insert', 'update_postimage') AND lb__shadow_manufacturing_sensor_readings_history.industry = 'manufacturing' THEN CASE WHEN lb__shadow_manufacturing_sensor_readings_history.fault_active THEN 1.0 ELSE 0.0 END END))"
+     ],
+     "synonyms": [
+      "availability",
+      "uptime"
+     ]
+    },
+    {
+     "alias": "fault_rate_pct",
+     "display_name": "Fault rate %",
+     "id": "9b38f5e7b0d262dc0a579e22d9b64d00",
+     "sql": [
+      "100 * AVG(CASE WHEN lb__shadow_manufacturing_sensor_readings_history._pg_change_type IN ('insert', 'update_postimage') AND lb__shadow_manufacturing_sensor_readings_history.industry = 'manufacturing' THEN CASE WHEN lb__shadow_manufacturing_sensor_readings_history.fault_active THEN 1.0 ELSE 0.0 END END)"
+     ],
+     "synonyms": [
+      "downtime rate",
+      "fault ratio"
+     ]
+    },
+    {
+     "alias": "anomaly_rate_pct",
+     "display_name": "Anomaly rate %",
+     "id": "d2e4a15de2392779e8efc9cfc692bb2e",
+     "sql": [
+      "100 * AVG(CASE WHEN lb__shadow_manufacturing_sensor_readings_history._pg_change_type IN ('insert', 'update_postimage') AND lb__shadow_manufacturing_sensor_readings_history.industry = 'manufacturing' THEN (CASE WHEN lb__shadow_manufacturing_sensor_readings_history.min_value IS NULL OR lb__shadow_manufacturing_sensor_readings_history.max_value IS NULL THEN NULL WHEN lb__shadow_manufacturing_sensor_readings_history.value < lb__shadow_manufacturing_sensor_readings_history.min_value OR lb__shadow_manufacturing_sensor_readings_history.value > lb__shadow_manufacturing_sensor_readings_history.max_value THEN 1.0 ELSE 0.0 END) END)"
+     ],
+     "synonyms": [
+      "out of range rate"
+     ]
+    }
+   ]
+  },
+  "text_instructions": [
+   {
+    "content": [
+     "This space covers ONE manufacturing real-time (sub-second RTM) pipeline. Sensor telemetry is in cat.sch.lb__shadow_manufacturing_sensor_readings_history (one row per reading). Streaming throughput/latency metrics are in cat.sch.manufacturing_metrics. Asset, sensor-binding, maintenance, alert-rule and alert-snapshot reference data is in the intelligence_* tables.\n",
+     "Downtime = time intervals where lb__shadow_manufacturing_sensor_readings_history.fault_active is TRUE. Approximate downtime minutes as the count of distinct minutes (date_trunc('minute', lb__shadow_manufacturing_sensor_readings_history.event_time)) with at least one fault_active reading.\n",
+     "Availability = 1 - (fault minutes / observed minutes), where observed minutes are distinct minutes with any reading. Report as a percentage.\n",
+     "Performance = AVG(LEAST(lb__shadow_manufacturing_sensor_readings_history.value / lb__shadow_manufacturing_sensor_readings_history.nominal_value, 1)) for readings with nominal_value > 0 (how close output runs to its nominal rate).\n",
+     "Quality = share of readings with lb__shadow_manufacturing_sensor_readings_history.value BETWEEN lb__shadow_manufacturing_sensor_readings_history.min_value AND lb__shadow_manufacturing_sensor_readings_history.max_value.\n",
+     "OEE (approximation) = Availability x Performance x Quality. Always say it is an approximation derived from sensor telemetry, not production counts.\n",
+     "Anomaly = a reading where lb__shadow_manufacturing_sensor_readings_history.value < lb__shadow_manufacturing_sensor_readings_history.min_value OR lb__shadow_manufacturing_sensor_readings_history.value > lb__shadow_manufacturing_sensor_readings_history.max_value. Ignore rows where min_value or max_value is NULL.\n",
+     "The intelligence_* tables hold several industries: ALWAYS filter every intelligence_* table with industry = 'manufacturing'.\n",
+     "Bridge from telemetry to reference data: lb__shadow_manufacturing_sensor_readings_history.sensor_name = intelligence_sensor_bindings.sensor_name, then intelligence_sensor_bindings.sensor_id = intelligence_alert_rules.sensor_id or intelligence_alert_snapshot.sensor_id (fault codes, thresholds, severity, alert status). intelligence_sensor_bindings.asset_id links to intelligence_assets and intelligence_maintenance_records.\n",
+     "Faults: report fault_active readings and use the bridge above for fault codes and severity.\n",
+     "Maintenance: use intelligence_maintenance_records joined to intelligence_sensor_bindings on asset_id to relate faults to assets and their last maintenance.\n",
+     "Default time window when unspecified: the last 24 hours, using lb__shadow_manufacturing_sensor_readings_history.event_time >= current_timestamp() - INTERVAL 24 HOURS.\n",
+     "Filter cat.sch.manufacturing_metrics with mode = 'realtime' for this pipeline's streaming metrics.\n",
+     "cat.sch.lb__shadow_manufacturing_sensor_readings_history is the Lakehouse Sync mirror of the real-time Lakebase stream (all industries): ALWAYS filter lb__shadow_manufacturing_sensor_readings_history._pg_change_type IN ('insert', 'update_postimage') AND lb__shadow_manufacturing_sensor_readings_history.industry = 'manufacturing' (current reading rows for this industry) and ignore the _pg_* / _timestamp / _sort_by bookkeeping columns.\n",
+     "Never modify data. Answer read-only with SELECT queries.\n"
+    ],
+    "id": "e60267f7c2284abdd56a3d2b77b5e741"
+   }
+  ]
+ },
+ "version": 2
+}

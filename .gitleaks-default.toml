@@ -1,0 +1,9 @@
+# Stock gitleaks rules with NO allowlists. External secret scanners run the
+# defaults, so the tracked tree (including the static/dist bundle) must pass
+# this config with zero findings. Do not add allowlists here: reshape the code
+# or test fixture instead (see .gitleaks.toml for the documented exceptions
+# kept for the full-history scan).
+title = "iot-digital-twin gitleaks stock rules (no allowlist)"
+
+[extend]
+useDefault = true

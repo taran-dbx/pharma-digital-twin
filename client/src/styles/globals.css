@@ -1,0 +1,161 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Dark theme (default) — Databricks Teal */
+  :root {
+    --background: 195 100% 4%;
+    --foreground: 200 40% 90%;
+    --card: 195 40% 8%;
+    --card-foreground: 200 40% 90%;
+    --popover: 195 40% 8%;
+    --popover-foreground: 200 40% 90%;
+    --primary: 9 100% 56%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 195 30% 12%;
+    --secondary-foreground: 200 40% 90%;
+    --muted: 195 25% 15%;
+    --muted-foreground: 195 15% 55%;
+    --accent: 9 100% 56%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 195 25% 18%;
+    --input: 195 30% 12%;
+    --ring: 9 100% 56%;
+    --success: 155 60% 55%;
+    --warning: 44 97% 71%;
+    --info: 211 100% 73%;
+    --radius: 0.5rem;
+
+    --surface-low: 195 50% 6%;
+    --surface-high: 195 25% 14%;
+    --surface-highest: 195 20% 18%;
+    --glow-primary: 0 0 15px rgba(255, 54, 33, 0.25);
+    --glow-success: 0 0 12px rgba(89, 222, 162, 0.3);
+  }
+
+  /* Light theme — Databricks Light */
+  .light {
+    --background: 220 20% 97%;
+    --foreground: 195 50% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 195 50% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 195 50% 12%;
+    --primary: 9 100% 56%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 15% 94%;
+    --secondary-foreground: 195 40% 20%;
+    --muted: 220 15% 94%;
+    --muted-foreground: 195 15% 45%;
+    --accent: 9 100% 56%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 15% 88%;
+    --input: 220 15% 94%;
+    --ring: 9 100% 56%;
+    --success: 155 60% 40%;
+    --warning: 44 90% 55%;
+    --info: 211 90% 55%;
+
+    --surface-low: 220 15% 94%;
+    --surface-high: 220 10% 97%;
+    --surface-highest: 0 0% 100%;
+    --glow-primary: 0 0 12px rgba(255, 54, 33, 0.15);
+    --glow-success: 0 0 10px rgba(0, 169, 114, 0.2);
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer components {
+  .glass {
+    @apply bg-card/60 backdrop-blur-xl border border-border/50;
+  }
+
+  .glass-strong {
+    @apply bg-card/80 backdrop-blur-2xl border border-border/60;
+  }
+
+  .glow-primary {
+    box-shadow: var(--glow-primary);
+  }
+
+  .glow-success {
+    box-shadow: var(--glow-success);
+  }
+
+  .pulse-dot {
+    @apply relative;
+  }
+
+  .pulse-dot::after {
+    content: "";
+    @apply absolute inset-0 rounded-full animate-ping;
+    background: inherit;
+    opacity: 0.4;
+  }
+
+  .hud-label {
+    @apply glass px-2 py-1 rounded text-xs font-mono;
+  }
+
+  .ticker-strip {
+    @apply overflow-hidden whitespace-nowrap;
+  }
+
+  .ticker-strip > div {
+    @apply inline-block;
+    animation: marquee 30s linear infinite;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .text-gradient-hero {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, hsl(var(--success)) 0%, hsl(var(--foreground)) 40%, hsl(var(--primary)) 100%);
+  }
+}
+
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 8px rgba(255, 54, 33, 0.3); }
+  50% { box-shadow: 0 0 20px rgba(255, 54, 33, 0.6); }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted));
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground));
+}

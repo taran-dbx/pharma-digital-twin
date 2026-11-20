@@ -1,0 +1,63 @@
+resources:
+  apps:
+    iot_twin:
+      name: ${var.app_name}
+      description: IoT Digital Twin
+      source_code_path: ..
+      config:
+        command:
+          - /bin/sh
+          - -c
+          - uvicorn --app-dir src iot_twin.app:app --host 0.0.0.0 --port ${DATABRICKS_APP_PORT:-8000}
+        env:
+          - name: UC_CATALOG
+            value: ${var.uc_catalog}
+          - name: UC_SCHEMA
+            value: ${var.uc_schema}
+          - name: PGHOST
+            value: ${var.pghost}
+          - name: PGDATABASE
+            value: databricks_postgres
+          - name: PGPORT
+            value: "5432"
+          - name: LAKEBASE_PROJECT
+            value: ${var.lakebase_project}
+          - name: LAKEBASE_ENDPOINT
+            value: projects/${var.lakebase_project}/branches/${var.lakebase_branch}/endpoints/primary
+          - name: DATABRICKS_SQL_WAREHOUSE_ID
+            value_from: sql-warehouse
+          - name: ZEROBUS_SERVER_ENDPOINT
+            value: ${var.zerobus_server_endpoint}
+          - name: ZEROBUS_CLIENT_ID
+            value: ${var.zerobus_client_id}
+          - name: ZEROBUS_SECRET_KEY
+            value: ${var.zerobus_secret_key}
+          - name: UC_SERVICE_CREDENTIAL
+            value: ${var.uc_service_credential}
+          - name: PIPELINES_LAKEBASE_PROJECT
+            value: ${var.pipelines_lakebase_project}
+          - name: MSK_BOOTSTRAP_SERVERS
+            value: ${var.msk_bootstrap_servers}
+          - name: INDUSTRIES
+            value: ${var.industries}
+          - name: ADMIN_GROUP
+            value: ${var.admin_group}
+          - name: GENIE_SPACE_ID
+            value_from: genie-space
+          - name: USAGE_TRACKING_ENABLED
+            value: ${var.usage_tracking_enabled}
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: ${var.warehouse_id}
+            permission: CAN_USE
+        - name: genie-space
+          genie_space:
+            name: iot-genie
+            space_id: ${var.genie_space_id}
+            permission: CAN_VIEW
+        - name: lakebase
+          postgres:
+            branch: projects/${var.lakebase_project}/branches/${var.lakebase_branch}
+            database: projects/${var.lakebase_project}/branches/${var.lakebase_branch}/databases/${var.lakebase_database}
+            permission: CAN_CONNECT_AND_CREATE

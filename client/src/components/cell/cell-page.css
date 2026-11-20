@@ -1,0 +1,1090 @@
+/* Manufacturing cell page. Grey is normal; amber and red are reserved for
+   limits, decisions and stops so they stay meaningful. */
+
+.cellops {
+  --cell-trend: #c9d3da;
+  --cell-warn: #f2a33a;
+  --cell-crit: #ff4d36;
+  --cell-ok: #3fb27f;
+  --cellops-surface: color-mix(in srgb, var(--db-foreground) 3%, var(--db-background));
+  --cellops-raise: 0 1px 0 color-mix(in srgb, var(--db-foreground) 6%, transparent) inset,
+    0 18px 40px -30px rgba(0, 0, 0, 0.55);
+  --cellops-hatch: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--cell-warn) 30%, transparent) 0 6px,
+    color-mix(in srgb, var(--cell-warn) 12%, transparent) 6px 12px
+  );
+}
+[data-theme="light"] .cellops {
+  --cell-trend: #36434c;
+  --cell-warn: #b5650a;
+  --cell-crit: #d2321b;
+  --cell-ok: #1f8a5b;
+  --cellops-raise: 0 1px 0 rgba(255, 255, 255, 0.8) inset, 0 16px 34px -28px rgba(20, 30, 40, 0.35);
+}
+
+.cellops-eyebrow {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--db-muted-foreground);
+}
+
+.cellops .btn svg,
+.cellops-hero svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+
+.cellops-spin {
+  animation: cellops-spin 1.1s linear infinite;
+}
+
+/* ---------- hero ---------- */
+
+.cellops-hero {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px 28px;
+  align-items: center;
+  padding: 20px 22px 18px;
+  margin-bottom: 16px;
+  border: 1px solid var(--db-border);
+  border-radius: 14px;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, var(--ind) 14%, transparent) 0%, transparent 55%),
+    var(--cellops-surface);
+  box-shadow: var(--cellops-raise);
+  transition: border-color 0.4s, background 0.4s;
+}
+.cellops-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: color-mix(in srgb, var(--db-foreground) 20%, transparent);
+  transition: background 0.4s;
+}
+.cellops-hero.is-stopped {
+  border-color: color-mix(in srgb, var(--cell-warn) 45%, var(--db-border));
+  background:
+    radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, var(--cell-warn) 16%, transparent) 0%, transparent 60%),
+    var(--cellops-surface);
+}
+.cellops-hero.is-stopped::before {
+  background: var(--cellops-hatch);
+  width: 6px;
+}
+.cellops-hero.is-restarting::before {
+  background: linear-gradient(180deg, var(--cell-warn), var(--cell-ok));
+}
+.cellops-hero__id {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.cellops-hero h1 {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font: 600 26px/1.15 var(--db-font-display);
+  letter-spacing: -0.02em;
+}
+.cellops-hero__route {
+  font: 600 12px/1 var(--db-font-mono);
+  letter-spacing: 0.08em;
+  color: var(--db-muted-foreground);
+}
+.cellops-hero__route i {
+  font-style: normal;
+  opacity: 0.5;
+  margin: 0 2px;
+}
+.cellops-hero__side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+.cellops-hero__controls,
+.cellops-hero__ops {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.cellops-hero__ops {
+  font-size: 11px;
+  color: var(--db-muted-foreground);
+}
+
+.cellops-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px 8px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--db-border);
+  background: var(--db-background);
+}
+.cellops-state svg {
+  width: 20px;
+  height: 20px;
+  color: var(--cell-ok);
+}
+.cellops-state div {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+.cellops-state b {
+  font-size: 13px;
+}
+.cellops-state span {
+  font-size: 11px;
+  color: var(--db-muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.cellops-state.is-stopped {
+  border-color: color-mix(in srgb, var(--cell-warn) 55%, transparent);
+  background: color-mix(in srgb, var(--cell-warn) 12%, var(--db-background));
+}
+.cellops-state.is-stopped svg,
+.cellops-state.is-stopped b {
+  color: var(--cell-warn);
+}
+.cellops-state.is-restarting svg {
+  color: var(--cell-warn);
+}
+
+.cellops-stop-btn {
+  border-color: color-mix(in srgb, var(--cell-warn) 55%, var(--db-input));
+  color: var(--cell-warn);
+}
+.cellops-stop-btn:hover {
+  background: color-mix(in srgb, var(--cell-warn) 12%, var(--db-background));
+}
+.cellops .btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---------- pipeline chain ---------- */
+
+.cellops-chain {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 0;
+}
+.cellops-chain li {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 7px;
+  align-items: center;
+  padding: 6px 12px 6px 10px;
+  margin-right: 26px;
+  border: 1px solid var(--db-border);
+  border-radius: 9px;
+  background: var(--db-background);
+  min-width: 0;
+}
+.cellops-chain li:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  width: 26px;
+  height: 2px;
+  background: linear-gradient(90deg, var(--db-border) 0 40%, transparent 40% 60%, var(--db-border) 60%) 0 0 / 10px 2px;
+}
+.cellops-chain li.is-ok:not(:last-child)::after {
+  background: linear-gradient(90deg, var(--cell-ok) 0 40%, transparent 40%) 0 0 / 10px 2px;
+  animation: cellops-flow 0.9s linear infinite;
+  opacity: 0.7;
+}
+.cellops-chain i {
+  grid-row: span 2;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--db-muted-foreground);
+  opacity: 0.5;
+}
+.cellops-chain li.is-ok i {
+  background: var(--cell-ok);
+  opacity: 1;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cell-ok) 20%, transparent);
+}
+.cellops-chain li.is-warn {
+  border-color: color-mix(in srgb, var(--cell-warn) 50%, var(--db-border));
+}
+.cellops-chain li.is-warn i {
+  background: var(--cell-warn);
+  opacity: 1;
+}
+.cellops-chain li.is-off {
+  opacity: 0.55;
+}
+.cellops-chain span {
+  font-size: 11px;
+  font-weight: 600;
+}
+.cellops-chain b {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--db-muted-foreground);
+  white-space: nowrap;
+}
+
+/* ---------- KPI ribbon ---------- */
+
+.cellops .cell-kpis {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+@media (max-width: 1280px) {
+  .cellops .cell-kpis {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 720px) {
+  .cellops .cell-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ---------- twin + incident ---------- */
+
+.cellops-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(360px, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+.cellops-main__stage,
+.cellops-main__side {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.cellops-main__stage {
+  scroll-margin-top: 12px;
+}
+.cellops-main__stage > .cell-card {
+  border-radius: 14px;
+  background: var(--cellops-surface);
+  box-shadow: var(--cellops-raise);
+}
+.cellops .twin.twin--cell.cellops__twin {
+  height: 600px;
+  border-radius: 14px;
+  box-shadow: var(--cellops-raise);
+}
+.cellops.is-stopped .twin.twin--cell.cellops__twin {
+  border-color: color-mix(in srgb, var(--cell-warn) 40%, var(--db-border));
+}
+.cellops-incident {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  border-radius: 14px;
+  padding: 16px 18px;
+  background: var(--cellops-surface);
+  box-shadow: var(--cellops-raise);
+  transition: border-color 0.4s;
+}
+.cellops-incident.is-alert {
+  border-color: color-mix(in srgb, var(--cell-crit) 45%, var(--db-border));
+}
+.cellops-incident.is-stopped {
+  border-color: color-mix(in srgb, var(--cell-warn) 45%, var(--db-border));
+}
+.cellops-incident__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.cellops-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--db-border);
+  color: var(--db-muted-foreground);
+}
+.cellops-chip::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.cellops-chip.is-alert {
+  color: var(--cell-crit);
+  border-color: color-mix(in srgb, var(--cell-crit) 45%, transparent);
+  background: color-mix(in srgb, var(--cell-crit) 10%, transparent);
+}
+.cellops-chip.is-alert::before {
+  animation: cellops-pulse 1.4s ease-in-out infinite;
+}
+.cellops-chip.is-stopped,
+.cellops-chip.is-restarting {
+  color: var(--cell-warn);
+  border-color: color-mix(in srgb, var(--cell-warn) 45%, transparent);
+  background: color-mix(in srgb, var(--cell-warn) 10%, transparent);
+}
+.cellops-chip.is-clear {
+  color: var(--cell-ok);
+}
+
+.cellops-incident__title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.cellops-incident__title b {
+  font: 600 19px/1.2 var(--db-font-display);
+  letter-spacing: -0.01em;
+}
+.cellops-incident code,
+.cellops-timeline code {
+  font: 600 10.5px var(--db-font-mono);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--db-foreground) 8%, transparent);
+  color: var(--db-muted-foreground);
+}
+.cellops-incident__readout {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 12px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--db-border);
+}
+.cellops-incident__readout span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  background: var(--db-background);
+}
+.cellops-incident__readout b {
+  font: 600 20px/1 var(--db-font-display);
+  letter-spacing: -0.02em;
+}
+.cellops-incident__readout small {
+  font-size: 11px;
+  color: var(--db-muted-foreground);
+}
+.cellops-incident__readout em {
+  font-style: normal;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--db-muted-foreground);
+}
+.cellops-incident__readout .is-now b,
+.cellops-incident__readout .is-over b {
+  color: var(--cell-crit);
+}
+.cellops-incident__action {
+  margin: 10px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--cell-crit) 35%, transparent);
+  background: color-mix(in srgb, var(--cell-crit) 8%, transparent);
+  font-size: 13px;
+}
+.cellops-incident__action span {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--db-muted-foreground);
+}
+.cellops-incident__clear {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--db-muted-foreground);
+}
+.cellops-incident__clear b {
+  font: 600 17px/1.25 var(--db-font-display);
+  color: var(--db-foreground);
+}
+
+.cellops-incident__stop {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--cell-warn) 45%, transparent);
+  background:
+    linear-gradient(0deg, color-mix(in srgb, var(--cell-warn) 8%, var(--db-background)), color-mix(in srgb, var(--cell-warn) 8%, var(--db-background))),
+    var(--db-background);
+  position: relative;
+  overflow: hidden;
+}
+.cellops-incident__stop::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 5px;
+  background: var(--cellops-hatch);
+}
+.cellops-incident__stop-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.cellops-incident__stop-head div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cellops-incident__stop-head b {
+  font: 600 16px var(--db-font-display);
+  color: var(--cell-warn);
+}
+.cellops-incident__stop-head span {
+  font-size: 11.5px;
+  color: var(--db-muted-foreground);
+}
+.cellops-incident__elapsed {
+  font: 600 24px/1 var(--db-font-mono);
+  color: var(--cell-warn);
+}
+.cellops-incident__stop ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--db-muted-foreground);
+  display: grid;
+  gap: 2px;
+}
+.cellops-incident__stop .btn {
+  align-self: flex-start;
+}
+.cellops-incident__restart {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px dashed color-mix(in srgb, var(--cell-warn) 45%, transparent);
+}
+.cellops-incident__restart div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--db-muted-foreground);
+}
+.cellops-incident__restart b {
+  font-size: 13px;
+  color: var(--db-foreground);
+}
+.cellops-spinner {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--cell-warn) 25%, transparent);
+  border-top-color: var(--cell-warn);
+  animation: cellops-spin 0.9s linear infinite;
+  flex: none;
+}
+
+.cellops-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0;
+}
+.cellops-steps li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  font-size: 12.5px;
+}
+.cellops-steps li:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  top: 26px;
+  bottom: -8px;
+  width: 2px;
+  background: var(--db-border);
+}
+.cellops-steps li.is-done:not(:last-child)::after {
+  background: color-mix(in srgb, var(--cell-ok) 50%, var(--db-border));
+}
+.cellops-steps__dot {
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--db-border);
+  background: var(--db-background);
+}
+.cellops-steps__dot svg {
+  width: 12px;
+  height: 12px;
+  color: var(--db-background);
+}
+.cellops-steps li.is-done .cellops-steps__dot {
+  border-color: var(--cell-ok);
+  background: var(--cell-ok);
+}
+.cellops-steps li.is-current .cellops-steps__dot {
+  border-color: var(--cell-warn);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--cell-warn) 18%, transparent);
+}
+.cellops-steps li.is-todo {
+  color: var(--db-muted-foreground);
+}
+.cellops-steps time {
+  font-size: 11.5px;
+  color: var(--db-muted-foreground);
+}
+.cellops-steps__pending {
+  color: var(--db-muted-foreground);
+  opacity: 0.6;
+}
+
+.cellops-actions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.cellops-actions li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--db-border);
+  background: var(--db-background);
+  transition: border-color 0.3s, background 0.3s;
+}
+.cellops-actions li.is-primary:not(.is-done) {
+  border-color: color-mix(in srgb, var(--cell-warn) 50%, var(--db-border));
+  background: color-mix(in srgb, var(--cell-warn) 7%, var(--db-background));
+}
+.cellops-actions li.is-done {
+  border-style: dashed;
+}
+.cellops-actions__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.cellops-actions__body b {
+  font-size: 13px;
+}
+.cellops-actions li.is-done .cellops-actions__body b {
+  color: var(--cell-ok);
+}
+.cellops-actions__body span {
+  font-size: 11.5px;
+  color: var(--db-muted-foreground);
+}
+.cellops-incident__foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--db-border);
+}
+.cellops-incident__foot p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--db-muted-foreground);
+}
+
+.cellops-watch {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.cellops-watch li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 10px;
+  align-items: baseline;
+}
+.cellops-watch__name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12.5px;
+}
+.cellops-watch__value {
+  font: 600 15px var(--db-font-display);
+}
+.cellops-watch__value small {
+  font: 400 11px var(--db-font-sans);
+  color: var(--db-muted-foreground);
+}
+.cellops-watch__bar {
+  grid-column: 1 / -1;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--db-foreground) 8%, transparent);
+  overflow: hidden;
+}
+.cellops-watch__bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--cell-trend);
+  transition: width 0.6s ease;
+}
+.cellops-watch li.is-over .cellops-watch__value,
+.cellops-watch li.is-over .cellops-watch__name b {
+  color: var(--cell-crit);
+}
+.cellops-watch li.is-over .cellops-watch__bar span {
+  background: var(--cell-crit);
+}
+
+/* ---------- history ---------- */
+
+.cellops-timeline {
+  border-radius: 14px;
+  background: var(--cellops-surface);
+  box-shadow: var(--cellops-raise);
+}
+
+.cellops-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.cellops-timeline__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+}
+.cellops-timeline__head h3 {
+  margin: 2px 0 0;
+  font: 600 15px var(--db-font-display);
+}
+.cellops-timeline__count {
+  font-size: 11.5px;
+  color: var(--db-muted-foreground);
+}
+.cellops-timeline__chart {
+  display: grid;
+  gap: 8px;
+}
+.cellops-timeline__row {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+.cellops-timeline__label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--db-muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cellops-timeline__track {
+  position: relative;
+  height: 22px;
+  border-radius: 6px;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 calc(100% / 6 - 1px), color-mix(in srgb, var(--db-foreground) 7%, transparent) calc(100% / 6 - 1px) calc(100% / 6)),
+    color-mix(in srgb, var(--db-foreground) 4%, transparent);
+}
+.cellops-timeline__bar,
+.cellops-timeline__stop {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  border-radius: 4px;
+  min-width: 4px;
+}
+.cellops-timeline__bar {
+  --sev: var(--cell-trend);
+  background: color-mix(in srgb, var(--sev) 50%, transparent);
+}
+.cellops-timeline__bar.sev-crit {
+  --sev: var(--cell-crit);
+}
+.cellops-timeline__bar.sev-warn {
+  --sev: var(--cell-warn);
+}
+.cellops-timeline__bar.is-open {
+  background: var(--sev);
+  box-shadow: 0 0 12px -2px var(--sev);
+}
+.cellops-timeline__decision {
+  position: absolute;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  transform: rotate(45deg);
+  background: var(--db-background);
+  border: 2px solid var(--db-foreground);
+}
+.cellops-timeline__stop {
+  background: var(--cellops-hatch);
+  border: 1px solid color-mix(in srgb, var(--cell-warn) 55%, transparent);
+}
+.cellops-timeline__stop.is-open {
+  border-right: 2px solid var(--cell-warn);
+}
+.cellops-timeline__axis {
+  position: relative;
+  height: 14px;
+  margin-left: 122px;
+  font-size: 10px;
+  color: var(--db-muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.cellops-timeline__axis span {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.cellops-timeline__axis span.is-now {
+  transform: translateX(-100%);
+  font-weight: 600;
+  color: var(--db-foreground);
+}
+.cellops-timeline__empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--db-muted-foreground);
+}
+.cellops-timeline__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  border-top: 1px solid var(--db-border);
+}
+.cellops-timeline__list li {
+  display: grid;
+  grid-template-columns: 64px 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 9px 2px;
+  border-bottom: 1px solid var(--db-border);
+  font-size: 12px;
+}
+.cellops-timeline__list time {
+  font-size: 11.5px;
+  color: var(--db-muted-foreground);
+}
+.cellops-sev {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cell-trend);
+}
+.cellops-sev.sev-crit {
+  background: var(--cell-crit);
+}
+.cellops-sev.sev-warn {
+  background: var(--cell-warn);
+}
+.cellops-timeline__what {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.cellops-timeline__what span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--db-muted-foreground);
+}
+.cellops-timeline__decisions {
+  grid-column: 3 / -1;
+  grid-row: 2;
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.cellops-timeline__decisions:empty {
+  display: none;
+}
+.cellops-timeline__status {
+  grid-column: 4;
+  grid-row: 1;
+}
+.cellops-timeline__decisions span {
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--db-border);
+  color: var(--db-muted-foreground);
+  white-space: nowrap;
+}
+.cellops-timeline__status {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--db-muted-foreground);
+}
+.cellops-timeline__status.is-open {
+  color: var(--cell-crit);
+}
+.cellops-timeline__status.is-acknowledged {
+  color: var(--cell-warn);
+}
+
+/* ---------- data platform ---------- */
+
+.cellops-platform {
+  margin-top: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cellops-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 0 2px;
+}
+.cellops-section-head h2 {
+  margin: 2px 0 0;
+  font: 600 17px var(--db-font-display);
+}
+.cellops-section-head__note {
+  font-size: 11px;
+  color: var(--db-muted-foreground);
+}
+.cellops-platform__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+.cellops-metric {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 140px;
+  padding: 14px 16px 12px;
+  border: 1px solid var(--db-border);
+  border-radius: 12px;
+  background: var(--cellops-surface);
+  box-shadow: var(--cellops-raise);
+  overflow: hidden;
+}
+.cellops-metric header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--db-muted-foreground);
+}
+.cellops-metric header svg {
+  width: 14px;
+  height: 14px;
+}
+.cellops-metric__value {
+  font: 600 28px/1.05 var(--db-font-display);
+  letter-spacing: -0.02em;
+}
+.cellops-metric__value small {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--db-muted-foreground);
+}
+.cellops-metric__trend {
+  width: 100%;
+  height: 30px;
+  margin-top: auto;
+}
+.cellops-metric__trend .line {
+  fill: none;
+  stroke: var(--cell-trend);
+  stroke-width: 1.5;
+}
+.cellops-metric__trend .area {
+  fill: color-mix(in srgb, var(--cell-trend) 12%, transparent);
+}
+.cellops-metric footer {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--db-muted-foreground);
+}
+.cellops-metric:not(:has(.cellops-metric__trend)) footer {
+  margin-top: auto;
+}
+.cellops-metric.tone-warn {
+  border-color: color-mix(in srgb, var(--cell-warn) 45%, var(--db-border));
+}
+.cellops-metric.tone-warn .cellops-metric__value {
+  color: var(--cell-warn);
+}
+.cellops-metric.tone-held {
+  border-color: color-mix(in srgb, var(--cell-warn) 45%, var(--db-border));
+}
+.cellops-metric.tone-held::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 4px;
+  background: var(--cellops-hatch);
+}
+
+.cellops-deepdive {
+  border: 1px solid var(--db-border);
+  border-radius: 12px;
+  padding: 0 16px;
+  background: var(--db-background);
+}
+.cellops-deepdive > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 13px 0;
+  font: 600 14px var(--db-font-display);
+}
+.cellops-deepdive > summary::-webkit-details-marker {
+  display: none;
+}
+.cellops-deepdive > summary::before {
+  content: "▸";
+  color: var(--db-muted-foreground);
+  transition: transform 0.15s;
+}
+.cellops-deepdive[open] > summary::before {
+  transform: rotate(90deg);
+}
+.cellops-deepdive > summary span {
+  font: 400 11.5px var(--db-font-sans);
+  color: var(--db-muted-foreground);
+}
+.cellops-deepdive__body {
+  padding-bottom: 16px;
+}
+.cellops-deepdive__body > .sec:first-child {
+  margin-top: 4px;
+}
+
+/* ---------- Genie drawer ---------- */
+
+.cellops-genie .genie-drawer {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  top: auto;
+  z-index: 60;
+  align-items: flex-end;
+}
+.cellops-genie .genie-drawer__toggle {
+  box-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.5);
+}
+.cellops-genie .genie-drawer__panel[hidden] {
+  display: none;
+}
+.cellops-genie .genie-drawer__panel {
+  width: min(400px, calc(100vw - 36px));
+  max-height: min(640px, calc(100vh - 90px));
+  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.55);
+}
+
+/* ---------- responsive / motion ---------- */
+
+@media (max-width: 1180px) {
+  .cellops-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .cellops .twin.twin--cell.cellops__twin {
+    height: 500px;
+  }
+}
+@media (max-width: 860px) {
+  .cellops-hero {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .cellops-hero__side {
+    align-items: flex-start;
+  }
+  .cellops-incident__readout {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@keyframes cellops-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes cellops-flow {
+  to {
+    background-position: 10px 0;
+  }
+}
+@keyframes cellops-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cellops-spin,
+  .cellops-spinner,
+  .cellops-chain li.is-ok::after,
+  .cellops-chip.is-alert::before {
+    animation: none;
+  }
+}

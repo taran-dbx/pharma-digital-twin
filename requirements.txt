@@ -1,0 +1,19 @@
+# Runtime dependencies installed by the Databricks Apps runtime (pip).
+# Pinned to tested versions; keep in lockstep with [project].dependencies in
+# pyproject.toml.
+./lib/iot_data_simulator-0.1.0-py3-none-any.whl
+# Usage tracking (services/usage_tracking.py). Vendored because the package is
+# published on the Databricks-internal PyPI proxy, which the Apps runtime cannot
+# reach. sha256 2116a28402c25fc309284f1bb724e737ea57528f0fae197a7a7bf992b7522232
+# (matches pypi-proxy.dev.databricks.com). Its deps (requests, databricks-sdk) are
+# pinned below.
+./lib/dbdemos_tracker-0.1.12-py3-none-any.whl
+fastapi==0.141.1
+uvicorn==0.52.4
+pydantic==2.13.4
+httpx==0.28.1
+requests==2.34.2
+asyncpg==0.31.0
+psycopg2-binary==2.9.11
+databricks-sdk==0.133.0
+databricks-zerobus-ingest-sdk==0.2.0

@@ -1,0 +1,19 @@
+{
+  "UC_CATALOG": "example-catalog",
+  "UC_SCHEMA": "rtm_lakets_zb",
+  "PGHOST": "example-lakebase.database.us-east-1.cloud.databricks.com",
+  "LAKEBASE_PROJECT": "iot-app-backend-example",
+  "LAKEBASE_ENDPOINT": "projects/iot-app-backend-example/branches/production/endpoints/primary",
+  "DATABRICKS_SQL_WAREHOUSE_ID": "0123456789abcdef",
+  "ZEROBUS_SERVER_ENDPOINT": "111111111111111.zerobus.us-east-1.cloud.databricks.com",
+  "ZEROBUS_CLIENT_ID": "00000000-0000-0000-0000-00000000000b",
+  "ZEROBUS_SECRET_SCOPE": "",
+  "ZEROBUS_SECRET_KEY": "",
+  "UC_STORAGE_BASE": "",
+  "UC_EXTERNAL_LOCATION": "",
+  "UC_SERVICE_CREDENTIAL": "iot-rtm-sc",
+  "PIPELINES_LAKEBASE_PROJECT": "iot-pipelines-example",
+  "MSK_BOOTSTRAP_SERVERS": "b-1-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198,b-2-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198,b-3-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198",
+  "INDUSTRIES": "pharmaceutical,manufacturing",
+  "ADMIN_GROUP": "iot-admins"
+}

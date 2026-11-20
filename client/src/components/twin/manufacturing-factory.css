@@ -1,0 +1,155 @@
+.manufacturing-factory {
+  position: absolute;
+  inset: 0;
+  min-height: 320px;
+  overflow: hidden;
+  background: var(--db-secondary);
+}
+
+.manufacturing-factory canvas {
+  display: block;
+}
+
+.manufacturing-factory__vignette {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgb(255 255 255 / 18%), transparent 18%, transparent 82%, rgb(255 255 255 / 10%)),
+    linear-gradient(0deg, rgb(38 38 38 / 10%), transparent 28%);
+}
+
+:is(.dark, [data-theme="dark"]) .manufacturing-factory__vignette {
+  background:
+    linear-gradient(90deg, rgb(4 7 9 / 42%), transparent 22%, transparent 78%, rgb(4 7 9 / 28%)),
+    linear-gradient(0deg, rgb(4 7 9 / 34%), transparent 28%);
+}
+
+.manufacturing-factory__label {
+  pointer-events: none;
+  min-width: 172px;
+  padding: 7px 9px;
+  border: 1px solid var(--db-border);
+  background: color-mix(in srgb, var(--db-popover) 91%, transparent);
+  box-shadow: 0 8px 26px rgb(38 38 38 / 14%);
+  backdrop-filter: blur(8px);
+}
+
+.manufacturing-factory__label * {
+  pointer-events: none;
+}
+
+.manufacturing-factory__label strong {
+  display: block;
+  color: var(--db-foreground);
+  font-family: var(--db-font-display);
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.manufacturing-factory__label > span {
+  color: var(--db-muted-foreground);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.manufacturing-factory__kpis {
+  display: grid;
+  gap: 4px;
+  margin-top: 7px;
+  padding-top: 6px;
+  border-top: 1px solid var(--db-border);
+}
+
+.manufacturing-factory__kpis div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.manufacturing-factory__kpis small {
+  overflow: hidden;
+  max-width: 105px;
+  color: var(--db-muted-foreground);
+  font-size: 7px;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.manufacturing-factory__kpis b {
+  color: var(--db-foreground);
+  font: 600 10px var(--db-font-mono);
+  white-space: nowrap;
+}
+
+.manufacturing-factory__kpis i {
+  margin-left: 3px;
+  color: var(--db-muted-foreground);
+  font-size: 7px;
+  font-style: normal;
+  font-weight: 400;
+}
+
+:is(.dark, [data-theme="dark"]) .manufacturing-factory__label {
+  box-shadow: 0 8px 26px rgb(0 0 0 / 32%);
+}
+
+.manufacturing-factory__stations {
+  position: absolute;
+  z-index: 2;
+  right: 12px;
+  bottom: 10px;
+  left: 12px;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--db-border);
+  border-radius: var(--db-radius);
+  background: var(--db-border);
+  box-shadow: var(--db-shadow-db-sm);
+}
+
+.manufacturing-factory__stations button {
+  min-width: 0;
+  padding: 6px 8px;
+  border: 0;
+  background: color-mix(in srgb, var(--db-card) 94%, transparent);
+  color: var(--db-muted-foreground);
+  cursor: pointer;
+  font: 600 9px var(--db-font-display);
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.manufacturing-factory__stations button:hover,
+.manufacturing-factory__stations button.active {
+  background: color-mix(in srgb, var(--db-brand-red) 14%, var(--db-card));
+  color: var(--db-foreground);
+}
+
+.manufacturing-factory__stations button:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid var(--db-brand-red);
+  outline-offset: -2px;
+}
+
+.manufacturing-factory__stations span {
+  margin-right: 5px;
+  color: var(--db-brand-red);
+  font-family: var(--db-font-mono);
+  font-size: 8px;
+}
+
+@media (max-width: 760px) {
+  .manufacturing-factory__stations {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

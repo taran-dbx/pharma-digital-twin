@@ -1,0 +1,127 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iot-digital-twin"
+version = "0.1.0"
+description = "IoT digital twin Databricks App: industry pipelines, live dashboards and LakeTS on Lakebase."
+readme = "README.md"
+# Databricks Apps system environment runs Python 3.11.
+requires-python = ">=3.11"
+# Runtime pins. Keep in lockstep with requirements.txt, which is what the
+# Databricks Apps runtime actually installs. The bundled wheels
+# (./lib/iot_data_simulator-*.whl, ./lib/dbdemos_tracker-*.whl) are installed
+# from requirements.txt only, because a local wheel path cannot be expressed
+# portably here. dbdemos-tracker is optional at runtime: when it is missing,
+# usage tracking is simply disabled.
+dependencies = [
+    "fastapi==0.141.1",
+    "uvicorn==0.52.4",
+    "pydantic==2.13.4",
+    "httpx==0.28.1",
+    "requests==2.34.2",
+    "asyncpg==0.31.0",
+    "psycopg2-binary==2.9.11",
+    "databricks-sdk==0.133.0",
+    "databricks-zerobus-ingest-sdk==0.2.0",
+]
+
+# Dev/CI tooling; install with: pip install -r requirements.txt -e ".[dev]"
+# (requirements.txt also pulls in the bundled ./lib simulator wheel).
+# Keep ruff in lockstep with .pre-commit-config.yaml.
+[project.optional-dependencies]
+dev = [
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "ruff==0.17.4",
+    "mypy==2.4.1",
+    "pre-commit==4.7.0",
+    # Executes ops/notebooks/pipeline_health_check.ipynb in sample mode (tests/test_pipeline_health_notebook.py).
+    "nbformat==5.11.1",
+    "nbclient==0.11.0",
+    "ipykernel==7.4.0",
+]
+
+# The app is deployed as a source tree (``uvicorn --app-dir src iot_twin.app:app``);
+# the package config below also makes ``pip install -e .`` work for development.
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+iot_twin = ["assets/*.sql"]
+
+# ── Ruff ───────────────────────────────────────────────────────────────────
+[tool.ruff]
+target-version = "py311"
+src = ["src"]
+line-length = 100
+extend-exclude = ["client", "tests/e2e", "static", "lib"]
+
+[tool.ruff.lint]
+# S105-S107: no string literal assigned to a credential-named variable, kwarg,
+# key or default (external "hardcoded credential" scanners flag these shapes).
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "S105", "S106", "S107"]
+ignore = [
+    # Long string literals (SQL, notebook templates, log messages) are kept
+    # intact; the formatter enforces line length for code.
+    "E501",
+    # contextlib.suppress is not clearer than an explicit try/except/pass.
+    "SIM105",
+]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI dependency-injection markers are evaluated once by design.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Body",
+    "fastapi.Path",
+    "fastapi.Header",
+    "fastapi.Cookie",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Security",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["iot_twin"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests build fixtures after sys.path / env tweaks and assert broad failures
+# from live-backend paths.
+"tests/**" = ["E402", "B017", "SIM117"]
+# Operator scripts adjust sys.path before importing app modules.
+"scripts/**" = ["E402"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+docstring-code-format = false
+
+# ── Pytest ─────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Browser tests are Node/Playwright, not pytest: never collect them.
+norecursedirs = ["e2e", "node_modules"]
+pythonpath = ["src"]
+# Async tests opt in explicitly with @pytest.mark.asyncio.
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "--strict-markers"
+markers = [
+    "integration: talks to a live Databricks workspace; skipped unless configured",
+]
+
+# ── Mypy ───────────────────────────────────────────────────────────────────
+# Lenient baseline: start with core/ and models/ (src/iot_twin/), widen as types land.
+[tool.mypy]
+python_version = "3.11"
+files = ["src/iot_twin/core", "src/iot_twin/models"]
+ignore_missing_imports = true
+follow_imports = "silent"
+warn_unused_configs = true
+check_untyped_defs = false
+disallow_untyped_defs = false
+no_implicit_optional = true

@@ -1,0 +1,69 @@
+/*
+ * Focused overrides for the vendored manufacturing 3D dashboard.
+ * Keep labels readable while reducing their canvas footprint.
+ */
+.manufacturing-factory__label {
+  width: 132px;
+  min-width: 132px;
+  max-width: 132px;
+  overflow: hidden;
+  padding: 4px 6px;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 20%);
+  backdrop-filter: blur(6px);
+}
+
+.manufacturing-factory__label strong {
+  overflow: hidden;
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manufacturing-factory__label > span {
+  font-size: 10px;
+}
+
+.manufacturing-factory__kpis {
+  gap: 2px;
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+.manufacturing-factory__kpis div {
+  gap: 6px;
+}
+
+.manufacturing-factory__kpis small {
+  max-width: 82px;
+  font-size: 10px;
+}
+
+.manufacturing-factory__kpis b {
+  font-size: 10px;
+}
+
+.manufacturing-factory__kpis i {
+  margin-left: 2px;
+  font-size: 10px;
+}
+
+@media (max-width: 720px) {
+  .manufacturing-factory__label {
+    width: 116px;
+    min-width: 116px;
+    max-width: 116px;
+  }
+
+  .manufacturing-factory__kpis small {
+    max-width: 70px;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .manufacturing-factory__label {
+    background: var(--db-popover);
+    backdrop-filter: none;
+  }
+}
