@@ -224,6 +224,8 @@ export interface IndustryAlertRule {
   severity: string;
   fault_code: string;
   hysteresis?: number;
+  /** Seconds a violation must persist before the alert opens. */
+  duration_s?: number;
   /** Configured operator response, e.g. "QA hold: quarantine parts…". */
   action?: string;
   /** Validation references, e.g. `oq_ref`, `pq_ref`, `validated_limit`. */

@@ -34,7 +34,7 @@ OPS_NOTEBOOK = ROOT / "ops" / "notebooks" / "pipeline_health_check.ipynb"
 GENIE_CONTENT = ROOT / "src" / "iot_twin" / "services" / "genie" / "genie_space_content.py"
 SECTIONS = (
     "Pipeline at a glance",
-    "1. Right-first-time process health",
+    "1. Process health index (telemetry approximation)",
     "2. Downtime and alarms",
     "3. Sensor health trends",
     "4. Throughput per hour versus target",

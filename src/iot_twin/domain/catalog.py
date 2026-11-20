@@ -1034,6 +1034,7 @@ def reference_payload(industry: str) -> dict:
                 "severity": rule.severity,
                 "fault_code": rule.fault_code,
                 "hysteresis": rule.hysteresis,
+                "duration_s": rule.duration_s,
                 "action": rule.action,
                 "metadata": rule_metadata(rule),
             }

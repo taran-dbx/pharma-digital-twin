@@ -196,3 +196,70 @@ class TestLotTagging:
         )
         assert opened.alert.metadata["lot_id"] == lot_context.lot_id_at(at)
         assert opened.alert.metadata["dhr_ref"] == lot_context.dhr_ref(lot_context.lot_id_at(at))
+
+
+class TestReviewFixes:
+    def test_lot_ids_carry_the_date_and_never_wrap_c7815_regression(self) -> None:
+        """[C7815][regression] Lot ids are <prefix>-<YYMMDD>-<cycle of the UTC day>."""
+        day = datetime(2027, 1, 15, tzinfo=UTC).timestamp()
+        assert lot_context.lot_id_at(day) == "TM-HS12-270115-000"
+        assert lot_context.lot_id_at(day + 86_399) == "TM-HS12-270115-287"
+        assert lot_context.lot_id_at(day + 86_400) == "TM-HS12-270116-000"
+        # 34.7 days apart used to collide with a 4-digit counter.
+        assert lot_context.lot_id_at(day) != lot_context.lot_id_at(day + 10_000 * 300)
+
+    def test_projected_rft_is_the_single_parts_based_definition_c7816_smoke(self) -> None:
+        """[C7816][smoke] (parts started - parts at risk) / parts started."""
+        base = 1_800_000_000 - (1_800_000_000 % lot_context.LOT_CYCLE_S)
+        full = lot_context.projected_rft(base + 225, base + 275, base + 299)
+        assert full == {"pct": 80.0, "good": 12, "parts_started": 15, "parts_at_risk": 3}
+        mid = lot_context.projected_rft(base + 225, base + 275, base + 275)
+        assert mid is not None and mid["parts_started"] == 14
+        assert (
+            lot_context.lot_disposition(base + 225, base + 275, base + 299)["projected_rft"] == full
+        )
+        assert "(parts started - parts at risk) / parts started" in (
+            lot_context.PROJECTED_RFT_DEFINITION
+        )
+
+    def test_excursion_starts_at_first_over_limit_reading_c7817_regression(self) -> None:
+        """[C7817][regression] Containment starts at the first over-limit reading, else opened - duration."""
+        from iot_twin.services.alerts.alert_engine import AlertRecord
+        from iot_twin.services.alerts.alert_responses import excursion_start
+
+        opened = datetime(2026, 11, 20, 10, 4, 1, tzinfo=UTC)
+
+        def alert(metadata: dict) -> AlertRecord:
+            return AlertRecord(
+                id="a",
+                fingerprint="f",
+                industry="manufacturing",
+                pipeline_id=None,
+                rule_id="mfg-alert-spindle-temp",
+                sensor_id="mfg-sns-cnc_1_spindle_temp",
+                sensor_ids=[],
+                severity="crit",
+                status="open",
+                fault_code=None,
+                value=None,
+                threshold=60.0,
+                opened_at=opened,
+                updated_at=opened,
+                metadata=metadata,
+            )
+
+        stamped = alert({"excursion_started_at": "2026-11-20T10:03:58.500000+00:00"})
+        assert excursion_start(stamped, opened).isoformat() == "2026-11-20T10:03:58.500000+00:00"
+        assert (opened - excursion_start(alert({}), opened)).total_seconds() == 2.0
+
+    @pytest.mark.asyncio
+    async def test_alert_engine_stamps_the_first_violation_c7817_smoke(self) -> None:
+        """[C7817][smoke] The engine records when the first over-limit reading arrived."""
+        clock = {"t": datetime(2026, 11, 20, 10, 3, 58, tzinfo=UTC)}
+        engine = AlertEngine(now_fn=lambda: clock["t"])
+        rule = _rule("mfg-alert-spindle-temp")
+        reading = [{"sensor_name": "cnc_1_spindle_temp", "value": 61.0}]
+        assert await engine.evaluate(reading, [rule], industry="manufacturing") == []
+        clock["t"] = datetime(2026, 11, 20, 10, 4, 0, 500000, tzinfo=UTC)
+        (opened,) = await engine.evaluate(reading, [rule], industry="manufacturing")
+        assert opened.alert.metadata["excursion_started_at"] == "2026-11-20T10:03:58+00:00"
