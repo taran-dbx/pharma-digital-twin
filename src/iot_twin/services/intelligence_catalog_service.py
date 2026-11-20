@@ -10,6 +10,7 @@ Tables:
 - intelligence_maintenance_records
 - intelligence_alert_rules
 - intelligence_alert_snapshot  (read-only snapshot contract; Genie cannot mutate alerts)
+- intelligence_genai_audit     (read-only mirror of the AI action-plan audit trail)
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ TABLE_NAMES: tuple[str, ...] = (
     "intelligence_maintenance_records",
     "intelligence_alert_rules",
     "intelligence_alert_snapshot",
+    "intelligence_genai_audit",
 )
 
 _TABLE_DDL: dict[str, str] = {
@@ -85,6 +87,33 @@ threshold DOUBLE,
 opened_at STRING,
 updated_at STRING
 """,
+    "intelligence_genai_audit": """
+plan_id STRING,
+alert_id STRING,
+industry STRING,
+requested_by STRING,
+requested_at STRING,
+endpoint STRING,
+model STRING,
+model_version STRING,
+prompt_template_version STRING,
+prompt_hash STRING,
+grounding_hash STRING,
+grounding_check STRING,
+grounding_reasons STRING,
+status STRING,
+citation_ids STRING,
+grounding_rows STRING,
+plan_summary STRING,
+plan STRING,
+risk_score DOUBLE,
+risk_model STRING,
+risk_model_version STRING,
+latency_ms BIGINT,
+total_tokens BIGINT,
+applied_by STRING,
+applied_at STRING
+""",
 }
 
 _KIND_BY_NAME: dict[str, str] = {
@@ -93,6 +122,7 @@ _KIND_BY_NAME: dict[str, str] = {
     "intelligence_maintenance_records": "maintenance_records",
     "intelligence_alert_rules": "alert_rules",
     "intelligence_alert_snapshot": "alert_snapshot",
+    "intelligence_genai_audit": "genai_audit",
 }
 
 

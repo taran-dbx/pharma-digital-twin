@@ -261,6 +261,44 @@ PRODUCTION_EVENT_INDEXES = (
     "ON production_event (industry, created_at DESC)",
 )
 
+# Part 11-style trace of every AI action plan: who asked, when, which endpoint and
+# model answered, the exact prompt (template version + hash), the exact rows it was
+# given (grounding_rows, with citation ids), the answer and its grounding check.
+# Deliberately no FK to ``alert``: an audit record must outlive the alert row.
+GENAI_ACTION_PLAN_AUDIT_DDL = """
+CREATE TABLE IF NOT EXISTS genai_action_plan_audit (
+    id UUID PRIMARY KEY,
+    alert_id UUID NOT NULL,
+    industry TEXT,
+    requested_by TEXT NOT NULL,
+    requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    endpoint TEXT NOT NULL,
+    model TEXT,
+    model_version TEXT,
+    prompt_template_version TEXT NOT NULL,
+    prompt_hash TEXT NOT NULL,
+    grounding_hash TEXT NOT NULL,
+    grounding_rows JSONB NOT NULL DEFAULT '[]'::jsonb,
+    response JSONB NOT NULL DEFAULT '{}'::jsonb,
+    grounding_check TEXT NOT NULL CHECK (grounding_check IN ('pass', 'fail')),
+    grounding_reasons JSONB NOT NULL DEFAULT '[]'::jsonb,
+    status TEXT NOT NULL CHECK (status IN ('generated', 'rejected', 'error')),
+    error TEXT,
+    latency_ms INTEGER,
+    prompt_tokens INTEGER,
+    completion_tokens INTEGER,
+    total_tokens INTEGER,
+    applied_by TEXT,
+    applied_at TIMESTAMPTZ,
+    applied_response_id UUID
+)
+"""
+
+GENAI_ACTION_PLAN_AUDIT_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_genai_audit_alert_requested "
+    "ON genai_action_plan_audit (alert_id, requested_at DESC)",
+)
+
 ALERT_INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_alert_status_updated ON alert (status, updated_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_alert_industry ON alert (industry)",
@@ -376,6 +414,17 @@ async def ensure_production_tables(db: _Executor) -> None:
     await _ensure_indexes(db, PRODUCTION_EVENT_INDEXES)
 
 
+async def ensure_genai_action_plan_audit_table(db: _Executor) -> None:
+    """Create the AI action-plan audit table + index.
+
+    ``CREATE TABLE IF NOT EXISTS`` is a no-op for a non-owner when the table
+    exists; the index step tolerates the ownership error Postgres raises before
+    its IF-NOT-EXISTS skip (see :func:`ensure_provisioned_resource_table`).
+    """
+    await db.execute(GENAI_ACTION_PLAN_AUDIT_DDL)
+    await _ensure_indexes(db, GENAI_ACTION_PLAN_AUDIT_INDEXES)
+
+
 async def ensure_app_schema(db: _Executor) -> None:
     """Create all app-backend tables in FK-dependency order.
 
@@ -391,3 +440,4 @@ async def ensure_app_schema(db: _Executor) -> None:
     await ensure_alert_event_table(db)
     await ensure_alert_response_table(db)
     await ensure_production_tables(db)
+    await ensure_genai_action_plan_audit_table(db)

@@ -44,21 +44,33 @@
     ]
    },
    {
+    "id": "5820389775346e4b2397569983a7f9a3",
+    "question": [
+     "What is the average micro-batch trigger duration and throughput over the last hour?"
+    ]
+   },
+   {
     "id": "5eb7b4918d765086574a99418b70f9a5",
     "question": [
      "What is the approximate first-pass yield (right-first-time) proxy per sensor over the last 24 hours?"
     ]
    },
    {
+    "id": "9cc30f254a524168af191c28446a02ff",
+    "question": [
+     "How has the anomaly rate trended per hour over the last day?"
+    ]
+   },
+   {
     "id": "b9f3edf5f4efa2f253c5122542d5c849",
     "question": [
-     "What is the average micro-batch trigger duration and throughput over the last hour?"
+     "Which rows did the AI use for the latest Spindle 3 alert, and did its plan pass the grounding check?"
     ]
    },
    {
     "id": "d3668ebc361f0124c2cc798043ace3a8",
     "question": [
-     "How has the anomaly rate trended per hour over the last day?"
+     "Explain why Spindle 3 was flagged and what the AI recommended"
     ]
    },
    {
@@ -79,6 +91,9 @@
    },
    {
     "identifier": "cat.sch.intelligence_assets"
+   },
+   {
+    "identifier": "cat.sch.intelligence_genai_audit"
    },
    {
     "identifier": "cat.sch.intelligence_maintenance_records"
@@ -185,6 +200,15 @@
   "example_question_sqls": [
    {
     "id": "0144bcbd423fd889fb2908aa4a497090",
+    "question": [
+     "Explain why Spindle 3 was flagged and what the AI recommended"
+    ],
+    "sql": [
+     "SELECT s.alert_id, s.rule_id, s.fault_code, s.status, s.value, s.threshold, s.opened_at, a.risk_score, a.risk_model, a.risk_model_version, a.plan_summary, a.grounding_check, a.citation_ids, a.model, a.requested_at, a.applied_by, a.applied_at FROM cat.sch.intelligence_alert_snapshot s LEFT JOIN cat.sch.intelligence_genai_audit a ON a.alert_id = s.alert_id AND a.industry = 'manufacturing' WHERE s.industry = 'manufacturing' AND s.rule_id IN ('mfg-alert-spindle-temp', 'medtech-model-spindle-risk') QUALIFY ROW_NUMBER() OVER (PARTITION BY s.alert_id ORDER BY a.requested_at DESC) = 1 ORDER BY s.opened_at DESC LIMIT 10"
+    ]
+   },
+   {
+    "id": "55cecf5f4be9708fb1af95f196204034",
     "question": [
      "What is the streaming throughput and p99 latency over the last hour?"
     ],
@@ -337,6 +361,9 @@
      "Time to detect = intelligence_alert_snapshot.opened_at minus the first reading above the validated limit in the same excursion. MTTR = cleared/updated time minus opened_at.\n",
      "First-pass yield / right-first-time here is a telemetry proxy (share of in-range readings), not CMM or lot-release data; say so.\n",
      "NCRs, QA holds (quarantine_lot), CMM inspection requests and their Part 11-style audit fields (actor, timestamp, reason, comment, signature meaning) are recorded in the app's decision log, not in these tables. For NCR numbers or dispositions, list the VPP-SPINDLE3-TEMP alert episodes and lots at risk, and say the NCR record lives in the app's decision log.\n",
+     "AI action plans: intelligence_genai_audit has one row per AI action plan (plan_id; alert_id = intelligence_alert_snapshot.alert_id). citation_ids lists the exact rows the AI was given (alert:, alert_event:, alert_response:, readings:, lot:, alert_rule:, maintenance:, risk_score: ids) and grounding_rows holds those rows as JSON; plan is the advisory plan JSON and plan_summary its summary; grounding_check is 'pass' or 'fail' (reasons in grounding_reasons); endpoint, model, model_version, prompt_template_version and prompt_hash identify the model call; applied_by / applied_at show who applied it through the signed response workflow (NULL = not applied). An AI plan is a recommendation, never a decision.\n",
+     "Risk score: when a model scored the alert, intelligence_genai_audit.risk_score (0 to 1), risk_model and risk_model_version carry it; alerts with rule_id 'medtech-model-spindle-risk' in intelligence_alert_snapshot are model-flagged risk alerts (value = the score). Narrate it in plain language (higher = more likely the spindle is drifting toward an excursion), say it is a model estimate, name the model and version, and never invent a score when risk_score is NULL.\n",
+     "To explain why Spindle 3 was flagged and what the AI recommended: take the alert's value vs threshold from intelligence_alert_snapshot, LEFT JOIN intelligence_genai_audit on alert_id (latest requested_at), and report the risk score, plan_summary, grounding_check and applied_by.\n",
      "You recommend; you never release or quarantine lots, open NCRs or sign records. Those require a qualified person's electronic signature in the app.\n",
      "Downtime = time intervals where manufacturing_microbatch.fault_active is TRUE. Approximate downtime minutes as the count of distinct minutes (date_trunc('minute', manufacturing_microbatch.event_time)) with at least one fault_active reading.\n",
      "Availability = 1 - (fault minutes / observed minutes), where observed minutes are distinct minutes with any reading. Report as a percentage.\n",

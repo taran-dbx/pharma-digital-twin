@@ -37,7 +37,11 @@ MEDTECH_STARTERS: tuple[str, ...] = (
     "Which part serials should be quarantined for the latest Spindle 3 excursion?",
     "How long did it take to detect each Spindle 3 excursion this week?",
     "Which Spindle 3 validated-limit excursions this shift need an NCR, and what is each alert's status?",
+    "Explain why Spindle 3 was flagged and what the AI recommended",
+    "Which rows did the AI use for the latest Spindle 3 alert, and did its plan pass the grounding check?",
 )
+EXPLAIN_FLAG_STARTER = MEDTECH_STARTERS[4]
+RISK_MODEL_RULE = "medtech-model-spindle-risk"
 
 SPINDLE_TEMP_SENSOR = "cnc_1_spindle_temp"
 SPINDLE_TEMP_RULE = "mfg-alert-spindle-temp"
@@ -276,6 +280,25 @@ def _medtech_context_lines(t: str, mode: str, lit: str) -> list[str]:
         "the app's decision log, not in these tables. For NCR numbers or dispositions, list the "
         "VPP-SPINDLE3-TEMP alert episodes and lots at risk, and say the NCR record lives in "
         "the app's decision log.",
+        "AI action plans: intelligence_genai_audit has one row per AI action plan "
+        "(plan_id; alert_id = intelligence_alert_snapshot.alert_id). citation_ids lists the "
+        "exact rows the AI was given (alert:, alert_event:, alert_response:, readings:, lot:, "
+        "alert_rule:, maintenance:, risk_score: ids) and grounding_rows holds those rows as "
+        "JSON; plan is the advisory plan JSON and plan_summary its summary; grounding_check is "
+        "'pass' or 'fail' (reasons in grounding_reasons); endpoint, model, model_version, "
+        "prompt_template_version and prompt_hash identify the model call; applied_by / "
+        "applied_at show who applied it through the signed response workflow (NULL = not "
+        "applied). An AI plan is a recommendation, never a decision.",
+        "Risk score: when a model scored the alert, intelligence_genai_audit.risk_score "
+        "(0 to 1), risk_model and risk_model_version carry it; alerts with rule_id "
+        f"'{RISK_MODEL_RULE}' in intelligence_alert_snapshot are model-flagged risk alerts "
+        "(value = the score). Narrate it in plain language (higher = more likely the "
+        "spindle is drifting toward an excursion), say it is a model estimate, name the "
+        "model and version, and never invent a score when risk_score is NULL.",
+        "To explain why Spindle 3 was flagged and what the AI recommended: take the alert's "
+        "value vs threshold from intelligence_alert_snapshot, LEFT JOIN "
+        "intelligence_genai_audit on alert_id (latest requested_at), and report the risk "
+        "score, plan_summary, grounding_check and applied_by.",
         "You recommend; you never release or quarantine lots, open NCRs or sign records. "
         "Those require a qualified person's electronic signature in the app.",
     ]
@@ -431,6 +454,22 @@ def _excursion_lots_sql(tel: str, refs: dict[str, str], industry: str, mode: str
     )
 
 
+def _explain_flag_sql(refs: dict[str, str], industry: str) -> str:
+    """Why Spindle 3 was flagged (value vs limit, risk score) and the latest AI plan."""
+    snapshot = _quoted(refs["alert_snapshot"])
+    audit = _quoted(refs["genai_audit"])
+    lit = _literal(industry)
+    return (
+        "SELECT s.alert_id, s.rule_id, s.fault_code, s.status, s.value, s.threshold, "
+        "s.opened_at, a.risk_score, a.risk_model, a.risk_model_version, a.plan_summary, "
+        "a.grounding_check, a.citation_ids, a.model, a.requested_at, a.applied_by, a.applied_at "
+        f"FROM {snapshot} s LEFT JOIN {audit} a ON a.alert_id = s.alert_id AND a.industry = {lit} "
+        f"WHERE s.industry = {lit} AND s.rule_id IN ('{SPINDLE_TEMP_RULE}', '{RISK_MODEL_RULE}') "
+        "QUALIFY ROW_NUMBER() OVER (PARTITION BY s.alert_id ORDER BY a.requested_at DESC) = 1 "
+        "ORDER BY s.opened_at DESC LIMIT 10"
+    )
+
+
 def _mode_sql(tel: str, metrics: str | None, mode: str) -> tuple[str, str]:
     if metrics is None:
         return (
@@ -477,7 +516,8 @@ def example_sqls(
                 (
                     MEDTECH_STARTERS[0],
                     _excursion_lots_sql(tel, refs, industry, mode),
-                )
+                ),
+                (EXPLAIN_FLAG_STARTER, _explain_flag_sql(refs, industry)),
             ]
             if profile.medtech
             else []

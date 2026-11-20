@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -21,6 +22,8 @@ from iot_twin.services.alerts.alert_responses import (
     response_store_for,
 )
 from iot_twin.services.alerts.alert_sse import build_lifecycle_payload, enqueue_alert_events
+from iot_twin.services.genai.audit_store import audit_store_for
+from iot_twin.services.genai.audit_sync import mark_audit_dirty
 from iot_twin.services.production_control import (
     CELL_ASSETS,
     ProductionControlError,
@@ -146,6 +149,20 @@ async def list_alert_responses(
     }
 
 
+async def _plan_for(state: AppState, alert_id: str, raw: Any, db: Any) -> str | None:
+    """Validate an optional ``action_plan_id``: it must be a plan for this alert."""
+    if raw in (None, ""):
+        return None
+    try:
+        plan_id = str(uuid.UUID(str(raw)))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="action_plan_id must be a UUID") from exc
+    plan = await audit_store_for(state).get(plan_id, db=db)
+    if plan is None or plan.alert_id != alert_id:
+        raise HTTPException(status_code=422, detail="action_plan_id is not a plan for this alert")
+    return plan_id
+
+
 @router.post("/api/alerts/{alert_id}/responses")
 async def record_alert_response(
     request: Request,
@@ -172,12 +189,19 @@ async def record_alert_response(
     alert = await engine_for(state).get_alert(alert_id, db=db)
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")
+    plan_id = await _plan_for(state, alert.id, body.get("action_plan_id"), db)
     response, created = await response_store_for(state).record(
         alert, action, recorded_by=user_email, db=db, audit=audit
     )
     payload = response_event(alert, response)
     events = [payload] if created else []
     result: dict[str, Any] = {**payload, "created": created}
+    if plan_id and created:
+        applied = await audit_store_for(state).mark_applied(
+            plan_id, applied_by=user_email, response_id=response.id, db=db
+        )
+        result["action_plan"] = applied.summary() if applied else {"plan_id": plan_id}
+        mark_audit_dirty(state)
     if created and action in STOPPING_ACTIONS and alert.industry in CELL_ASSETS:
         try:
             change, changed = await production_control_for(state).set_state(

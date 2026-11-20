@@ -44,7 +44,8 @@ class TestTelemetryTableMapping:
         assert SHADOW in tables
         assert "cat.sch.manufacturing_realtime" not in tables
         assert "cat.sch.manufacturing_metrics" in tables
-        assert len(tables) == 7
+        assert "cat.sch.intelligence_genai_audit" in tables
+        assert len(tables) == 8
 
     def test_realtime_space_and_allowlist_agree(self) -> None:
         raw = gss.build_serialized_space("manufacturing", "realtime")

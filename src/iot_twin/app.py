@@ -27,6 +27,7 @@ from iot_twin.services.deployment.deployment_service import (
     RuntimeOAuthCredentialError,
     sync_runtime_oauth_secret,
 )
+from iot_twin.services.genai.audit_sync import start_genai_audit_sync
 from iot_twin.services.simulator_service import run_simulator
 from iot_twin.services.usage_tracking import UsageTracker, UsageTrackingMiddleware
 
@@ -128,6 +129,7 @@ async def lifespan(application: FastAPI):
     state.simulator_task = asyncio.create_task(run_simulator(state))
     start_industry_runtime_refresh(state)
     start_alert_snapshot_sync(state)
+    start_genai_audit_sync(state)
 
     logger.info("=== IoT Digital Twin started (db=%s) ===", state.db_available)
     yield
