@@ -29,6 +29,7 @@ from iot_twin.routes.static_files import router as static_files_router
 from iot_twin.routes.streaming_latency import router as streaming_latency_router
 from iot_twin.routes.user import router as user_router
 from iot_twin.routes.validation_admin import router as validation_admin_router
+from iot_twin.routes.value import router as value_router
 from iot_twin.routes.warehouses import router as warehouses_router
 from iot_twin.routes.websocket import router as websocket_router
 
@@ -61,6 +62,7 @@ def create_api_router() -> APIRouter:
     api.include_router(streaming_latency_router)
     api.include_router(alerts_router)
     api.include_router(production_router)
+    api.include_router(value_router)
     api.include_router(genie_router)
     api.include_router(genie_pipelines_router)
     api.include_router(intelligence_router)
