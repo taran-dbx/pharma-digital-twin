@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import json
 import math
-from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from iot_twin.domain.lot_context import LOT_CYCLE_S
-from iot_twin.services.value.episodes import Episode
+from iot_twin.services.value.episodes import WindowTotals
 from iot_twin.services.value.value_model import (
     DEFAULTS_PATH,
     AssumptionError,
@@ -19,9 +17,6 @@ from iot_twin.services.value.value_model import (
     project,
     resolve_assumptions,
 )
-
-# Start of a lot cycle, so offsets below land inside one known lot.
-LOT_START = datetime.fromtimestamp(LOT_CYCLE_S * 6_000_000, tz=UTC)
 
 
 def _assumptions(**overrides):
@@ -35,25 +30,6 @@ def _assumptions(**overrides):
         "release_delay_days_per_event": 0,
     }
     return resolve_assumptions({**base, **overrides})
-
-
-def _episode(offset_s: float = 10, contained_after_s: float | None = 30, **kw) -> Episode:
-    onset = LOT_START + timedelta(seconds=offset_s)
-    opened = onset + timedelta(seconds=2)
-    contained = (
-        opened + timedelta(seconds=contained_after_s) if contained_after_s is not None else None
-    )
-    return Episode(
-        alert_id=kw.pop("alert_id", "a1"),
-        opened_at=opened,
-        onset_at=onset,
-        onset_source="first_reading",
-        contained_at=contained,
-        quarantined_at=kw.pop("quarantined_at", contained),
-        cleared_at=kw.pop("cleared_at", opened + timedelta(seconds=40)),
-        window_end=opened + timedelta(hours=1),
-        **kw,
-    )
 
 
 class TestDefaults:
@@ -165,27 +141,34 @@ class TestValidation:
 class TestActuals:
     def test_no_episodes_c7912_smoke(self) -> None:
         """[C7912][smoke] An empty window reports zeros and no observed capture rate."""
-        out = actuals([], _assumptions())
+        out = actuals(WindowTotals(), _assumptions())
         assert out["excursion_events_detected"] == 0
         assert out["cost_avoided_to_date"] == 0
         assert out["capture_rate_observed"] is None
 
     def test_cost_avoided_to_date_c7913_smoke(self) -> None:
-        """[C7913][smoke] cost avoided = caught × (lot cost − inspection); missed priced if scrapped."""
-        caught = _episode(alert_id="a1")
-        late = _episode(alert_id="a2", offset_s=LOT_CYCLE_S - 5, contained_after_s=60)
-        never = _episode(alert_id="a3", contained_after_s=None)
-        out = actuals([caught, late, never], _assumptions())
+        """[C7913][smoke] cost avoided = caught × (loss − inspection); missed priced if scrapped."""
+        totals = WindowTotals(
+            episodes=3, caught_in_time=1, lots_protected=1, deadline_before_alert=1
+        )
+        out = actuals(totals, _assumptions())
         assert out["excursion_events_detected"] == 3
-        assert out["caught_in_time"] == 1
         assert out["not_caught_in_time"] == 2
         assert out["cost_avoided_to_date"] == 48_000
         assert out["exposure_if_scrapped"] == 100_000
-        assert out["lots_protected"] == 1
+        assert out["deadline_before_alert"] == 1
 
-    def test_parts_quarantined_and_released_c7914_regression(self) -> None:
-        """[C7914][regression] Held episodes split their lot into parts held and parts released."""
-        out = actuals([_episode()], _assumptions())
-        assert out["lots_quarantined"] == 1
-        assert out["parts_quarantined"] >= 1
-        assert out["parts_quarantined"] + out["parts_released"] == 15
+    def test_release_delay_priced_on_both_sides_c7914_regression(self) -> None:
+        """[C7914][regression] To-date figures use loss_per_event, like the projection."""
+        a = _assumptions(lot_release_delay_cost_per_day=1_000, release_delay_days_per_event=3)
+        out = actuals(WindowTotals(episodes=2, caught_in_time=1), a)
+        assert out["cost_avoided_to_date"] == 53_000 - 2_000
+        assert out["exposure_if_scrapped"] == 53_000
+        assert project(a)["loss_per_event"] == 53_000
+
+    def test_parts_released_from_quarantined_lots_c7915_regression(self) -> None:
+        """[C7915][regression] Released = parts of the held lots that were not at risk."""
+        totals = WindowTotals(episodes=1, lots_quarantined=2, parts_quarantined=7)
+        out = actuals(totals, _assumptions())
+        assert out["parts_quarantined"] == 7
+        assert out["parts_released"] == 2 * 15 - 7

@@ -11,5 +11,10 @@
   "capture_rate": 0.8,
   "inspection_cost": 1500,
   "lot_release_delay_cost_per_day": 0,
-  "release_delay_days_per_event": 5
+  "release_delay_days_per_event": 5,
+  "definitions": {
+    "_comment": "Measurement definitions, not cost assumptions; not overridable per request. See docs/value-model.md.",
+    "caught_in_time_grace_s": 120,
+    "max_open_excursion_s": 86400
+  }
 }

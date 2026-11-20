@@ -19,22 +19,21 @@ Formulas (documented with sources and limitations in docs/value-model.md)::
     exposure_remaining = annual_exposure - cost_avoided
                        = missed_events * loss_per_event + caught_events * inspection_cost
 
-    cost_avoided_to_date = caught_in_time_events * (cost_per_lot_lost - inspection_cost)
+    cost_avoided_to_date = caught_in_time * (loss_per_event - inspection_cost)
+    exposure_if_scrapped = not_caught_in_time * loss_per_event
 """
 
 from __future__ import annotations
 
-import json
 import math
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, replace
-from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
-from iot_twin.services.value.episodes import Episode
+from iot_twin.services.value.config import DEFAULTS_PATH, defaults_payload
+from iot_twin.services.value.episodes import WindowTotals
 
-DEFAULTS_PATH = Path(__file__).with_name("value_defaults.json")
+__all__ = ["DEFAULTS_PATH"]
 MONEY_MAX = 1e9
 
 
@@ -106,15 +105,6 @@ def _coerce(name: str, raw: Any) -> tuple[float | None, str | None]:
     return value, None
 
 
-@lru_cache(maxsize=1)
-def _default_payload() -> dict[str, Any]:
-    with DEFAULTS_PATH.open(encoding="utf-8") as handle:
-        payload = json.load(handle)
-    if not isinstance(payload, dict):
-        raise RuntimeError(f"{DEFAULTS_PATH.name} must hold a JSON object")
-    return payload
-
-
 def _build(values: Mapping[str, float], components: tuple[tuple[str, float], ...]) -> Assumptions:
     return Assumptions(
         lines_in_scope=int(values["lines_in_scope"]),
@@ -130,7 +120,7 @@ def _build(values: Mapping[str, float], components: tuple[tuple[str, float], ...
 
 def default_assumptions(payload: Mapping[str, Any] | None = None) -> Assumptions:
     """Validated defaults; ``cost_per_lot_lost`` is the sum of the lot cost components."""
-    data = dict(payload if payload is not None else _default_payload())
+    data = dict(payload if payload is not None else defaults_payload())
     raw_components = data.get("lot_cost_components") or {}
     errors: list[dict[str, str]] = []
     components: list[tuple[str, float]] = []
@@ -256,52 +246,39 @@ def project(a: Assumptions) -> dict[str, Any]:
     }
 
 
-def actuals(episodes: Iterable[Episode], a: Assumptions) -> dict[str, Any]:
-    """Recorded outcomes over a window, priced with the same assumptions.
+def actuals(totals: WindowTotals, a: Assumptions) -> dict[str, Any]:
+    """Recorded outcomes over the whole window, priced like the projection.
 
-    ``cost_avoided_to_date`` = caught-in-time events × (cost per lot lost −
-    inspection cost). ``exposure_if_scrapped`` prices the excursions that were
-    *not* caught in time as if their lot were scrapped.
+    Uses ``loss_per_event`` (lot cost plus any release-delay cost) on both
+    sides, so to-date and annual figures are comparable.
     """
-    items = list(episodes)
-    caught = [e for e in items if e.caught_in_time]
-    missed = len(items) - len(caught)
-    lots_quarantined: set[str] = set()
-    lots_protected: set[str] = set()
-    parts_quarantined = 0
-    parts_released = 0
-    for episode in items:
-        disposition = episode.disposition
-        lot_ids = set(disposition["lot_ids"])
-        if episode.quarantined_at is not None:
-            lots_quarantined |= lot_ids
-            parts_quarantined += len(disposition["parts_at_risk"])
-            parts_released += int(disposition["parts_released"])
-        if episode.caught_in_time:
-            lots_protected |= lot_ids
-    net = a.cost_per_lot_lost - a.inspection_cost
+    detected = totals.episodes
+    caught = totals.caught_in_time
+    missed = detected - caught
+    net = a.loss_per_event - a.inspection_cost
     return {
-        "excursion_events_detected": len(items),
-        "caught_in_time": len(caught),
+        "excursion_events_detected": detected,
+        "caught_in_time": caught,
         "not_caught_in_time": missed,
-        "capture_rate_observed": round(len(caught) / len(items), 4) if items else None,
-        "lots_protected": len(lots_protected),
-        "lots_quarantined": len(lots_quarantined),
-        "parts_quarantined": parts_quarantined,
-        "parts_released": parts_released,
-        "ncrs_opened": sum(1 for e in items if e.ncr_at is not None),
-        "cmm_inspections": sum(1 for e in items if e.cmm_at is not None),
-        "cost_avoided_to_date": _money(len(caught) * net),
-        "exposure_if_scrapped": _money(missed * a.cost_per_lot_lost),
+        "deadline_before_alert": totals.deadline_before_alert,
+        "capture_rate_observed": round(caught / detected, 4) if detected else None,
+        "lots_protected": totals.lots_protected,
+        "lots_quarantined": totals.lots_quarantined,
+        "parts_quarantined": totals.parts_quarantined,
+        "parts_released": totals.parts_released,
+        "ncrs_opened": totals.ncrs_opened,
+        "cmm_inspections": totals.cmm_inspections,
+        "cost_avoided_to_date": _money(caught * net),
+        "exposure_if_scrapped": _money(missed * a.loss_per_event),
         "formula": {
             "cost_avoided_to_date": (
-                "caught_in_time × (cost_per_lot_lost − inspection_cost)"
-                f" = {len(caught)} × ({_usd(a.cost_per_lot_lost)} − {_usd(a.inspection_cost)})"
-                f" = {_usd(len(caught) * net)}"
+                "caught_in_time × (loss_per_event − inspection_cost)"
+                f" = {caught} × ({_usd(a.loss_per_event)} − {_usd(a.inspection_cost)})"
+                f" = {_usd(caught * net)}"
             ),
             "exposure_if_scrapped": (
-                "not_caught_in_time × cost_per_lot_lost"
-                f" = {missed} × {_usd(a.cost_per_lot_lost)} = {_usd(missed * a.cost_per_lot_lost)}"
+                "not_caught_in_time × loss_per_event"
+                f" = {missed} × {_usd(a.loss_per_event)} = {_usd(missed * a.loss_per_event)}"
             ),
         },
     }

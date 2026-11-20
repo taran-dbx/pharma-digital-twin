@@ -6,7 +6,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
@@ -20,21 +20,27 @@ PID = str(uuid.uuid4())
 
 
 class FakeDb:
-    """Records the parameters of every query; returns one caught episode."""
+    """Answers each value query by shape; records every query's parameters."""
 
-    def __init__(self, fail: bool = False) -> None:
+    def __init__(self, fail: bool = False, realtime_since: datetime | None = None) -> None:
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.fail = fail
+        self.realtime_since = realtime_since
 
-    async def fetch(self, sql: str, *args: Any) -> list[dict[str, Any]]:
+    def _check(self, sql: str, args: tuple[Any, ...]) -> None:
         self.calls.append((sql, args))
         if self.fail:
             raise RuntimeError("connection reset")
+
+    async def fetch(self, sql: str, *args: Any) -> list[dict[str, Any]]:
+        self._check(sql, args)
         opened = datetime.now(UTC) - timedelta(hours=1)
+        if "SELECT ttd_s, tta_s" in sql:
+            return [{"ttd_s": 3.0, "tta_s": 5.0}]
         return [
             {
                 "alert_id": "a1",
-                "episode_opened_at": opened,
+                "opened": opened,
                 "onset_raw": (opened - timedelta(seconds=3)).isoformat(),
                 "acknowledged_at": opened + timedelta(seconds=4),
                 "cleared_at": opened + timedelta(seconds=30),
@@ -52,9 +58,31 @@ class FakeDb:
             }
         ]
 
-    async def fetchrow(self, sql: str, *args: Any) -> dict[str, Any]:
-        self.calls.append((sql, args))
-        return {"stops": 0}
+    async def fetchrow(self, sql: str, *args: Any) -> dict[str, Any] | None:
+        if "FROM pipeline_deployment" in sql:
+            self.calls.append((sql, args))
+            return {"created_at": self.realtime_since} if self.realtime_since else None
+        self._check(sql, args)
+        if "parts_at_risk" in sql:
+            return {
+                "parts_at_risk": 2,
+                "lots_touched": 1,
+                "parts_started": 15,
+                "lots_protected": 1,
+                "lots_quarantined": 1,
+                "parts_quarantined": 2,
+            }
+        return {
+            "episodes": 1,
+            "caught_in_time": 1,
+            "ncrs_opened": 1,
+            "onset_from_reading": 1,
+            "ttd_count": 1,
+            "ttd_mean": 3.0,
+            "ttd_p50": 3.0,
+            "ttd_p90": 3.0,
+            "ttd_max": 3.0,
+        }
 
 
 @pytest_asyncio.fixture()
@@ -66,9 +94,8 @@ async def client_db() -> AsyncGenerator[tuple[AsyncClient, FakeDb, AppState], No
     app = FastAPI()
     app.state.app_state = state
     app.include_router(value_router)
-    with patch("iot_twin.routes.value._is_industry_deployment", AsyncMock(return_value=False)):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            yield client, db, state
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        yield client, db, state
 
 
 def _q(**kw: Any) -> dict[str, Any]:
@@ -99,6 +126,7 @@ class TestEnvelope:
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["time_to_detect"]["p50"] == 3
+        assert data["time_to_detect"]["samples"] == [3.0]
         assert data["ncrs_opened"] == 1
         assert data["projected_rft"]["label"] == "Projected right-first-time"
         assert data["recent_events"][0]["caught_in_time"] is True
@@ -161,23 +189,30 @@ class TestValidation:
 class TestScoping:
     @pytest.mark.asyncio
     async def test_every_query_filters_on_pipeline_c7946_smoke(self, client_db) -> None:
-        """[C7946][smoke] Every query is parameterised and receives the pipeline keys first."""
+        """[C7946][smoke] Every value query is parameterised and gets the pipeline id first."""
         client, db, _ = client_db
         await client.get("/api/value/summary", params=_q())
         await client.get("/api/ops/summary", params=_q())
-        assert db.calls
-        for sql, args in db.calls:
-            assert "pipeline_id = ANY($1::text[])" in sql
-            assert args[0] == [PID]
+        value_calls = [c for c in db.calls if "FROM pipeline_deployment" not in c[0]]
+        assert len(value_calls) == 8
+        for sql, args in value_calls:
+            assert "pipeline_id = $1" in sql
+            assert args[0] == PID and args[1] is None
             assert PID not in sql
 
     @pytest.mark.asyncio
-    async def test_realtime_deployment_reads_alias_c7947_regression(self, client_db) -> None:
-        """[C7947][regression] A bound realtime deployment also reads industry:<industry> alerts."""
-        client, db, _ = client_db
-        with patch("iot_twin.routes.value._is_industry_deployment", AsyncMock(return_value=True)):
-            await client.get("/api/ops/summary", params=_q())
-        assert db.calls[0][1][0] == [PID, "industry:manufacturing"]
+    async def test_realtime_deployment_reads_alias_from_creation_c7947_regression(
+        self, client_db
+    ) -> None:
+        """[C7947][regression] A bound realtime deployment reads the alias from its created_at."""
+        client, _, state = client_db
+        since = datetime(2026, 11, 1, tzinfo=UTC)
+        db = FakeDb(realtime_since=since)
+        state.app_backend_db = db
+        resp = await client.get("/api/ops/summary", params=_q())
+        assert resp.json()["meta"]["alias_since"] == since.isoformat()
+        value_calls = [c for c in db.calls if "FROM pipeline_deployment" not in c[0]]
+        assert value_calls[0][1][:3] == (PID, "industry:manufacturing", since)
 
     @pytest.mark.asyncio
     async def test_no_backend_is_empty_not_error_c7948_smoke(self, client_db) -> None:
@@ -200,6 +235,23 @@ class TestScoping:
         body = resp.json()
         assert body["success"] is False
         assert "connection reset" not in body["error"]
+
+    @pytest.mark.asyncio
+    async def test_compute_failure_is_envelope_c7951_regression(self, client_db) -> None:
+        """[C7951][regression] A failure after the query (in the metrics) still returns the envelope."""
+        client, _, _ = client_db
+        with patch("iot_twin.routes.value.ops_summary", side_effect=KeyError("boom")):
+            resp = await client.get("/api/ops/summary", params=_q())
+        assert resp.status_code == 503
+        assert resp.json()["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_meta_reports_totals_and_truncation_c7952_smoke(self, client_db) -> None:
+        """[C7952][smoke] meta carries episodes_total and the truncated flag."""
+        client, _, _ = client_db
+        meta = (await client.get("/api/ops/summary", params=_q())).json()["meta"]
+        assert meta["episodes_total"] == 1
+        assert meta["truncated"] is False
 
     @pytest.mark.asyncio
     async def test_identity_required_in_apps_runtime_c7950_regression(self, client_db) -> None:
