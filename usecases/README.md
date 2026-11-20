@@ -7,9 +7,27 @@ by the [pipeline health check](../ops/notebooks/pipeline_health_check.ipynb), no
 
 | Notebook | Industry | What it shows |
 |---|---|---|
-| [`manufacturing/manufacturing_kpis.ipynb`](manufacturing/manufacturing_kpis.ipynb) | Manufacturing | OEE, downtime and alarms, sensor health trends, throughput versus target |
+| [`manufacturing/manufacturing_kpis.ipynb`](manufacturing/manufacturing_kpis.ipynb) | Medical Devices (id `manufacturing`) | Right-first-time process health, downtime and alarms (validated-limit excursions), sensor health trends, throughput versus target |
 
-## Manufacturing KPIs
+## Medical-device KPIs
+
+**The story.** Trinity Medical machines orthopaedic implants in Warsaw, IN. Spindle 3 on the CNC-1
+5-axis mill cuts Ti-6Al-4V femoral hip stems and acetabular cups; parts flow MILL -> CMM INSPECT ->
+CLEAN / PASSIVATE -> STERILE PACK. The Spindle 3 temperature limit (60 °C) is a validated process
+parameter, so an excursion (`VPP-SPINDLE3-TEMP`) puts the parts cut during it at risk of a
+dimensional nonconformance. The notebook serves the two KPI owners:
+
+| Owner | KPIs |
+|---|---|
+| Alex Morgan, VP Quality & Site Head | cost of poor quality, lots scrapped / quarantined, lot-release lead time |
+| Shreya, Head of Manufacturing Operations | time-to-detect, NCRs opened, right-first-time / first-pass yield, MTTR |
+
+It reports what the telemetry and the app's alert log support: process health per asset (a
+first-pass-yield proxy), excursion counts and timing, drift toward validated limits and rates.
+CMM pass/fail results, NCR dispositions and lot release are not in the pipeline; lots, parts at
+risk and signed decisions are in the app's decision log (see
+[docs/domain-medtech.md](../docs/domain-medtech.md)). The notebook keeps the internal industry
+id `manufacturing`, so table and branch names are unchanged.
 
 The committed notebook is a **redacted live run** (first cell: `LIVE RUN, redacted, <date>`)
 against the deployed manufacturing real-time pipeline, so it renders fully populated on GitHub
@@ -71,8 +89,9 @@ example `KPI_SAMPLE=true KPI_MODE=zerobus`.
 
 ### KPI definitions
 
-OEE uses the app's own definition (`services/genie/genie_space_content.py`), so the notebook and
-the app's Genie space answer the same numbers. The plant model (assets, components, alert rules)
+The process-health index uses the app's own definition (`services/genie/genie_space_content.py`):
+availability x performance x quality, the classic OEE product, used here as a right-first-time
+proxy rather than a headline KPI. The notebook and the app's Genie space answer the same numbers. The plant model (assets, components, alert rules)
 mirrors `src/iot_twin/domain/catalog.py`.
 
 | KPI | Formula | Source tier and table |
@@ -80,20 +99,20 @@ mirrors `src/iot_twin/domain/catalog.py`.
 | Availability | 1 - fault minutes / observed minutes (distinct minutes; at asset level a minute is a fault minute when any of the asset's sensors reports `fault_active`) | Delta cold tier, telemetry table |
 | Performance | `AVG(LEAST(value / nominal_value, 1))` over readings with `nominal_value > 0` | Delta cold tier |
 | Quality | share of readings with `min_value <= value <= max_value` | Delta cold tier |
-| OEE | Availability x Performance x Quality (a missing factor counts as 1), per sensor, per asset (line/cell) and plant-wide; facility (HVAC) sensors excluded | Delta cold tier |
+| Process health (right-first-time proxy) | Availability x Performance x Quality (a missing factor counts as 1), per sensor, per asset (line/cell) and plant-wide; facility (HVAC) and CMM lab environment sensors excluded | Delta cold tier |
 | Alerts | count of `opened` events (one per alert episode) by fault code, asset and severity | Control-plane Lakebase `alert`, `alert_event` |
 | Mean time between alerts | (last opening - first opening) / (alerts - 1) = mean gap between openings | Control-plane Lakebase |
 | Fault downtime | distinct minutes with `fault_active` per asset | Delta cold tier |
-| Operator stops | time the production cell was stopped from the app | Control-plane Lakebase `production_event` |
+| Operator stops | time the production cell was stopped from the app (for example by a `request_cmm_inspection` decision) | Control-plane Lakebase `production_event` |
 | Sensor drift | (mean of the newest hour - mean of the window) / nominal; flagged at >= 5% | Delta cold tier (hourly) |
-| Past threshold | share of readings beyond the sensor's alert rule (spindle temperature > 60 °C, vibration > 8 mm/s, press pressure < 120 bar); flagged at >= 1% | Delta cold tier (hourly) |
+| Past threshold | share of readings beyond the sensor's alert rule (Spindle 3 temperature > 60 °C validated limit, vibration > 8 mm/s, passivation line pressure < 120 bar); flagged at >= 1% | Delta cold tier (hourly) |
 | Live now | mean of the newest 15 minutes | Lakebase hot tier `public.sensor_readings` (real-time mode) |
-| Throughput | mean rate per hour x 60 (conveyor m/min to metres per hour, spindle RPM to revolutions per hour) versus nominal x 60 | Delta cold tier (hourly) |
+| Throughput | mean rate per hour x 60 (sterile pack line m/min to metres per hour, spindle RPM to revolutions per hour) versus nominal x 60 | Delta cold tier (hourly) |
 | Pipeline at a glance | freshness, rows/min, rows in window (Delta exact, Lakebase estimate from partition statistics), e2e latency p50 (median of per-batch p50) and p95 (95th percentile of per-batch p99) | Delta, Lakebase, `manufacturing_metrics` |
 
 **Not available from this pipeline:** production counts (units per hour). The only counter-like
 signal, `press_1_cycle_count`, is emitted as a level that fluctuates around its nominal value,
-not as an incrementing count, and the plant model has no good-part or reject sensor. The
+not as an incrementing count, and the plant model has no CMM pass/fail or reject sensor. The
 notebook checks this on every run (a real counter never decreases) and shows a "not available"
 block instead of inventing numbers; throughput is reported as rate versus target.
 
