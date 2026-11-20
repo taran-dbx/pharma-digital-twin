@@ -37,6 +37,7 @@ _EXPECTED_ENV_NAMES = (
     "ADMIN_GROUP",
     "GENIE_SPACE_ID",
     "GENAI_ENDPOINT",
+    "GENAI_PSEUDONYM_SALT",
     "USAGE_TRACKING_ENABLED",
 )
 
@@ -111,6 +112,7 @@ def test_render_includes_runtime_command_and_all_env_names(renderer) -> None:
         assert f"name: {env_name}" in rendered
     assert "valueFrom: genie-space" in rendered
     assert "name: GENAI_ENDPOINT\n    valueFrom: genai-endpoint" in rendered
+    assert "name: GENAI_PSEUDONYM_SALT\n    valueFrom: genai-pseudonym-salt" in rendered
     assert "GENIE_SPACE_ID" in rendered
     assert "name: DATABRICKS_SQL_WAREHOUSE_ID\n    valueFrom: sql-warehouse" in rendered
     assert "warehouse-id" not in rendered

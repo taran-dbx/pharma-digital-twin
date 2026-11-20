@@ -42,6 +42,7 @@ from iot_twin.services.genai.grounding import (
     sensor_name_for,
 )
 from iot_twin.services.genai.plan_schema import (
+    CHECKER_VERSION,
     GroundingCheck,
     check_grounding,
     failed_check,
@@ -137,6 +138,7 @@ def _evaluate(text: str, grounding: GroundingSet) -> tuple[dict[str, Any], Groun
             "raw_text": text[:MAX_RAW_TEXT],
             "plan": None,
             "schema_errors": list(parsed.errors),
+            "checker_version": CHECKER_VERSION,
         }
         return response, failed_check(parsed.errors), "rejected"
     check = check_grounding(parsed.plan, grounding)
@@ -145,6 +147,7 @@ def _evaluate(text: str, grounding: GroundingSet) -> tuple[dict[str, Any], Groun
         "plan": parsed.plan.model_dump(),
         "schema_errors": [],
         "grounding_gaps": list(grounding.gaps),
+        "checker_version": CHECKER_VERSION,
     }
     return response, check, "generated"
 
@@ -177,7 +180,8 @@ async def reusable_plan(
 ) -> AuditRecord | None:
     """The latest plan for the alert when nothing it depends on has changed.
 
-    Same grounding rows (hash), template, endpoint, and it was generated and
+    Same grounding rows (hash), template, endpoint and grounding-checker
+    version, and it was generated and
     passed the check — re-asking the model would only spend tokens.
     """
     latest = next(iter(await store.list_for_alert(alert_id, db=db, limit=1)), None)
@@ -187,6 +191,7 @@ async def reusable_plan(
         latest.grounding_hash == prepared.grounding.digest()
         and latest.prompt_template_version == prepared.prompt.template_version
         and latest.endpoint == prepared.endpoint
+        and latest.response.get("checker_version") == CHECKER_VERSION
     )
     passed = latest.status == "generated" and latest.grounding_check == "pass"
     return latest if same and passed else None

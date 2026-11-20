@@ -199,7 +199,7 @@ class TestGroundingCheckHardening:
 
 # --------------------------------------------------------------- 6 + 9. PII, normalisation
 class TestUntrustedText:
-    def test_people_are_pseudonyms_and_emails_are_redacted(self) -> None:
+    def test_people_are_pseudonyms_and_emails_are_redacted(self, keyed) -> None:
         response = AlertResponse(
             id=str(uuid.uuid4()),
             alert_id="a",
@@ -216,6 +216,7 @@ class TestUntrustedText:
         assert "example.com" not in blob and "example.org" not in blob
         row = grounding.by_source("alert_response")[0].data
         assert row["recorded_by"] == redact.pseudonym("jane.doe@example.com")
+        assert len(row["recorded_by"]) == len("person-") + redact.PSEUDONYM_HEX
         assert grounding.by_source("alert")[0].data["acknowledged_by"] == row["recorded_by"]
         assert "[email]" in row["reason"]
 

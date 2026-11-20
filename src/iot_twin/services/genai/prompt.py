@@ -24,9 +24,9 @@ from typing import Any
 from iot_twin.models.app_schema import ALERT_RESPONSE_ACTIONS
 from iot_twin.services.genai.grounding import GroundingSet
 from iot_twin.services.genai.plan_schema import OWNER_ROLES, output_schema
-from iot_twin.services.genai.redact import defang
+from iot_twin.services.genai.redact import defang_tags
 
-PROMPT_TEMPLATE_VERSION = "action-plan/2026-11-20.v3"
+PROMPT_TEMPLATE_VERSION = "action-plan/2026-11-20.v4"
 
 TRUSTED_TAG = "TRUSTED_CONTEXT"
 UNTRUSTED_TAG = "UNTRUSTED_GROUNDING"
@@ -71,8 +71,13 @@ class RenderedPrompt:
 
 
 def _defang(text: str) -> str:
-    """Neutralise delimiter tags inside untrusted data (after NFKC + invisible-char strip)."""
-    return defang(text)
+    """Neutralise any delimiter tag left in the rendered block.
+
+    Strings are already NFKC-normalised and cleaned row by row in
+    ``grounding._clip``; normalising the whole JSON again would alter data
+    (e.g. ``µ`` or superscripts), so this pass only matches the tags as they are.
+    """
+    return defang_tags(text)
 
 
 def _trusted(alert_id: str, grounding: GroundingSet) -> dict[str, Any]:

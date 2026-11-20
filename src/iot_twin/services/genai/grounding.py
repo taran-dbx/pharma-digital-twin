@@ -137,7 +137,9 @@ def _json_safe(value: Any, depth: int = 0) -> Any:
     if isinstance(value, str):
         return _clip(value)
     if isinstance(value, Mapping):
-        return {str(k)[:80]: _json_safe(v, depth + 1) for k, v in list(value.items())[:25]}
+        return {
+            clean_text(str(k))[:80]: _json_safe(v, depth + 1) for k, v in list(value.items())[:25]
+        }
     if isinstance(value, list | tuple):
         return [_json_safe(v, depth + 1) for v in list(value)[: MAX_TOP_FEATURES * 5]]
     return _clip(str(value))

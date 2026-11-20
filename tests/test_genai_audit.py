@@ -9,13 +9,11 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from unittest.mock import AsyncMock
 
 import pytest
-import pytest_asyncio
 
 from iot_twin.models import app_schema
 from iot_twin.services.genai import audit_sync
@@ -25,7 +23,6 @@ from iot_twin.services.genai.audit_store import (
     GenaiAuditStore,
 )
 from tests._genai_fixtures import NOW, RISK
-from tests._local_pg import local_postgres
 
 
 def make_record(alert_id: str | None = None, **overrides) -> AuditRecord:
@@ -145,33 +142,6 @@ class TestMemoryStore:
         with pytest.raises(AuditStoreUnavailable):
             await store.list_for_alert(str(uuid.uuid4()), db=db)
         assert await store.list_recent() == []
-
-
-@pytest.fixture(scope="module")
-def pg_server() -> Iterator:
-    with local_postgres() as server:
-        yield server
-
-
-@pytest_asyncio.fixture()
-async def pg(pg_server) -> AsyncIterator:
-    asyncpg = pytest.importorskip("asyncpg")
-    if pg_server is None:
-        pytest.skip("no local Postgres binaries (initdb/pg_ctl)")
-    name = f"g_{uuid.uuid4().hex[:12]}"
-    admin = await asyncpg.connect(
-        host=pg_server.socket_dir, port=pg_server.port, user=pg_server.superuser
-    )
-    await admin.execute(f"CREATE DATABASE {name}")
-    conn = await asyncpg.connect(
-        host=pg_server.socket_dir, port=pg_server.port, user=pg_server.superuser, database=name
-    )
-    try:
-        yield conn, pg_server, name
-    finally:
-        await conn.close()
-        await admin.execute(f"DROP DATABASE {name}")
-        await admin.close()
 
 
 async def _alert(conn) -> str:
@@ -401,7 +371,7 @@ class TestUcMirror:
         assert row["plan_summary"] == text and row["model"] == text
         assert json.loads(row["plan"])["summary"]["text"] == text
 
-    def test_people_are_pseudonymised_in_the_mirror(self) -> None:
+    def test_people_are_pseudonymised_in_the_mirror(self, keyed) -> None:
         values = _spark_values(audit_sync.audit_row_sql(make_record(applied_by="qa@example.com")))
         row = dict(zip([c.strip() for c in audit_sync.COLUMNS.split(",")], values, strict=True))
         assert row["requested_by"].startswith("person-") and row["applied_by"].startswith("person-")

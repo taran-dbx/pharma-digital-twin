@@ -101,3 +101,19 @@ def test_genai_endpoint_is_a_can_query_resource_injected_as_env() -> None:
     env = {e["name"]: e for e in app["config"]["env"]}
     assert env["GENAI_ENDPOINT"] == {"name": "GENAI_ENDPOINT", "value_from": "genai-endpoint"}
     assert _bundle_variables()["genai_endpoint"]["default"] == "databricks-claude-sonnet-5-5"
+
+
+def test_pseudonym_key_is_a_read_secret_resource_injected_as_env() -> None:
+    data = yaml.safe_load((ROOT / "resources" / "app.yml").read_text(encoding="utf-8"))
+    app = data["resources"]["apps"]["iot_twin"]
+    resource = next(r for r in app["resources"] if r["name"] == "genai-pseudonym-salt")
+    assert resource["secret"] == {
+        "scope": "${var.secret_scope}",
+        "key": "${var.genai_pseudonym_salt_key}",
+        "permission": "READ",
+    }
+    env = {e["name"]: e for e in app["config"]["env"]}
+    assert env["GENAI_PSEUDONYM_SALT"]["value_from"] == "genai-pseudonym-salt"
+    variables = _bundle_variables()
+    assert variables["secret_scope"]["default"] == "pharma-twin-secrets"
+    assert variables["genai_pseudonym_salt_key"]["default"] == "genai-pseudonym-salt"

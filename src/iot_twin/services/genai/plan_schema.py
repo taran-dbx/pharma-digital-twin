@@ -24,6 +24,7 @@ import json
 import re
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -139,24 +140,36 @@ def parse_plan(text: str) -> ParseResult:
 
 # --------------------------------------------------------------------------- grounding check
 
-# A number (optionally with a unit glued on: 0.05mm, 5min, 64.2°C, 87%) that is
-# not part of an identifier, date or clock time (OQ-TM-CNC1-014, 2026-11-20, 10:42).
+# Bumped whenever the rules below change; part of the plan-reuse key.
+CHECKER_VERSION = "grounding-check/2026-11-20.v3"
+
+# A number, optionally with a unit glued or hyphenated on (0.05mm, 5min,
+# 5-minute, 64.2°C, 87%), that is not part of an identifier, date or clock time
+# (OQ-TM-CNC1-014, 2026-11-20, 10:42).
 _CLAIM_NUMBER = re.compile(
-    r"(?<![\w.\-/:])([-+]?\d+(?:\.\d+)?)(\s?%|[a-zA-Zµ°]{1,6})?(?![\w\-/:]|\.\d)"
+    r"(?<![\w.\-/:])([-+]?\d+(?:\.\d+)?)(\s?%|-?[a-zA-Zµ°]{1,8})?(?![\w\-/:]|\.\d)"
 )
 _PERCENT_WORD = re.compile(r"^\s*percent\b", re.I)
 # Fixed names and regulatory references that contain digits but are not quantities.
 _NON_QUANTITIES = re.compile(
     r"\bSpindle\s+\d+\b|\bCNC-?\d+\b|\b21\s*CFR\s*(?:Part\s*)?\d+(?:\.\d+)?\b"
-    r"|\bISO\s*\d+(?::\d{4})?\b|\bPart\s+11\b|\bsteps?\s+\d+(?:\s*(?:-|to|and)\s*\d+)?\b"
-    r"|\b(?:model\s+)?version\s+v?\d+(?:\.\d+)*\b|\bv\d+(?:\.\d+)*\b|\brev\.?\s+[A-Z0-9]+\b",
+    r"|\bISO\s*\d+(?::\d{4})?\b|\bPart\s+11\b|\brev\.?\s+[A-Z]\b|\b\d+-axis\b",
     re.I,
 )
+# References that ARE checked, against their own source rather than quantities:
+# "step 2" against the plan's step orders, "version 3" / "v3" against the cited
+# rows and the model metadata (risk model_version).
+_STEP_REF = re.compile(r"\bsteps?\s+\d+(?:\s*(?:-|to|and|,)\s*\d+)*", re.I)
+_VERSION_REF = re.compile(
+    r"\b(?:model\s+)?(?:version|ver\.)\s*v?(\d+(?:\.\d+)*)\b|\bv(\d+(?:\.\d+)*)\b", re.I
+)
 _LOT_OR_SERIAL = re.compile(rf"\b{re.escape(LOT_PREFIX)}-\d{{6}}-\d{{3}}(?:-\d{{2}})?\b")
-# Only catalog rows are trusted to carry numbers inside text ("60 °C"); every
-# other string (notes, reasons, model names) is untrusted and contributes none.
-_TEXT_NUMBER_SOURCES = frozenset({"alert_rule"})
+# Rows whose text fields are structured (catalog, SQL output) and may carry
+# numbers in text ("60 °C", bucket labels). Every other string (notes, reasons,
+# model names) is untrusted and contributes none.
+_TEXT_NUMBER_SOURCES = frozenset({"alert_rule", "readings"})
 _DERIVABLE_SOURCES = frozenset({"alert", "alert_rule", "risk_score", "projected_rft"})
+_DURATION_TOLERANCE_S = 1.0
 
 
 @dataclass(frozen=True)
@@ -198,6 +211,18 @@ def _numeric(value: Any) -> float | None:
     return None
 
 
+def _model_metadata_numbers(data: dict[str, Any]) -> list[float]:
+    """Numbers inside the risk model's feature identifiers (``spindle_temp_slope_5m``).
+
+    Feature names are structured model metadata, not free text, so "the
+    5-minute slope" is grounded when the risk row is cited.
+    """
+    features = data.get("top_features") or []
+    names = [f.get("feature") for f in features if isinstance(f, dict)]
+    names += [f for f in features if isinstance(f, str)]
+    return [float(n) for name in names if name for n in re.findall(r"\d+(?:\.\d+)?", str(name))]
+
+
 def _item_numbers(item: GroundingItem) -> set[float]:
     """Typed numbers in one row, list counts, 0-1 values as percentages, intra-row differences."""
     nums = [n for n in (_numeric(leaf) for leaf in _leaves(item.data)) if n is not None]
@@ -205,6 +230,8 @@ def _item_numbers(item: GroundingItem) -> set[float]:
         for leaf in _leaves(item.data):
             if isinstance(leaf, str):
                 nums.extend(float(m.group(1)) for m in _CLAIM_NUMBER.finditer(leaf))
+    if item.source == "risk_score":
+        nums.extend(_model_metadata_numbers(item.data))
     values = set(nums)
     values.update(float(len(v)) for v in item.data.values() if isinstance(v, list))
     values.update(n * 100 for n in nums if 0 < abs(n) <= 1)
@@ -228,10 +255,38 @@ def allowed_numbers(grounding: GroundingSet, citations: Iterable[str]) -> list[f
         if n is not None
     ]
     values.update(abs(a - b) for a in derivable for b in derivable)
+    values |= _durations(cited)
     lots = [item for item in cited if item.source == "lot"]
     values.add(float(len(lots)))
     values.add(float(sum(len(i.data.get("parts_at_risk") or []) for i in lots)))
     return sorted(values)
+
+
+def _timestamp(value: Any) -> float | None:
+    if not isinstance(value, str) or len(value) < 16 or value[4:5] != "-":
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)).timestamp()
+
+
+def _durations(cited: list[GroundingItem]) -> set[float]:
+    """Durations between cited timestamps (onset → opened, opened → cleared, …).
+
+    Seconds with a ±1 s tolerance, and the same span in minutes and hours.
+    """
+    stamps = sorted(
+        {t for item in cited for t in (_timestamp(leaf) for leaf in _leaves(item.data)) if t}
+    )[:60]
+    values: set[float] = set()
+    for i, a in enumerate(stamps):
+        for b in stamps[i + 1 :]:
+            span = b - a
+            values.update({span - _DURATION_TOLERANCE_S, span, span + _DURATION_TOLERANCE_S})
+            values.update({span / 60, span / 3600})
+    return values
 
 
 def _matches(number: float, decimals: int, allowed: list[float]) -> bool:
@@ -282,10 +337,41 @@ def _identifier_reasons(plan: ActionPlan, grounding: GroundingSet) -> list[str]:
     ]
 
 
+def _versions(grounding: GroundingSet, citations: Iterable[str]) -> set[str]:
+    """Version strings a claim may name: cited rows' and the model metadata's."""
+    cited = set(citations)
+    found: set[str] = set()
+    for item in grounding.items:
+        if item.id in cited or item.source == "risk_score":
+            version = item.data.get("model_version")
+            if version is not None:
+                found.update(re.findall(r"\d+(?:\.\d+)*", str(version)))
+    return found
+
+
+def _reference_reasons(
+    path: str, text: str, versions: set[str], step_orders: set[int]
+) -> tuple[list[str], int]:
+    reasons, checked = [], 0
+    for match in _STEP_REF.finditer(text):
+        for number in re.findall(r"\d+", match.group(0)):
+            checked += 1
+            if int(number) not in step_orders:
+                reasons.append(f"{path}: refers to step {number}, which the plan does not have")
+    for match in _VERSION_REF.finditer(text):
+        checked += 1
+        version = match.group(1) or match.group(2)
+        if version not in versions:
+            reasons.append(f"{path}: version {version} does not match the cited model metadata")
+    return reasons, checked
+
+
 def _number_reasons(path: str, text: str, allowed: list[float]) -> tuple[list[str], int]:
     reasons, checked = [], 0
     # Replace with a word character so neighbouring digits stay "glued" (ids stay ids).
-    scrubbed = _LOT_OR_SERIAL.sub("X", _NON_QUANTITIES.sub("X", text))
+    scrubbed = _NON_QUANTITIES.sub("X", text)
+    for pattern in (_LOT_OR_SERIAL, _STEP_REF, _VERSION_REF):
+        scrubbed = pattern.sub("X", scrubbed)
     for match in _CLAIM_NUMBER.finditer(scrubbed):
         checked += 1
         raw, unit = match.group(1), (match.group(2) or "").strip()
@@ -318,6 +404,7 @@ def check_grounding(plan: ActionPlan, grounding: GroundingSet) -> GroundingCheck
     reasons: list[str] = []
     cited: list[str] = []
     checked = 0
+    step_orders = {step.order for step in plan.steps}
     for path, text, citations in _claims(plan):
         for citation in citations:
             if citation not in ids:
@@ -325,8 +412,11 @@ def check_grounding(plan: ActionPlan, grounding: GroundingSet) -> GroundingCheck
             elif citation not in cited:
                 cited.append(citation)
         found, count = _number_reasons(path, text, allowed_numbers(grounding, citations))
-        reasons.extend(found)
-        checked += count
+        refs, ref_count = _reference_reasons(
+            path, text, _versions(grounding, citations), step_orders
+        )
+        reasons.extend([*found, *refs])
+        checked += count + ref_count
     reasons.extend(_identifier_reasons(plan, grounding))
     reasons.extend(_risk_reasons(plan, grounding))
     return GroundingCheck("fail" if reasons else "pass", tuple(reasons), tuple(cited), checked)

@@ -8,7 +8,10 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from iot_twin.services.alerts.alert_engine import AlertRecord
+from iot_twin.services.genai import redact
 from iot_twin.services.genai.grounding import GroundingSet
 
 NOW = datetime(2026, 11, 20, 10, 5, 0, tzinfo=UTC)
@@ -149,3 +152,14 @@ def valid_plan(grounding: GroundingSet) -> dict[str, Any]:
 
 def plan_text(grounding: GroundingSet, **changes: Any) -> str:
     return json.dumps({**valid_plan(grounding), **changes})
+
+
+TEST_KEY = b"k" * 32
+
+
+@pytest.fixture()
+def keyed():
+    """A pseudonym key is configured (as with the secret resource bound)."""
+    redact.set_key(TEST_KEY, "secret")
+    yield
+    redact.reset_key()
