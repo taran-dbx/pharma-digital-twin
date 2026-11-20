@@ -62,7 +62,7 @@ the text versions with `ops/html_fallback.py`.
 - **Snapshots are records, not runnable notebooks.** The committed snapshots were captured
   from the upstream deployment before this fork, so they show its names (e.g. jobs named
   `iot-<industry>-<mode>`). The first code cell of every snapshot is
-  `raise SystemExit("snapshot only: ...")`, so "Run all" stops before touching any workspace.
+  `raise RuntimeError("snapshot only: ...")`, so "Run all" stops before touching any workspace.
   `ops/export_run_notebook.py` adds that cell to every new export. To check a pipeline, run
   `ops/notebooks/pipeline_health_check.ipynb`, never a snapshot.
 - Delete old snapshots rather than editing them.
