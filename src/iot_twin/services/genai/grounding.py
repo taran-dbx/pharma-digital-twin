@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -315,17 +316,40 @@ def _lot_tracked(alert: AlertRecord) -> bool:
     return sensor.startswith("cnc_1_") or bool(alert.metadata.get("lot_id"))
 
 
-def _top_features(raw: Any) -> Any:
+def _feature_entry(entry: Any) -> dict[str, Any] | None:
+    """One top feature as ``{"feature": str, "contribution": number}`` and nothing else.
+
+    ``top_features`` is untrusted alert metadata: any extra key (``share_pct``,
+    ``lots``…) would become a typed number a plan could cite, so only the
+    feature name (a string) and a numeric contribution are kept.
+    """
+    if isinstance(entry, str):
+        name, contribution = entry, None
+    elif isinstance(entry, Mapping):
+        name, contribution = entry.get("feature"), entry.get("contribution")
+    else:
+        return None
+    if not isinstance(name, str) or not name.strip():
+        return None
+    kept: dict[str, Any] = {"feature": _clip(name)}
+    number = None if isinstance(contribution, bool) else _to_float(contribution)
+    if number is not None and math.isfinite(number):
+        kept["contribution"] = number
+    return kept
+
+
+def _top_features(raw: Any) -> list[dict[str, Any]] | None:
     if isinstance(raw, str):
         try:
             raw = json.loads(raw)
         except json.JSONDecodeError:
-            return _clip(raw)
+            return None
     if isinstance(raw, Mapping):
         raw = [{"feature": k, "contribution": v} for k, v in raw.items()]
-    if isinstance(raw, list | tuple):
-        return _json_safe(list(raw)[:MAX_TOP_FEATURES])
-    return None
+    if not isinstance(raw, list | tuple):
+        return None
+    entries = (_feature_entry(entry) for entry in raw)
+    return [entry for entry in entries if entry is not None][:MAX_TOP_FEATURES]
 
 
 def _to_float(value: Any) -> float | None:

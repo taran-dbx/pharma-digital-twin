@@ -190,3 +190,53 @@ class TestNamedDurations:
 
 def test_checker_version_was_bumped() -> None:
     assert ps.CHECKER_VERSION.endswith(".v4")
+
+
+class TestFeatureEntrySanitising:
+    """[review r3 follow-up] Extra keys on a top feature must not ground numbers."""
+
+    def _grounding(self, *features: object) -> GroundingSet:
+        alert = make_alert(
+            risk=False,
+            metadata={"risk_score": 0.87, "model_version": "3", "top_features": list(features)},
+        )
+        return _ground(alert)
+
+    @pytest.mark.parametrize(
+        ("feature", "claim", "planted"),
+        [
+            ({"feature": "x", "share_pct": 99}, "99% of lots are safe.", "99%"),
+            ({"feature": "x", "lots": 42}, "Release 42 lots.", "42"),
+        ],
+    )
+    def test_reviewer_probes_fail(self, feature: dict, claim: str, planted: str) -> None:
+        grounding = self._grounding(feature)
+        check = _check(grounding, _risk_claim(grounding, claim))
+        assert check.status == "fail"
+        assert any(f"number {planted}" in r for r in check.reasons)
+
+    def test_only_feature_and_numeric_contribution_are_kept(self) -> None:
+        grounding = self._grounding(
+            {"feature": "spindle_temp_slope_5m", "contribution": 0.41, "share_pct": 99, "lots": 42},
+            {"feature": "vibration_rms", "contribution": "0.22", "note": "free text 7"},
+            {"feature": "flag", "contribution": True},
+            {"feature": 12, "contribution": 0.5},
+            {"contribution": 0.3},
+            "bare_name_1h",
+            7,
+        )
+        assert grounding.by_source("risk_score")[0].data["top_features"] == [
+            {"feature": "spindle_temp_slope_5m", "contribution": 0.41},
+            {"feature": "vibration_rms", "contribution": 0.22},
+            {"feature": "flag"},
+            {"feature": "bare_name_1h"},
+        ]
+
+    def test_contributions_still_ground_their_own_numbers(self) -> None:
+        grounding = self._grounding({"feature": "vibration_rms", "contribution": 0.41})
+        plan = _risk_claim(grounding, "Vibration contributes 0.41 (41%).")
+        assert _check(grounding, plan).status == "pass"
+
+    def test_unparseable_string_features_are_dropped(self) -> None:
+        alert = make_alert(risk=False, metadata={"risk_score": 0.5, "top_features": "99 lots"})
+        assert _ground(alert).by_source("risk_score")[0].data["top_features"] is None
