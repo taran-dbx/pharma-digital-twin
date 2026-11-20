@@ -5,7 +5,7 @@ import pytest
 import iot_twin.services.industry.industry_service as isvc
 
 UC_CATALOG = "test_catalog"
-UC_SCHEMA = "test_schema"
+UC_SCHEMA = "pharma_twin_test"
 PIPELINES_LAKEBASE_PROJECT = "pharma-twin-test-pipelines"
 
 

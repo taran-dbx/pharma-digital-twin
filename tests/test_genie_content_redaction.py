@@ -43,7 +43,7 @@ def _wrapped(question: str, mode: str = "realtime") -> str:
 @pytest.fixture(autouse=True)
 def _env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("UC_CATALOG", "cat")
-    monkeypatch.setenv("UC_SCHEMA", "sch")
+    monkeypatch.setenv("UC_SCHEMA", "pharma_twin_sch")
     for name in (
         "DATABRICKS_SQL_WAREHOUSE_ID",
         "DATABRICKS_APP_NAME",

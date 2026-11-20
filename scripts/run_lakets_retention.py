@@ -24,6 +24,8 @@ for _path in (_ROOT / "src", _ROOT):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
+from iot_twin.core import resource_names
+from iot_twin.core.config import owned_env
 from iot_twin.routes.lakets import _open_lakebase_conn
 from iot_twin.services.lakets import lakets_service
 
@@ -31,7 +33,7 @@ from iot_twin.services.lakets import lakets_service
 async def main() -> int:
     lb = {
         "mode": os.getenv("LAKEBASE_MODE", "autoscale"),
-        "project_id": os.getenv("LAKETS_PROJECT_ID", ""),
+        "project_id": owned_env("LAKETS_PROJECT_ID") or resource_names.lakets_demo_project(),
         "branch_id": os.getenv("LAKETS_BRANCH_ID", "production"),
         "database": os.getenv("PGDATABASE", "databricks_postgres"),
         "host": os.getenv("PGHOST", ""),

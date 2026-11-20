@@ -82,7 +82,7 @@ def _mock_cdf_reconciliation(monkeypatch):
     monkeypatch.setenv("DATABRICKS_CLIENT_ID", "current-app-sp")
     monkeypatch.setenv("DATABRICKS_CLIENT_SECRET", "current-app-secret")
     monkeypatch.setenv("UC_CATALOG", "configured-catalog")
-    monkeypatch.setenv("UC_SCHEMA", "configured-schema")
+    monkeypatch.setenv("UC_SCHEMA", "pharma_twin_configured")
     monkeypatch.setattr(
         ds.uc_secrets,
         "put_secret",
@@ -98,7 +98,7 @@ class TestConsumerCredentialNormalization:
         """Uploaded consumers use the app SP and UC secret [C7215][defect][regression]."""
         monkeypatch.setenv("DATABRICKS_CLIENT_ID", "current-app-sp")
         monkeypatch.setenv("UC_CATALOG", "configured-catalog")
-        monkeypatch.setenv("UC_SCHEMA", "configured-schema")
+        monkeypatch.setenv("UC_SCHEMA", "pharma_twin_configured")
         source = (
             f'APP_SECRET_SCOPE = "{LEGACY_SCOPE_NAME}"\n'
             '_lb_ci = dbutils.secrets.get(APP_SECRET_SCOPE, "sss-industries-client-id")\n'
@@ -110,7 +110,7 @@ class TestConsumerCredentialNormalization:
         assert '_APP_SP_CLIENT_ID = "current-app-sp"' in normalized
         assert "_lb_ci = _APP_SP_CLIENT_ID" in normalized
         assert 'catalog="configured-catalog"' in normalized
-        assert 'schema="configured-schema"' in normalized
+        assert 'schema="pharma_twin_configured"' in normalized
         assert 'key="app_sp_oauth"' in normalized
         assert "APP_SECRET_SCOPE" not in normalized
         assert "sss-industries-client" not in normalized
@@ -118,7 +118,7 @@ class TestConsumerCredentialNormalization:
     def test_rejects_missing_runtime_config_c7215(self, monkeypatch):
         monkeypatch.delenv("DATABRICKS_CLIENT_ID", raising=False)
         monkeypatch.setenv("UC_CATALOG", "configured-catalog")
-        monkeypatch.setenv("UC_SCHEMA", "configured-schema")
+        monkeypatch.setenv("UC_SCHEMA", "pharma_twin_configured")
         source = '_lb_ci = dbutils.secrets.get(APP_SECRET_SCOPE, "sss-industries-client-id")'
 
         with pytest.raises(ds.RuntimeOAuthCredentialError, match="DATABRICKS_CLIENT_ID"):
@@ -127,7 +127,7 @@ class TestConsumerCredentialNormalization:
     def test_rejects_unrecognized_legacy_secret_syntax_c7215(self, monkeypatch):
         monkeypatch.setenv("DATABRICKS_CLIENT_ID", "current-app-sp")
         monkeypatch.setenv("UC_CATALOG", "configured-catalog")
-        monkeypatch.setenv("UC_SCHEMA", "configured-schema")
+        monkeypatch.setenv("UC_SCHEMA", "pharma_twin_configured")
         source = (
             "_lb_cs = dbutils.secrets.get("
             'scope=APP_SECRET_SCOPE, key="sss-industries-client-secret")'
@@ -159,7 +159,7 @@ class TestRuntimeOauthSecret:
         assert result["status"] == "updated"
         put_secret.assert_awaited_once_with(
             "configured-catalog",
-            "configured-schema",
+            "pharma_twin_configured",
             "app_sp_oauth",
             "current-app-secret",
             ws=ANY,

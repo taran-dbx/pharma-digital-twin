@@ -16,7 +16,7 @@ from iot_twin.services.validation import validation_steps as vsteps
 from iot_twin.services.validation.validation_service import StepContext
 
 UC_CATALOG = "example_eu_catalog"
-UC_SCHEMA = "rtm_lakets_zb"
+UC_SCHEMA = "pharma_twin_zb"
 INDUSTRY = "pharmaceutical"
 
 

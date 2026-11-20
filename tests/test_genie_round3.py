@@ -23,7 +23,7 @@ D1 = "33333333-3333-4333-8333-333333333333"
 @pytest.fixture(autouse=True)
 def _env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("UC_CATALOG", "cat")
-    monkeypatch.setenv("UC_SCHEMA", "sch")
+    monkeypatch.setenv("UC_SCHEMA", "pharma_twin_sch")
     monkeypatch.delenv("DATABRICKS_SQL_WAREHOUSE_ID", raising=False)
 
 
@@ -142,7 +142,7 @@ class TestPipelineTelemetry:
             pipeline_scope=True,
         )
         sql = runner.call_args.args[0]
-        assert f"cat.sch.{SHADOW_SHORT}" in sql
+        assert f"cat.pharma_twin_sch.{SHADOW_SHORT}" in sql
         assert CDC in sql and "industry = 'manufacturing'" in sql
 
     @pytest.mark.asyncio
@@ -157,7 +157,7 @@ class TestPipelineTelemetry:
             pipeline_scope=True,
         )
         sql = runner.call_args.args[0]
-        assert "cat.sch.manufacturing_microbatch" in sql
+        assert "cat.pharma_twin_sch.manufacturing_microbatch" in sql
         assert "_pg_change_type" not in sql
 
     @pytest.mark.asyncio
@@ -171,7 +171,7 @@ class TestPipelineTelemetry:
             warehouse_id="wh",
         )
         sql = runner.call_args.args[0]
-        assert "cat.sch.manufacturing_realtime" in sql
+        assert "cat.pharma_twin_sch.manufacturing_realtime" in sql
 
     @pytest.mark.asyncio
     async def test_pipeline_route_requests_pipeline_scope(self, monkeypatch) -> None:

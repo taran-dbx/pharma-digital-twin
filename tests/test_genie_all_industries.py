@@ -26,7 +26,7 @@ MATRIX = [(industry, mode) for industry in CURATED_INDUSTRIES for mode in MODES]
 @pytest.fixture(autouse=True)
 def _env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("UC_CATALOG", "cat")
-    monkeypatch.setenv("UC_SCHEMA", "sch")
+    monkeypatch.setenv("UC_SCHEMA", "pharma_twin_sch")
     monkeypatch.delenv("DATABRICKS_SQL_WAREHOUSE_ID", raising=False)
     monkeypatch.delenv(gss.PARENT_PATH_ENV, raising=False)
     monkeypatch.setenv("DATABRICKS_CLIENT_ID", "app-sp")
@@ -55,10 +55,12 @@ class TestTablesAndContent:
         telemetry = gss.telemetry_table(industry, mode)
         assert telemetry in tables
         if mode == "realtime":
-            assert telemetry != f"cat.sch.{industry}_realtime"  # CDF shadow history table
+            assert (
+                telemetry != f"cat.pharma_twin_sch.{industry}_realtime"
+            )  # CDF shadow history table
         else:
-            assert telemetry == f"cat.sch.{industry}_{mode}"
-        metrics = f"cat.sch.{industry}_metrics"
+            assert telemetry == f"cat.pharma_twin_sch.{industry}_{mode}"
+        metrics = f"cat.pharma_twin_sch.{industry}_metrics"
         assert (metrics in tables) is (mode != "zerobus")
         assert gss.metrics_table(industry, mode) == (None if mode == "zerobus" else metrics)
         assert any(t.rsplit(".", 1)[-1].startswith("intelligence_") for t in tables)
@@ -129,15 +131,15 @@ class TestManufacturingGolden:
 
     def test_zerobus_drops_the_metrics_table_only(self) -> None:
         tables = gss.expected_tables("manufacturing", "zerobus")
-        assert "cat.sch.manufacturing_metrics" not in tables
-        assert "cat.sch.manufacturing_zerobus" in tables
+        assert "cat.pharma_twin_sch.manufacturing_metrics" not in tables
+        assert "cat.pharma_twin_sch.manufacturing_zerobus" in tables
 
 
 class TestOtherIndustries:
     def test_pharmaceutical_uses_its_own_sensors_and_units(self) -> None:
         text = json.dumps(_space("pharmaceutical", "microbatch"))
         assert "bioreactor_1_temp" in text
-        assert "cat.sch.pharmaceutical_microbatch" in text
+        assert "cat.pharma_twin_sch.pharmaceutical_microbatch" in text
         assert "Pharmaceutical" in gss.space_description("pharmaceutical", "microbatch")
 
     def test_energy_uses_record_industry(self) -> None:

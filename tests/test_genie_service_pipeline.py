@@ -16,7 +16,7 @@ from iot_twin.services.genie import genie_space_service as gss
 @pytest.fixture(autouse=True)
 def _env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("UC_CATALOG", "cat")
-    monkeypatch.setenv("UC_SCHEMA", "sch")
+    monkeypatch.setenv("UC_SCHEMA", "pharma_twin_sch")
     monkeypatch.delenv("GENIE_ALLOWLIST_CONFIRMED", raising=False)
     monkeypatch.delenv("DATABRICKS_SQL_WAREHOUSE_ID", raising=False)
 

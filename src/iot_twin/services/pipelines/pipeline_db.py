@@ -41,7 +41,7 @@ from typing import Any
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.core import Config
 
-from iot_twin.core.config import owned_env
+from iot_twin.core.config import is_owned_name, owned_env
 from iot_twin.core.lakebase import LakebaseConnectionManager
 from iot_twin.core.state import AppState
 from iot_twin.core.workspace_config import get_pipelines_project
@@ -166,6 +166,14 @@ async def get_pipeline_lakebase(state: AppState, pipeline_id: str) -> PipelineLa
 
         if not project_id:
             logger.warning("Pipeline %s: no lb_project_id in sink_config", pipeline_id)
+            return None
+        if not is_owned_name(project_id):
+            logger.error(
+                "Pipeline %s: stored lb_project_id %r is not owned by this deployment; "
+                "refusing to connect",
+                pipeline_id,
+                project_id,
+            )
             return None
 
         host = await _resolve_endpoint_host_bounded(endpoint_name)

@@ -23,7 +23,7 @@ from tests._fakes import fake_credential
 
 
 SP_CLIENT_ID = "00000000-0000-0000-0000-000000000000"
-PROJECT_ID = "iot-demo"
+PROJECT_ID = "pharma-twin-demo"
 BRANCH_ID = "production"
 ENDPOINT_NAME = f"projects/{PROJECT_ID}/branches/{BRANCH_ID}/endpoints/primary"
 

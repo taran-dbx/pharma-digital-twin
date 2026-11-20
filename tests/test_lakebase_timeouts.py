@@ -69,7 +69,7 @@ async def test_pipeline_pool_initialization_is_single_flight_c7263() -> None:
             "iot_twin.services.pipelines.pipeline_db._load_pipeline_sink_config",
             AsyncMock(
                 return_value={
-                    "lb_project_id": "project",
+                    "lb_project_id": "pharma-twin-project",
                     "lb_branch_id": "branch",
                     "lb_database": "database",
                 }

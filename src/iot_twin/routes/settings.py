@@ -13,6 +13,7 @@ from iot_twin.core import resource_names
 from iot_twin.core.auth import get_current_user
 from iot_twin.core.state import AppState, get_app_state
 from iot_twin.models.sql_ddl import LAKEBASE_ROLE_NAME
+from iot_twin.routes._ownership import reject_foreign_project
 from iot_twin.services.app_permissions import _app_name, grant_app_can_use
 from iot_twin.services.provisioning_service import (
     ensure_streaming_sp,
@@ -109,6 +110,10 @@ async def provision_settings(request: Request, user_email: str = Depends(get_cur
     secrets_scope = (body.get("secrets", {}).get("scope") or "").strip()
     uc = body.get("uc", {})
     lb = body.get("lakebase", {})
+    if (lb.get("mode") or "autoscale") == "autoscale" and (
+        rejected := reject_foreign_project((lb.get("project_id") or "").strip())
+    ):
+        return rejected
 
     tasks = []
     if secrets_scope:
@@ -256,6 +261,9 @@ async def provision_lakebase_settings(
                 ],
                 "validation": validation,
             }
+
+        if rejected := reject_foreign_project(project_id):
+            return rejected
 
         # Step 1: Create project + branch
         proj_results = await provision_lakebase_project_and_branch(project_id, branch_id)

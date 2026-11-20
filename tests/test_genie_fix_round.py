@@ -19,7 +19,7 @@ from iot_twin.services.genie import genie_space_service as gss
 @pytest.fixture(autouse=True)
 def _env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("UC_CATALOG", "cat")
-    monkeypatch.setenv("UC_SCHEMA", "sch")
+    monkeypatch.setenv("UC_SCHEMA", "pharma_twin_sch")
     monkeypatch.delenv("GENIE_ALLOWLIST_CONFIRMED", raising=False)
     monkeypatch.delenv("DATABRICKS_SQL_WAREHOUSE_ID", raising=False)
     gs.invalidate_allowlist_cache()
@@ -43,7 +43,7 @@ def _expected(mode: str = "realtime") -> list[str]:
 class TestAllowlistFailClosed:
     def test_unknown_data_source_kind_is_mismatch(self) -> None:
         payload = json.loads(gss.build_serialized_space("manufacturing", "realtime"))
-        payload["data_sources"]["volumes"] = [{"identifier": "cat.sch.files"}]
+        payload["data_sources"]["volumes"] = [{"identifier": "cat.pharma_twin_sch.files"}]
         status = gs.space_table_allowlist_status(_client(json.dumps(payload)), "sp", _expected())
         assert status["status"] == "mismatch"
         assert status["authorization_enforced"] is False
@@ -201,7 +201,7 @@ class TestIntelligencePrecheck:
         )
         assert out["space_id"] == "sp"
         checked = {c.args[0] for c in w.tables.exists.call_args_list}
-        assert "cat.sch.intelligence_assets" in checked
+        assert "cat.pharma_twin_sch.intelligence_assets" in checked
 
     @pytest.mark.asyncio
     async def test_check_error_does_not_block(self) -> None:
@@ -240,10 +240,12 @@ class TestContent:
 
     def test_maintenance_example_filters_industry(self) -> None:
         refs = {
-            "sensor_bindings": "cat.sch.intelligence_sensor_bindings",
-            "maintenance_records": "cat.sch.intelligence_maintenance_records",
+            "sensor_bindings": "cat.pharma_twin_sch.intelligence_sensor_bindings",
+            "maintenance_records": "cat.pharma_twin_sch.intelligence_maintenance_records",
         }
-        sql = content._maintenance_sql("cat.sch.manufacturing_realtime", refs, "manufacturing")
+        sql = content._maintenance_sql(
+            "cat.pharma_twin_sch.manufacturing_realtime", refs, "manufacturing"
+        )
         assert "b.industry = 'manufacturing'" in sql
         assert "r.industry = 'manufacturing'" in sql
 
@@ -252,7 +254,7 @@ class TestContent:
         assert "o''brien" in content._maintenance_sql("c.s.t", refs, "o'brien")
 
     def test_oee_quality_ignores_null_bounds(self) -> None:
-        sql = content._health_sql("cat.sch.manufacturing_realtime", "oee_pct")
+        sql = content._health_sql("cat.pharma_twin_sch.manufacturing_realtime", "oee_pct")
         assert "min_value IS NULL OR max_value IS NULL THEN NULL" in sql
         assert "COALESCE(quality, 1)" in sql
 

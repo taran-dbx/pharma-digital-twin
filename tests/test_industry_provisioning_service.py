@@ -9,7 +9,7 @@ import pytest
 from iot_twin.services.industry import industry_provisioning_service as ips
 
 CATALOG = "example_eu_catalog"
-SCHEMA = "rtm_lakets_zb"
+SCHEMA = "pharma_twin_zb"
 
 
 @pytest.fixture(autouse=True)

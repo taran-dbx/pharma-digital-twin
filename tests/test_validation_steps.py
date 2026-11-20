@@ -27,7 +27,7 @@ from iot_twin.services.validation.validation_service import StepContext, StepRes
 from tests._fakes import fake_credential
 
 UC_CATALOG = "test_catalog"
-UC_SCHEMA = "test_schema"
+UC_SCHEMA = "pharma_twin_test"
 PIPELINES_LAKEBASE_PROJECT = "pharma-twin-test-pipelines"
 
 # UC service credential *name* (an identifier, not a secret) and a probe status.
@@ -587,7 +587,7 @@ async def test_zerobus_produce_test_driver_side_no_cluster(monkeypatch):
     """
     # Pin UC env so industry_table() resolves without raising RuntimeError.
     monkeypatch.setenv("UC_CATALOG", "iot_test_catalog")
-    monkeypatch.setenv("UC_SCHEMA", "rtm_test_schema")
+    monkeypatch.setenv("UC_SCHEMA", "pharma_twin_rtm_test")
     monkeypatch.setenv("DATABRICKS_HOST", "https://x.databricks.com")
     monkeypatch.setenv("ZEROBUS_SERVER_ENDPOINT", "x.zerobus.us-east-1.cloud.databricks.com")
 

@@ -48,22 +48,22 @@
  "data_sources": {
   "tables": [
    {
-    "identifier": "cat.sch.intelligence_alert_rules"
+    "identifier": "cat.pharma_twin_sch.intelligence_alert_rules"
    },
    {
-    "identifier": "cat.sch.intelligence_alert_snapshot"
+    "identifier": "cat.pharma_twin_sch.intelligence_alert_snapshot"
    },
    {
-    "identifier": "cat.sch.intelligence_assets"
+    "identifier": "cat.pharma_twin_sch.intelligence_assets"
    },
    {
-    "identifier": "cat.sch.intelligence_maintenance_records"
+    "identifier": "cat.pharma_twin_sch.intelligence_maintenance_records"
    },
    {
-    "identifier": "cat.sch.intelligence_sensor_bindings"
+    "identifier": "cat.pharma_twin_sch.intelligence_sensor_bindings"
    },
    {
-    "identifier": "cat.sch.manufacturing_metrics"
+    "identifier": "cat.pharma_twin_sch.manufacturing_metrics"
    },
    {
     "column_configs": [
@@ -139,7 +139,7 @@
       ]
      }
     ],
-    "identifier": "cat.sch.manufacturing_microbatch"
+    "identifier": "cat.pharma_twin_sch.manufacturing_microbatch"
    }
   ]
  },
@@ -151,7 +151,7 @@
      "How many minutes of downtime did each sensor have in the last 24 hours?"
     ],
     "sql": [
-     "SELECT sensor_name, COUNT(DISTINCT date_trunc('minute', event_time)) AS downtime_minutes FROM cat.sch.manufacturing_microbatch WHERE fault_active AND event_time >= current_timestamp() - INTERVAL 24 HOURS GROUP BY sensor_name ORDER BY downtime_minutes DESC"
+     "SELECT sensor_name, COUNT(DISTINCT date_trunc('minute', event_time)) AS downtime_minutes FROM cat.pharma_twin_sch.manufacturing_microbatch WHERE fault_active AND event_time >= current_timestamp() - INTERVAL 24 HOURS GROUP BY sensor_name ORDER BY downtime_minutes DESC"
     ]
    },
    {
@@ -160,7 +160,7 @@
      "What is the approximate OEE per sensor over the last 24 hours?"
     ],
     "sql": [
-     "WITH m AS (SELECT sensor_name, COUNT(DISTINCT date_trunc('minute', event_time)) AS observed_min, COUNT(DISTINCT CASE WHEN fault_active THEN date_trunc('minute', event_time) END) AS fault_min, AVG(CASE WHEN nominal_value > 0 THEN LEAST(value / nominal_value, 1) END) AS performance, AVG(CASE WHEN min_value IS NULL OR max_value IS NULL THEN NULL WHEN value BETWEEN min_value AND max_value THEN 1.0 ELSE 0.0 END) AS quality FROM cat.sch.manufacturing_microbatch WHERE event_time >= current_timestamp() - INTERVAL 24 HOURS GROUP BY sensor_name) SELECT sensor_name, ROUND(100 * (1 - fault_min / observed_min), 2) AS availability_pct, ROUND(100 * performance, 2) AS performance_pct, ROUND(100 * quality, 2) AS quality_pct, ROUND(100 * (1 - fault_min / observed_min) * COALESCE(performance, 1) * COALESCE(quality, 1), 2) AS oee_pct FROM m ORDER BY oee_pct ASC"
+     "WITH m AS (SELECT sensor_name, COUNT(DISTINCT date_trunc('minute', event_time)) AS observed_min, COUNT(DISTINCT CASE WHEN fault_active THEN date_trunc('minute', event_time) END) AS fault_min, AVG(CASE WHEN nominal_value > 0 THEN LEAST(value / nominal_value, 1) END) AS performance, AVG(CASE WHEN min_value IS NULL OR max_value IS NULL THEN NULL WHEN value BETWEEN min_value AND max_value THEN 1.0 ELSE 0.0 END) AS quality FROM cat.pharma_twin_sch.manufacturing_microbatch WHERE event_time >= current_timestamp() - INTERVAL 24 HOURS GROUP BY sensor_name) SELECT sensor_name, ROUND(100 * (1 - fault_min / observed_min), 2) AS availability_pct, ROUND(100 * performance, 2) AS performance_pct, ROUND(100 * quality, 2) AS quality_pct, ROUND(100 * (1 - fault_min / observed_min) * COALESCE(performance, 1) * COALESCE(quality, 1), 2) AS oee_pct FROM m ORDER BY oee_pct ASC"
     ]
    },
    {
@@ -169,7 +169,7 @@
      "What is the streaming throughput and p99 latency over the last hour?"
     ],
     "sql": [
-     "SELECT date_trunc('minute', timestamp) AS minute, AVG(processed_rps) AS processed_rps, MAX(e2e_p99) AS e2e_p99_ms FROM cat.sch.manufacturing_metrics WHERE mode = 'microbatch' AND timestamp >= current_timestamp() - INTERVAL 1 HOUR GROUP BY 1 ORDER BY 1"
+     "SELECT date_trunc('minute', timestamp) AS minute, AVG(processed_rps) AS processed_rps, MAX(e2e_p99) AS e2e_p99_ms FROM cat.pharma_twin_sch.manufacturing_metrics WHERE mode = 'microbatch' AND timestamp >= current_timestamp() - INTERVAL 1 HOUR GROUP BY 1 ORDER BY 1"
     ]
    },
    {
@@ -178,7 +178,7 @@
      "Which sensors had the most anomalies in the last hour?"
     ],
     "sql": [
-     "SELECT sensor_name, COUNT(*) AS anomalies, MIN(value) AS min_seen, MAX(value) AS max_seen FROM cat.sch.manufacturing_microbatch WHERE (value < min_value OR value > max_value) AND event_time >= current_timestamp() - INTERVAL 1 HOUR GROUP BY sensor_name ORDER BY anomalies DESC"
+     "SELECT sensor_name, COUNT(*) AS anomalies, MIN(value) AS min_seen, MAX(value) AS max_seen FROM cat.pharma_twin_sch.manufacturing_microbatch WHERE (value < min_value OR value > max_value) AND event_time >= current_timestamp() - INTERVAL 1 HOUR GROUP BY sensor_name ORDER BY anomalies DESC"
     ]
    },
    {
@@ -187,7 +187,7 @@
      "Which assets had the most faults this week and when were they last maintained?"
     ],
     "sql": [
-     "WITH faults AS (SELECT sensor_name, COUNT(*) AS fault_readings FROM cat.sch.manufacturing_microbatch WHERE fault_active AND event_time >= current_timestamp() - INTERVAL 7 DAYS GROUP BY sensor_name) SELECT b.asset_id, SUM(f.fault_readings) AS fault_readings, MAX(r.completed_at) AS last_maintenance FROM faults f JOIN cat.sch.intelligence_sensor_bindings b ON b.sensor_name = f.sensor_name AND b.industry = 'manufacturing' LEFT JOIN cat.sch.intelligence_maintenance_records r ON r.asset_id = b.asset_id AND r.industry = 'manufacturing' GROUP BY b.asset_id ORDER BY fault_readings DESC"
+     "WITH faults AS (SELECT sensor_name, COUNT(*) AS fault_readings FROM cat.pharma_twin_sch.manufacturing_microbatch WHERE fault_active AND event_time >= current_timestamp() - INTERVAL 7 DAYS GROUP BY sensor_name) SELECT b.asset_id, SUM(f.fault_readings) AS fault_readings, MAX(r.completed_at) AS last_maintenance FROM faults f JOIN cat.pharma_twin_sch.intelligence_sensor_bindings b ON b.sensor_name = f.sensor_name AND b.industry = 'manufacturing' LEFT JOIN cat.pharma_twin_sch.intelligence_maintenance_records r ON r.asset_id = b.asset_id AND r.industry = 'manufacturing' GROUP BY b.asset_id ORDER BY fault_readings DESC"
     ]
    }
   ],
@@ -283,7 +283,7 @@
   "text_instructions": [
    {
     "content": [
-     "This space covers ONE manufacturing micro-batch pipeline. Sensor telemetry is in cat.sch.manufacturing_microbatch (one row per reading). Streaming throughput/latency metrics are in cat.sch.manufacturing_metrics. Asset, sensor-binding, maintenance, alert-rule and alert-snapshot reference data is in the intelligence_* tables.\n",
+     "This space covers ONE manufacturing micro-batch pipeline. Sensor telemetry is in cat.pharma_twin_sch.manufacturing_microbatch (one row per reading). Streaming throughput/latency metrics are in cat.pharma_twin_sch.manufacturing_metrics. Asset, sensor-binding, maintenance, alert-rule and alert-snapshot reference data is in the intelligence_* tables.\n",
      "Downtime = time intervals where manufacturing_microbatch.fault_active is TRUE. Approximate downtime minutes as the count of distinct minutes (date_trunc('minute', manufacturing_microbatch.event_time)) with at least one fault_active reading.\n",
      "Availability = 1 - (fault minutes / observed minutes), where observed minutes are distinct minutes with any reading. Report as a percentage.\n",
      "Performance = AVG(LEAST(manufacturing_microbatch.value / manufacturing_microbatch.nominal_value, 1)) for readings with nominal_value > 0 (how close output runs to its nominal rate).\n",
@@ -295,7 +295,7 @@
      "Faults: report fault_active readings and use the bridge above for fault codes and severity.\n",
      "Maintenance: use intelligence_maintenance_records joined to intelligence_sensor_bindings on asset_id to relate faults to assets and their last maintenance.\n",
      "Default time window when unspecified: the last 24 hours, using manufacturing_microbatch.event_time >= current_timestamp() - INTERVAL 24 HOURS.\n",
-     "Filter cat.sch.manufacturing_metrics with mode = 'microbatch' for this pipeline's streaming metrics.\n",
+     "Filter cat.pharma_twin_sch.manufacturing_metrics with mode = 'microbatch' for this pipeline's streaming metrics.\n",
      "Never modify data. Answer read-only with SELECT queries.\n"
     ],
     "id": "f7454d11703dafe1f2f3a9662c081e0c"

@@ -16,11 +16,13 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from iot_twin.core.config import INDUSTRIES, UPDATE_RATE_HZ
+from iot_twin.core.config import INDUSTRIES, UPDATE_RATE_HZ, NotOwnedError
 from iot_twin.core.paths import SPA_DIST_DIR, SPA_INDEX, STATIC_DIR
 from iot_twin.core.shutdown import install_sigterm_handler, shutdown
 from iot_twin.core.state import AppState
+from iot_twin.core.workspace_config import validate_isolation_config
 from iot_twin.routes import create_api_router
+from iot_twin.routes._ownership import not_owned_response
 from iot_twin.routes.industries_admin import start_industry_runtime_refresh
 from iot_twin.services.alerts.alert_snapshot_sync import start_alert_snapshot_sync
 from iot_twin.services.deployment.deployment_service import (
@@ -72,6 +74,8 @@ async def lifespan(application: FastAPI):
     install_sigterm_handler(state)
 
     logger.info("=== IoT Digital Twin starting ===")
+    # Fail fast on a bad prefix or a foreign (non-owned) resource override.
+    logger.info("Resource isolation: %s", validate_isolation_config())
     logger.info("PGHOST=%s", os.getenv("PGHOST", "(not set)"))
     logger.info("LAKEBASE_ENDPOINT=%s", os.getenv("LAKEBASE_ENDPOINT", "(not set)"))
     logger.info("ZEROBUS_SERVER_ENDPOINT=%s", os.getenv("ZEROBUS_SERVER_ENDPOINT", "(not set)"))
@@ -142,6 +146,14 @@ async def lifespan(application: FastAPI):
 # Application factory
 # ---------------------------------------------------------------------------
 app = FastAPI(title="IoT Digital Twin", lifespan=lifespan)
+
+
+@app.exception_handler(NotOwnedError)
+async def _not_owned_handler(_request, exc: NotOwnedError):
+    """Backstop: an unhandled ownership rejection is a 403, never a 500."""
+    return not_owned_response(exc)
+
+
 app.add_middleware(UsageTrackingMiddleware, tracker=usage_tracker)
 
 # Every router (API, setup, admin, validation, SPA root) is registered by

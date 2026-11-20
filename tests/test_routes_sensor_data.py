@@ -1285,7 +1285,7 @@ class TestStreamingMetrics:
 # bug fix: realtime/microbatch/zerobus each land in their own schema/table).
 # ---------------------------------------------------------------------------
 _UC_CATALOG = "example_eu_catalog"
-_UC_SCHEMA = "rtm_lakets_zb"
+_UC_SCHEMA = "pharma_twin_zb"
 
 
 def _patch_dbsql_timeseries_deps(
