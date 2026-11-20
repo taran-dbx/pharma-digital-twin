@@ -192,10 +192,22 @@ own namespace:
     `isolation misconfiguration` (`500`), and the app refuses to start.
   * Teardown refuses the whole setup before any deleter runs if one ledger row is
     foreign.
+* **Objects addressed by ID.** Jobs and clusters are re-fetched before any cancel,
+  pause/unpause, reset, run-now, start, terminate or delete. Both checks must pass:
+  * the name carries the prefix;
+  * the `app` tag (jobs) or `custom_tags.app` (clusters) equals the app name.
+
+  This app stamps those tags on every job and cluster it creates. A lookup that
+  fails is a rejection; a job that no longer exists is "already absent". Pipeline
+  `PUT` can no longer write `resources`, so a job or cluster id cannot be planted.
 * **Admin-only write routes.** `/api/settings/provision*`, `/api/provision/*`,
   `POST /api/pipelines/{id}/secrets`, `/api/lakets/sync/check`,
-  `/api/lakets/retention/deploy` and `/api/setup/pipeline-lakebase` now need an app
-  admin. That is the same check as the industry admin API: `ADMIN_EMAILS`, membership
+  `/api/lakets/retention/deploy`, `/api/setup/pipeline-lakebase`,
+  `/api/job/{id}/stop|restart`, `/api/cluster/deploy-job`,
+  `/api/cluster/{id}/validate|start`, `/api/cluster/provision`,
+  `/api/test-connectivity/submit` and `POST /api/warehouses` now need an app
+  admin. The admin email is `current_user.me()` for the caller's own forwarded
+  token, verified by the workspace; the token is never decoded locally. That is the same check as the industry admin API: `ADMIN_EMAILS`, membership
   of `ADMIN_GROUP` (default `<prefix>-admins`), or the app owner.
   * The Settings page's provision buttons therefore work for admins only.
   * The industry setup → provision → validate → deploy flow already used

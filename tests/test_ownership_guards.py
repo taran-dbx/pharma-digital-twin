@@ -661,3 +661,384 @@ async def test_teardown_refuses_foreign_ledger_before_any_deleter(monkeypatch) -
             MagicMock(), "setup-1", {"job": deleter, "lakebase_branch": deleter}
         )
     deleter.assert_not_awaited()
+
+
+# =====================================================================================
+# Round 4: workspace objects addressed by numeric / opaque id
+# =====================================================================================
+from types import SimpleNamespace  # noqa: E402
+
+from tests._fakes import owned_cluster_info, owned_job_settings  # noqa: E402
+
+UPSTREAM_JOB = SimpleNamespace(
+    settings=SimpleNamespace(name="iot-pharmaceutical-realtime", tags={"app": "iot-digital-twin"})
+)
+FOREIGN_JOBS = [
+    UPSTREAM_JOB,
+    SimpleNamespace(settings=SimpleNamespace(name="pharma-twin-x", tags={})),  # no app tag
+    SimpleNamespace(settings=SimpleNamespace(name="pharma-twin-x", tags={"app": "other"})),
+    SimpleNamespace(settings=SimpleNamespace(name="other-job", tags={"app": "pharma-twin"})),
+    SimpleNamespace(settings=None),
+]
+FOREIGN_CLUSTERS = [
+    SimpleNamespace(cluster_name="iot-validate-pharmaceutical", custom_tags={"app": "iot"}),
+    SimpleNamespace(cluster_name="pharma-twin-x", custom_tags=None),
+    SimpleNamespace(cluster_name="shared-cluster", custom_tags={"app": "pharma-twin"}),
+]
+
+
+def _ws_with(job=None, cluster=None, *, job_error=None):
+    w = MagicMock()
+    if job_error is not None:
+        w.jobs.get.side_effect = job_error
+    else:
+        w.jobs.get.return_value = job
+    w.clusters.get.return_value = cluster
+    return w
+
+
+def _assert_no_mutation(w) -> None:
+    for call in (
+        w.jobs.cancel_all_runs,
+        w.jobs.update,
+        w.jobs.reset,
+        w.jobs.delete,
+        w.jobs.run_now,
+        w.jobs.cancel_run,
+        w.clusters.start,
+        w.clusters.delete,
+        w.clusters.permanent_delete,
+        w.workspace.import_,
+        w.workspace.mkdirs,
+        w.workspace.delete,
+        w.command_execution.create,
+    ):
+        call.assert_not_called()
+
+
+def test_owned_job_and_cluster_accepted() -> None:
+    from iot_twin.services.ownership import assert_owned_cluster, assert_owned_job
+
+    w = _ws_with(owned_job_settings(), owned_cluster_info())
+    assert assert_owned_job(w, "42") == 42
+    assert assert_owned_cluster(w, "0101-abc") == "0101-abc"
+
+
+def test_owned_lakets_job_display_name_accepted() -> None:
+    from iot_twin.services.lakets import lakets_deploy_service as lds
+    from iot_twin.services.ownership import assert_owned_job
+
+    job = SimpleNamespace(
+        settings=SimpleNamespace(
+            name=lds._job_display_name("pharma-twin-lakets-demo", "production"),
+            tags={"app": "pharma-twin", "component": "lakets-retention"},
+        )
+    )
+    assert assert_owned_job(_ws_with(job), 7) == 7
+
+
+@pytest.mark.parametrize("job", FOREIGN_JOBS)
+def test_foreign_jobs_rejected(job) -> None:
+    from iot_twin.services.ownership import assert_owned_job
+
+    with pytest.raises(NotOwnedError):
+        assert_owned_job(_ws_with(job), 42)
+
+
+@pytest.mark.parametrize("bad", ["", "abc", None, "1; drop"])
+def test_invalid_job_ids_rejected(bad) -> None:
+    from iot_twin.services.ownership import assert_owned_job
+
+    w = _ws_with(owned_job_settings())
+    with pytest.raises(NotOwnedError):
+        assert_owned_job(w, bad)
+    w.jobs.get.assert_not_called()
+
+
+def test_job_lookup_failure_fails_closed() -> None:
+    from iot_twin.services.ownership import assert_owned_job, job_lookup_missing
+
+    with pytest.raises(NotOwnedError) as info:
+        assert_owned_job(_ws_with(job_error=RuntimeError("boom")), 42)
+    assert not job_lookup_missing(info.value)
+    with pytest.raises(NotOwnedError) as info:
+        assert_owned_job(_ws_with(job_error=RuntimeError("RESOURCE_DOES_NOT_EXIST: not found")), 42)
+    assert job_lookup_missing(info.value)
+
+
+@pytest.mark.parametrize("cluster", FOREIGN_CLUSTERS)
+def test_foreign_clusters_rejected(cluster) -> None:
+    from iot_twin.services.ownership import assert_owned_cluster
+
+    with pytest.raises(NotOwnedError):
+        assert_owned_cluster(_ws_with(cluster=cluster), "0101-abc")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["stop", "restart"])
+async def test_job_routes_reject_foreign_job(action) -> None:
+    from iot_twin.routes import jobs
+
+    w = _ws_with(UPSTREAM_JOB)
+    with patch("databricks.sdk.WorkspaceClient", return_value=w):
+        resp = await _post(_app(jobs.router), f"/api/job/123/{action}", {})
+    assert resp.status_code == 403, resp.text
+    _assert_no_mutation(w)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["body", "stored"])
+async def test_deploy_job_rejects_foreign_job_before_any_write(source) -> None:
+    import json
+
+    from iot_twin.routes import deployment
+
+    w = _ws_with(UPSTREAM_JOB)
+    app = _app(deployment.router)
+    body = {
+        "notebook": "print(1)",
+        "cluster_config": {"spark_version": "18.2.x", "worker_node_type": "i3.xlarge"},
+    }
+    if source == "body":
+        body["job_id"] = 123
+    else:
+        body["pipeline_id"] = "00000000-0000-0000-0000-000000000001"
+        state = app.state.app_state
+        state.db_available = True
+        state.db = MagicMock()
+        state.db.fetchrow = AsyncMock(return_value={"resources": json.dumps({"job_id": 123})})
+    with patch("databricks.sdk.WorkspaceClient", return_value=w):
+        resp = await _post(app, "/api/cluster/deploy-job", body)
+    assert resp.status_code == 403, resp.text
+    _assert_no_mutation(w)
+    w.jobs.create.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("module", "path", "body"),
+    [
+        ("cluster", "/api/cluster/0101-abc/start", {}),
+        ("deployment", "/api/cluster/0101-abc/validate", {"notebook": "print(1)"}),
+    ],
+)
+async def test_cluster_routes_reject_foreign_cluster(module, path, body) -> None:
+    import importlib
+
+    router = importlib.import_module(f"iot_twin.routes.{module}").router
+    w = _ws_with(cluster=FOREIGN_CLUSTERS[0])
+    with (
+        patch("databricks.sdk.WorkspaceClient", return_value=w),
+        patch("iot_twin.routes.deployment.WorkspaceClient", return_value=w),
+    ):
+        resp = await _post(_app(router), path, body)
+    assert resp.status_code == 403, resp.text
+    _assert_no_mutation(w)
+
+
+@pytest.mark.asyncio
+async def test_cluster_provision_rejects_foreign_name_and_tags_owned() -> None:
+    from iot_twin.routes import cluster
+
+    w = MagicMock()
+    with (
+        patch("databricks.sdk.WorkspaceClient", return_value=w),
+        patch.object(cluster, "detect_cloud", return_value="aws"),
+    ):
+        resp = await _post(
+            _app(cluster.router),
+            "/api/cluster/provision",
+            {"cluster_name": "iot-digital-twin-1", "worker_node_type": "i3", "spark_version": "18"},
+        )
+        assert resp.status_code == 403, resp.text
+        w.clusters.create.assert_not_called()
+        resp = await _post(
+            _app(cluster.router),
+            "/api/cluster/provision",
+            {"worker_node_type": "i3.xlarge", "spark_version": "18.2.x"},
+        )
+    assert w.clusters.create.call_args.kwargs["custom_tags"] == {"app": "pharma-twin"}
+
+
+def test_validation_cluster_spec_carries_app_tag() -> None:
+    from iot_twin.services.validation import validation_config as vc
+
+    spec = vc.build_validation_cluster_spec(
+        node_type_id="i3.xlarge", num_workers=1, single_user_name="u", spark_version="18.2"
+    )
+    assert spec["custom_tags"] == {"app": "pharma-twin"}
+
+
+def test_validation_cluster_terminate_skips_foreign_cluster() -> None:
+    from iot_twin.services.validation import validation_steps
+
+    w = _ws_with(cluster=FOREIGN_CLUSTERS[0])
+    validation_steps._terminate_cluster_sync(w, "0101-abc")
+    w.clusters.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_put_cannot_write_resources() -> None:
+    from iot_twin.routes import pipelines
+
+    app = _app(pipelines.router)
+    state = app.state.app_state
+    state.db_available = True
+    state.db = MagicMock()
+    state.db.fetchrow = AsyncMock(return_value={"id": "p", "name": "n", "user_email": "u"})
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await client.put("/api/pipelines/p-1", json={"resources": {"job_id": 123}, "status": "x"})
+    updates = [c.args[0] for c in state.db.fetchrow.await_args_list if "UPDATE" in c.args[0]]
+    assert updates, "the PUT must reach its UPDATE for this test to mean anything"
+    for query in updates:
+        assert "resources" not in query, query
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "path", "resources"),
+    [
+        ("delete", "/api/pipelines/00000000-0000-0000-0000-000000000001", {"job_id": "123"}),
+        ("delete", "/api/pipelines/00000000-0000-0000-0000-000000000001", {"cluster_id": "c-1"}),
+        ("post", "/api/pipelines/00000000-0000-0000-0000-000000000001/reset", {"job_id": "123"}),
+    ],
+)
+async def test_pipeline_delete_and_reset_reject_planted_foreign_ids(method, path, resources):
+    import json
+
+    from iot_twin.routes import pipelines
+
+    app = _app(pipelines.router)
+    state = app.state.app_state
+    state.db_available = True
+    state.db = MagicMock()
+    state.db.fetchrow = AsyncMock(return_value={"id": "p", "resources": json.dumps(resources)})
+    state.db.execute = AsyncMock()
+    w = _ws_with(UPSTREAM_JOB, FOREIGN_CLUSTERS[0])
+    with patch.object(pipelines, "WorkspaceClient", return_value=w):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await getattr(client, method)(path)
+    assert resp.status_code == 403, resp.text
+    _assert_no_mutation(w)
+    state.db.execute.assert_not_awaited()
+
+
+def test_stop_pipeline_refuses_foreign_job() -> None:
+    from iot_twin.services.deployment import deployment_service as ds
+
+    w = _ws_with(UPSTREAM_JOB)
+    with pytest.raises(NotOwnedError):
+        ds.stop_pipeline(123, w=w)
+    with pytest.raises(NotOwnedError):
+        ds.start_pipeline(123, w=w)
+    _assert_no_mutation(w)
+
+
+def test_industry_stop_job_refuses_foreign_job() -> None:
+    from iot_twin.services.industry import industry_service
+
+    w = _ws_with(UPSTREAM_JOB)
+    result = industry_service._stop_job("123", SimpleNamespace(workspace_client=w))
+    assert result["status"] == "failed"
+    _assert_no_mutation(w)
+
+
+@pytest.mark.asyncio
+async def test_connectivity_status_never_deletes_foreign_notebook() -> None:
+    from iot_twin.routes import deployment
+
+    w = MagicMock()
+    w.current_user.me.return_value = SimpleNamespace(user_name="app-sp")
+    task = SimpleNamespace(run_id=None, notebook_task=SimpleNamespace(notebook_path="/Users/x/nb"))
+    w.jobs.get_run.return_value = SimpleNamespace(
+        state=SimpleNamespace(
+            life_cycle_state=SimpleNamespace(value="TERMINATED"),
+            result_state=SimpleNamespace(value="SUCCESS"),
+            state_message="",
+        ),
+        tasks=[task],
+    )
+    with patch("databricks.sdk.WorkspaceClient", return_value=w):
+        async with AsyncClient(
+            transport=ASGITransport(app=_app(deployment.router)), base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/test-connectivity/5/status")
+    assert resp.status_code == 200, resp.text
+    w.workspace.delete.assert_not_called()
+    task.notebook_task.notebook_path = "/Workspace/Users/app-sp/.pharma-twin/connectivity_test_1"
+    with patch("databricks.sdk.WorkspaceClient", return_value=w):
+        async with AsyncClient(
+            transport=ASGITransport(app=_app(deployment.router)), base_url="http://test"
+        ) as client:
+            await client.get("/api/test-connectivity/5/status")
+    w.workspace.delete.assert_called_once_with(
+        "/Workspace/Users/app-sp/.pharma-twin/connectivity_test_1"
+    )
+
+
+ID_ADMIN_ROUTES = [
+    ("jobs", "/api/job/1/stop"),
+    ("jobs", "/api/job/1/restart"),
+    ("deployment", "/api/cluster/deploy-job"),
+    ("deployment", "/api/cluster/c-1/validate"),
+    ("deployment", "/api/test-connectivity/submit"),
+    ("cluster", "/api/cluster/provision"),
+    ("cluster", "/api/cluster/c-1/start"),
+    ("warehouses", "/api/warehouses"),
+]
+
+
+@pytest.mark.non_admin
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("module", "path"), ID_ADMIN_ROUTES)
+async def test_id_routes_require_admin(module, path, no_client) -> None:
+    import importlib
+
+    router = importlib.import_module(f"iot_twin.routes.{module}").router
+    resp = await _post(_app(router), path, {})
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["detail"] == "admin access required"
+
+
+# --- verified caller identity -------------------------------------------------------------
+def _request(headers: dict) -> SimpleNamespace:
+    return SimpleNamespace(headers=headers, state=SimpleNamespace())
+
+
+def test_caller_email_never_trusts_an_unverified_jwt() -> None:
+    import base64
+    import json
+
+    from iot_twin.services import app_permissions as ap
+
+    claims = base64.urlsafe_b64encode(json.dumps({"email": "admin@example.com"}).encode())
+    forged = "x." + claims.decode().rstrip("=") + ".sig"
+    req = _request({"x-forwarded-access-token": forged, "x-forwarded-email": "admin@example.com"})
+    with (
+        patch("databricks.sdk.WorkspaceClient") as ws,
+        patch("databricks.sdk.config.Config"),
+    ):
+        ws.return_value.current_user.me.side_effect = RuntimeError("invalid token")
+        assert ap._caller_email(req) is None
+        assert ap._user_groups(req) == set()
+    assert ws.call_count == 1  # one verified lookup per request, cached
+
+
+def test_caller_email_and_groups_come_from_verified_me() -> None:
+    from iot_twin.services import app_permissions as ap
+
+    me = SimpleNamespace(user_name="real@example.com", groups=[SimpleNamespace(display="g1")])
+    req = _request(
+        {
+            "x-forwarded-access-token": fake_credential("tok"),
+            "x-forwarded-email": "spoof@example.com",
+        }
+    )
+    with (
+        patch("databricks.sdk.WorkspaceClient") as ws,
+        patch("databricks.sdk.config.Config"),
+    ):
+        ws.return_value.current_user.me.return_value = me
+        assert ap._caller_email(req) == "real@example.com"
+        assert ap._user_groups(req) == {"g1"}
+    assert ws.call_count == 1

@@ -15,10 +15,17 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
 from iot_twin.core.auth import get_current_user
+from iot_twin.core.config import NotOwnedError
 from iot_twin.core.state import AppState, get_app_state
 from iot_twin.core.workspace_config import get_pipelines_project
+from iot_twin.routes._ownership import not_owned_response
 from iot_twin.routes.sensor_data import _is_industry_deployment, _is_undefined_relation
 from iot_twin.services import app_permissions
+from iot_twin.services.ownership import (
+    assert_owned_cluster,
+    assert_owned_job,
+    job_lookup_missing,
+)
 from iot_twin.services.pipelines.pipeline_db import get_industry_lakebase, get_pipeline_lakebase
 from iot_twin.services.pipelines.pipeline_project_service import (
     PG_DATABASE,
@@ -73,6 +80,36 @@ except ImportError:  # pragma: no cover — transitional fallback
 
 logger = logging.getLogger("pharma_twin.routes.pipelines")
 router = APIRouter()
+
+
+async def _reject_foreign_job_and_cluster(resources: dict) -> JSONResponse | None:
+    """403 unless the stored job / cluster ids are owned (or already gone).
+
+    Stored ``resources`` ids are re-verified (name prefix + ``app`` tag) before
+    any cancel / delete. An id whose object no longer exists is allowed through:
+    the cleanup then just logs "already absent".
+    """
+    job_id = resources.get("job_id")
+    cluster_id = resources.get("cluster_id")
+    if not job_id and not cluster_id:
+        return None
+
+    def _check() -> None:
+        w = WorkspaceClient()
+        for check, value in ((assert_owned_job, job_id), (assert_owned_cluster, cluster_id)):
+            if not value:
+                continue
+            try:
+                check(w, value)
+            except NotOwnedError as exc:
+                if not job_lookup_missing(exc):
+                    raise
+
+    try:
+        await asyncio.to_thread(_check)
+    except NotOwnedError as exc:
+        return not_owned_response(exc)
+    return None
 
 
 @router.get("/api/pipelines")
@@ -278,9 +315,11 @@ async def update_pipeline(
         "source_type",
         "source_config",
         "sink_config",
-        "resources",
     }
-    merge_jsonb = {"source_config", "sink_config", "resources"}
+    # ``resources`` (job / cluster / catalog ids) is written only by server code:
+    # accepting it from the body would let a caller plant a foreign job or cluster
+    # id that DELETE / reset would then act on.
+    merge_jsonb = {"source_config", "sink_config"}
     sets: list[str] = ["updated_at = NOW()"]
     params: list[object] = []
     idx = 1
@@ -288,7 +327,7 @@ async def update_pipeline(
         if key in body:
             idx += 1
             val = body[key]
-            if key in ("sensor_config", "source_config", "sink_config", "resources"):
+            if key in ("sensor_config", "source_config", "sink_config"):
                 val = json.dumps(val)
             if key in merge_jsonb:
                 sets.append(f"{key} = COALESCE({key}, '{{}}'::jsonb) || ${idx}::jsonb")
@@ -320,6 +359,8 @@ async def delete_pipeline(
         return JSONResponse(status_code=404, content={"error": "Pipeline not found"})
 
     resources = json.loads(row["resources"]) if row["resources"] else {}
+    if rejected := await _reject_foreign_job_and_cluster(resources):
+        return rejected
 
     if pipeline_id in state.producer_states:
         try:
@@ -499,6 +540,8 @@ async def reset_pipeline(
         if isinstance(row["resources"], str)
         else (row["resources"] or {})
     )
+    if rejected := await _reject_foreign_job_and_cluster(resources):
+        return rejected
     cleanup_log: list[str] = []
 
     # Stop job and cluster in background
@@ -822,7 +865,7 @@ async def heal_lakebase(
     try:
         if not job_id_raw:
             raise ValueError("Pipeline has no job_id to restart")
-        job_id = int(job_id_raw)
+        job_id = assert_owned_job(w, job_id_raw)  # raises before any cancel / run_now
         active_runs = list(w.jobs.list_runs(job_id=job_id, active_only=True) or [])
         for run in active_runs:
             run_id = getattr(run, "run_id", None)

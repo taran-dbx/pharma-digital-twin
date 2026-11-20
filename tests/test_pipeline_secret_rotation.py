@@ -25,7 +25,7 @@ import pytest
 import iot_twin.app as app_module
 import iot_twin.services.deployment.deployment_service as ds
 import iot_twin.services.industry.industry_service as isvc
-from tests._fakes import fake_credential
+from tests._fakes import fake_credential, owned_job_settings
 
 ROOT = Path(__file__).resolve().parent.parent
 CLIENT = ROOT / "client"
@@ -300,7 +300,10 @@ class TestAppPublishesSecret:
             return "798"
 
         workspace = SimpleNamespace(
-            jobs=SimpleNamespace(update=lambda **_k: calls.append("unpause"))
+            jobs=SimpleNamespace(
+                update=lambda **_k: calls.append("unpause"),
+                get=lambda **_k: owned_job_settings(),
+            )
         )
         monkeypatch.setattr(isvc, "_get_job_id", fake_job_id)
         monkeypatch.setattr(isvc.deployment_service, "sync_runtime_oauth_secret", fake_sync)

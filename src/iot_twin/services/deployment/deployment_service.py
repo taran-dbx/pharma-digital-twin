@@ -48,6 +48,7 @@ from typing import Any
 from databricks.sdk.service.jobs import Continuous, JobSettings, PauseStatus
 
 from iot_twin.core import resource_names
+from iot_twin.core.config import NotOwnedError
 from iot_twin.core.workspace_config import APP_SP_OAUTH_SECRET_KEY, get_uc_schema
 from iot_twin.services import cdf_reconciliation_service, uc_secrets
 from iot_twin.services.databricks_sdk import detect_cloud
@@ -66,6 +67,7 @@ from iot_twin.services.deployment.deployment_gate import (  # noqa: F401  (re-ex
     gate_status,
     outstanding_steps,
 )
+from iot_twin.services.ownership import assert_owned_job, job_lookup_missing
 from iot_twin.services.pipelines import pipeline_setup_repo
 from iot_twin.services.production_control import PRODUCTION_CONTROL_PLACEHOLDER, control_file_path
 from iot_twin.services.resource_ledger import record_resource
@@ -873,8 +875,9 @@ async def _attach_genie_space(
 
 # --- Lifecycle: start / stop / status ----------------------------------------
 def start_pipeline(job_id: Any, *, w: Any | None = None, continuous: bool = True) -> dict:
-    """Unpause a Continuous job or trigger a run-once job."""
+    """Unpause a Continuous job or trigger a run-once job (owned jobs only)."""
     w = w or _new_ws()
+    assert_owned_job(w, job_id)  # NotOwnedError before any update / run_now
     if continuous:
         w.jobs.update(
             job_id=int(job_id),
@@ -918,8 +921,19 @@ def stop_pipeline(job_id: Any, *, w: Any | None = None, continuous: bool = True)
 
     Pausing first prevents the Continuous scheduler from replacing the run
     between cancellation and pause, which would leave sibling tasks alive.
+
+    The job is re-verified as owned first (name prefix + ``app`` tag); a job
+    that no longer exists is reported ``already_absent``; a foreign job raises
+    :class:`~iot_twin.core.config.NotOwnedError` before any call that changes it.
     """
     w = w or _new_ws()
+    try:
+        assert_owned_job(w, job_id)
+    except NotOwnedError as exc:
+        if job_lookup_missing(exc):
+            logger.info("Job %s already absent while stopping", job_id)
+            return {"job_id": job_id, "state": "STOPPED", "paused": None, "already_absent": True}
+        raise
     if not continuous:
         w.jobs.cancel_all_runs(job_id=int(job_id))
         logger.info("Stopped run-triggered job %s", job_id)

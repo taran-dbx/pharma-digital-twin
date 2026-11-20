@@ -3,6 +3,7 @@ import asyncio
 import pytest
 
 import iot_twin.services.industry.industry_service as isvc
+from tests._fakes import owned_job_settings
 
 UC_CATALOG = "test_catalog"
 UC_SCHEMA = "pharma_twin_test"
@@ -207,6 +208,9 @@ def test_deploy_and_start_zerobus_with_job_triggers_run(monkeypatch):
         def run_now(self, job_id):
             self.ran = job_id
             return _FakeRun()
+
+        def get(self, job_id):
+            return owned_job_settings()
 
     class _FakeWorkspace:
         def __init__(self):

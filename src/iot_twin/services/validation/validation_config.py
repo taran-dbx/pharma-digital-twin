@@ -186,6 +186,8 @@ def build_validation_cluster_spec(
         "data_security_mode": "SINGLE_USER",  # dedicated / single-user
         "single_user_name": single_user_name,
         "runtime_engine": "STANDARD",  # Photon OFF
+        # Ownership marker checked before any later by-id action on the cluster.
+        "custom_tags": {"app": resource_names.app_name()},
     }
 
     # Spot OFF: every node on-demand (first_on_demand covers driver + workers).

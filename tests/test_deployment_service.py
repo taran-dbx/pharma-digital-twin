@@ -17,6 +17,7 @@ import pytest
 
 from iot_twin.services.deployment import deployment_service as ds
 from iot_twin.services.production_control import PRODUCTION_CONTROL_PLACEHOLDER
+from tests._fakes import own_jobs_and_clusters
 
 
 # ---------------------------------------------------------------------------
@@ -37,7 +38,7 @@ def _ws() -> MagicMock:
     w.jobs.reset = MagicMock(return_value=None)
     w.jobs.cancel_all_runs = MagicMock(return_value=None)
     w.config.host = "https://e2.cloud.databricks.com"
-    return w
+    return own_jobs_and_clusters(w)
 
 
 def _db(setup: dict, deployment: dict | None = None) -> MagicMock:
