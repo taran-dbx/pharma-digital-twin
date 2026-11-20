@@ -81,3 +81,38 @@ class TestIsAdmin:
         monkeypatch.setenv("ADMIN_GROUP", "pharma-twin-admins")
         monkeypatch.setattr(ap, "_user_groups", lambda req: {"users"})
         assert ap.is_admin(object()) is False
+
+
+class TestVerifiedCallerInsideTheApp:
+    """[regression] Inside a Databricks App the SP's OAuth env vars are always set."""
+
+    def test_forwarded_token_is_verified_despite_app_oauth_env(self, monkeypatch) -> None:
+        from types import SimpleNamespace
+
+        import databricks.sdk as sdk
+
+        from iot_twin.services import app_permissions as ap
+        from tests._fakes import fake_credential
+
+        monkeypatch.setenv("DATABRICKS_HOST", "https://example.cloud.databricks.com")
+        monkeypatch.setenv("DATABRICKS_CLIENT_ID", "app-sp-client")
+        monkeypatch.setenv("DATABRICKS_CLIENT_SECRET", fake_credential("app-sp"))
+        seen: dict = {}
+
+        class FakeClient:
+            def __init__(self, *, config) -> None:
+                seen["auth_type"] = config.auth_type
+                self.current_user = SimpleNamespace(
+                    me=lambda: SimpleNamespace(user_name="admin@example.com", groups=[])
+                )
+
+        monkeypatch.setattr(sdk, "WorkspaceClient", FakeClient)
+        # Offline: Config resolves host metadata over HTTP; the auth check is local.
+        from databricks.sdk.config import Config
+
+        monkeypatch.setattr(Config, "_resolve_host_metadata", lambda self: None)
+        request = SimpleNamespace(
+            headers={"x-forwarded-access-token": fake_credential("caller")}, state=SimpleNamespace()
+        )
+        assert ap._caller_email(request) == "admin@example.com"
+        assert seen["auth_type"] == "pat"

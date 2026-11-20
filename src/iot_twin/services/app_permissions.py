@@ -82,7 +82,10 @@ def _verified_me(request: Any) -> Any | None:
             from databricks.sdk.config import Config
 
             host = (os.getenv("DATABRICKS_HOST") or "").strip() or None
-            me = WorkspaceClient(config=Config(host=host, token=token)).current_user.me()
+            # auth_type="pat": inside a Databricks App the SP's OAuth env vars are always
+            # set too, and without an explicit preference the SDK refuses two methods.
+            config = Config(host=host, token=token, auth_type="pat")
+            me = WorkspaceClient(config=config).current_user.me()
         except Exception as exc:
             logger.warning("Failed to verify caller identity (treating as unknown): %s", exc)
             me = None
