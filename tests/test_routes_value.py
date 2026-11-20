@@ -194,7 +194,7 @@ class TestScoping:
         await client.get("/api/value/summary", params=_q())
         await client.get("/api/ops/summary", params=_q())
         value_calls = [c for c in db.calls if "FROM pipeline_deployment" not in c[0]]
-        assert len(value_calls) == 8
+        assert len(value_calls) == 10  # 5 per endpoint, incl. the predicted-alert count
         for sql, args in value_calls:
             assert "pipeline_id = $1" in sql
             assert args[0] == PID and args[1] is None

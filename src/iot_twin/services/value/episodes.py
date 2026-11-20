@@ -41,6 +41,7 @@ from iot_twin.domain.lot_context import (
     lot_disposition,
     lot_id_at,
 )
+from iot_twin.ml.risk_contract import MODEL_RULE_ID
 from iot_twin.services.alerts.alert_engine import (
     DETECT_LOOKBACK_S,
     EXCURSION_STARTED_KEY,
@@ -61,6 +62,8 @@ QUARANTINE_ACTIONS: tuple[str, ...] = ("quarantine_lot", "hold_batch")
 CMM_ACTIONS: tuple[str, ...] = ("request_cmm_inspection", "send_to_inspect")
 NCR_ACTIONS: tuple[str, ...] = ("open_ncr",)
 MAINTENANCE_ACTIONS: tuple[str, ...] = ("request_maintenance",)
+# Rules whose alerts are model predictions: warnings, not excursions of a validated limit.
+PREDICTED_RULE_IDS: tuple[str, ...] = (MODEL_RULE_ID,)
 
 INDUSTRY_PIPELINE_PREFIX = "industry:"
 RECENT_EVENTS = 20
@@ -141,7 +144,8 @@ def pipeline_scope(
 # $2 alias, $3 alias_since, $4 industry, $5 window start, $6 window end,
 # $7 rule ids, $8 rule durations (s), $9 onset lookback (s), $10 grace (s),
 # $11 open-excursion cap (s), $12 lot cycle (s), $13-$17 containment /
-# quarantine / CMM / NCR / maintenance actions.
+# quarantine / CMM / NCR / maintenance actions, $18 excluded rule ids (predicted alerts
+# are warnings, not excursions).
 _RESOLVED_CTE = """
 WITH scoped AS (
     SELECT id, rule_id, severity, fault_code, threshold, pipeline_id,
@@ -150,6 +154,7 @@ WITH scoped AS (
     FROM alert
     WHERE industry = $4
       AND (pipeline_id = $1 OR ($2::text IS NOT NULL AND pipeline_id = $2))
+      AND NOT (rule_id = ANY($18::text[]))
 ),
 durations AS (
     SELECT * FROM unnest($7::text[], $8::float8[]) AS d(rule_id, duration_s)
@@ -290,21 +295,21 @@ FROM episodes
 
 # Lots and parts are deduped across episodes by part slot, so a lot touched by
 # two excursions counts once. Part slot = floor(epoch / PART_CYCLE_S), the same
-# arithmetic as lot_context.parts_in_window. $18 part cycle (s), $19 parts/lot.
+# arithmetic as lot_context.parts_in_window. $19 part cycle (s), $20 parts/lot.
 _PARTS_SQL = (
     _RESOLVED_CTE
     + """
 , parts AS (
     SELECT DISTINCT ep.caught, (ep.quarantined_at IS NOT NULL) AS held, gs.slot,
-           floor(gs.slot * $18 / $12)::bigint AS lot
+           floor(gs.slot * $19 / $12)::bigint AS lot
     FROM episodes ep,
-         generate_series(floor(extract(epoch FROM ep.onset) / $18)::bigint,
-                         floor(extract(epoch FROM ep.window_end) / $18)::bigint) AS gs(slot)
+         generate_series(floor(extract(epoch FROM ep.onset) / $19)::bigint,
+                         floor(extract(epoch FROM ep.window_end) / $19)::bigint) AS gs(slot)
 ),
 lots AS (
     SELECT lot,
-           LEAST($19::int, GREATEST(0, floor((extract(epoch FROM $6::timestamptz)
-                                              - lot * $12) / $18)::int + 1)) AS started
+           LEAST($20::int, GREATEST(0, floor((extract(epoch FROM $6::timestamptz)
+                                              - lot * $12) / $19)::int + 1)) AS started
     FROM (SELECT DISTINCT lot FROM parts) l
 )
 SELECT (SELECT COUNT(DISTINCT slot) FROM parts) AS parts_at_risk,
@@ -324,16 +329,34 @@ SELECT alert_id, opened, onset_raw, onset_source, acknowledged_at, cleared_at, p
        quarantined_at, cmm_at, ncr_at, maintenance_at, onset, window_end, deadline, caught
 FROM episodes
 ORDER BY opened DESC
-LIMIT $18
+LIMIT $19
 """
 )
 
 _SAMPLES_SQL = (
     _RESOLVED_CTE
     + """
-SELECT ttd_s, tta_s FROM episodes ORDER BY opened DESC LIMIT $18
+SELECT ttd_s, tta_s FROM episodes ORDER BY opened DESC LIMIT $19
 """
 )
+
+
+# Predicted (model) alert episodes opened in the window, counted apart from excursions.
+# $1 pipeline_id, $2 alias, $3 alias_since, $4 industry, $5 window start, $6 window end,
+# $7 predicted rule ids.
+_PREDICTED_SQL = """
+SELECT COUNT(DISTINCT (e.alert_id, e.payload->>'opened_at')) AS predicted
+FROM alert a
+JOIN alert_event e ON e.alert_id = a.id
+WHERE a.industry = $4
+  AND (a.pipeline_id = $1 OR ($2::text IS NOT NULL AND a.pipeline_id = $2
+       AND (e.payload->>'opened_at')::timestamptz >= $3::timestamptz))
+  AND a.rule_id = ANY($7::text[])
+  AND e.event_type = 'opened'
+  AND e.payload->>'opened_at' IS NOT NULL
+  AND (e.payload->>'opened_at')::timestamptz >= $5
+  AND (e.payload->>'opened_at')::timestamptz < $6
+"""
 
 
 def _seconds(later: datetime | None, earlier: datetime | None) -> float | None:
@@ -587,6 +610,7 @@ class EpisodeWindow:
     ttd_samples: tuple[float, ...]
     tta_samples: tuple[float, ...]
     available: bool
+    predicted_alerts: int = 0  # model warnings in the window; never counted as episodes
 
     @property
     def truncated(self) -> bool:
@@ -606,6 +630,7 @@ class EpisodeWindow:
             "truncated": self.truncated,
             "recent_shown": len(self.recent),
             "samples_shown": len(self.ttd_samples),
+            "predicted_alerts": self.predicted_alerts,
         }
 
 
@@ -616,7 +641,7 @@ def _row_dict(row: Any) -> dict[str, Any]:
 def query_params(
     scope: PipelineScope, start: datetime, end: datetime, settings: Definitions
 ) -> list[Any]:
-    """$1-$17 of ``_RESOLVED_CTE``."""
+    """$1-$18 of ``_RESOLVED_CTE``."""
     ids, durations = rule_durations(scope.industry)
     return [
         scope.pipeline_id,
@@ -636,6 +661,7 @@ def query_params(
         list(CMM_ACTIONS),
         list(NCR_ACTIONS),
         list(MAINTENANCE_ACTIONS),
+        list(PREDICTED_RULE_IDS),
     ]
 
 
@@ -661,6 +687,7 @@ async def fetch_episode_window(
     parts_row = await db.fetchrow(_PARTS_SQL, *params, float(PART_CYCLE_S), PARTS_PER_LOT)
     recent_rows = await db.fetch(_RECENT_SQL, *params, RECENT_EVENTS)
     sample_rows = [_row_dict(r) for r in await db.fetch(_SAMPLES_SQL, *params, MAX_SAMPLES)]
+    predicted_row = await db.fetchrow(_PREDICTED_SQL, *params[:6], list(PREDICTED_RULE_IDS))
     totals = totals_from_rows(
         _row_dict(totals_row) if totals_row is not None else {},
         _row_dict(parts_row) if parts_row is not None else {},
@@ -678,6 +705,7 @@ async def fetch_episode_window(
         tuple(max(0.0, float(r["ttd_s"])) for r in sample_rows if r.get("ttd_s") is not None),
         tuple(max(0.0, float(r["tta_s"])) for r in sample_rows if r.get("tta_s") is not None),
         True,
+        int((_row_dict(predicted_row) if predicted_row is not None else {}).get("predicted") or 0),
     )
 
 

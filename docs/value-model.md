@@ -29,7 +29,7 @@ e.g. `capture_rate=0.9&cost_per_lot_lost=60000`. Unknown parameters are rejected
 
 Responses use the envelope `{"success", "data", "error", "meta"}`. `meta` carries the
 pipeline, the window bounds, `data_available` (false when the app backend is not connected),
-`episodes_total`, `truncated`, `recent_shown` / `samples_shown`, `alias_since`
+`episodes_total`, `predicted_alerts`, `truncated`, `recent_shown` / `samples_shown`, `alias_since`
 and, on a 422, `details: [{field, message}]` for every invalid input. A failed query is a 503
 with a generic message; details are logged server-side only. Identity is enforced the same way
 as the alert routes these read from (`require_identity`).
@@ -39,6 +39,11 @@ industry-first realtime consumer posts readings with that pipeline id rather tha
 deployment id. It reads only excursions opened since the deployment's `created_at`.
 
 ## Definitions
+
+**Predicted alerts are not excursions.** Alerts of the thermal-risk model's rule
+(`medtech-model-spindle-risk`, `PREDICTED_RULE_IDS`) are warnings that no validated limit was
+crossed, so they are excluded from every episode, part and lot total (a bound parameter in the
+`scoped` CTE). Their count in the window is reported separately as `meta.predicted_alerts`.
 
 **Excursion (episode).** One open → cleared run of an alert. The alert row is reused when a
 rule re-opens, so episodes are keyed by alert id plus the `opened_at` carried in every

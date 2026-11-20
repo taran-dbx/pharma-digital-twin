@@ -201,7 +201,9 @@ async def pg(pg_server) -> AsyncIterator:
         await admin.close()
 
 
-async def _alert(conn, pipeline_id: str, industry: str = "manufacturing") -> str:
+async def _alert(
+    conn, pipeline_id: str, industry: str = "manufacturing", rule_id: str = SPINDLE_RULE
+) -> str:
     alert_id = str(uuid.uuid4())
     await conn.execute(
         "INSERT INTO alert (id, fingerprint, industry, pipeline_id, rule_id, severity, threshold)"
@@ -210,7 +212,7 @@ async def _alert(conn, pipeline_id: str, industry: str = "manufacturing") -> str
         alert_id,
         industry,
         pipeline_id,
-        SPINDLE_RULE,
+        rule_id,
     )
     return alert_id
 
@@ -478,3 +480,29 @@ class TestSql:
         window = await fetch_episode_window(None, _scope("p"), now - timedelta(days=1), now)
         assert not window.available
         assert window.totals.episodes == 0
+
+
+class TestPredictedAlertsAreNotExcursions:
+    @pytest.mark.asyncio
+    async def test_predicted_alert_yields_no_episode_c7944_regression(self, pg) -> None:
+        """[C7944][regression] A model (predicted) alert is a warning, not an excursion episode."""
+        from iot_twin.ml.risk_contract import MODEL_RULE_ID
+
+        pid = str(uuid.uuid4())
+        t0 = LOT_START + timedelta(seconds=40)
+        breach = await _alert(pg, pid)
+        onset = (t0 - timedelta(seconds=5)).isoformat()
+        await _event(pg, breach, "opened", t0, t0, **{EXCURSION_STARTED_KEY: onset})
+        await _event(pg, breach, "cleared", t0 + timedelta(seconds=60), t0)
+        predicted = await _alert(pg, pid, rule_id=MODEL_RULE_ID)
+        p0 = t0 - timedelta(seconds=30)
+        await _event(pg, predicted, "opened", p0, p0, value=0.71)
+        await _event(pg, predicted, "cleared", p0 + timedelta(seconds=120), p0, value=0.1)
+        start, end = t0 - timedelta(hours=1), t0 + timedelta(hours=1)
+        window = await fetch_episode_window(pg, _scope(pid), start, end)
+        assert window.totals.episodes == 1
+        assert [e.rule_id for e in window.recent] == [SPINDLE_RULE]
+        params = episodes_mod.query_params(_scope(pid), start, end, definitions())
+        rows = await pg.fetch(episodes_mod._RECENT_SQL, *params, 50)
+        assert [r["rule_id"] for r in rows] == [SPINDLE_RULE]
+        assert window.meta()["predicted_alerts"] == 1
