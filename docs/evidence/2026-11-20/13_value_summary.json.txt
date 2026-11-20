@@ -1,4 +1,8 @@
-# captured 2026-11-20T20:46:40Z — GET /api/value/summary?industry=manufacturing&pipeline_id=<deployment-id>&window=24h (live app pharma-twin-dev)
+# RECAPTURED 2026-11-20T21:55:55Z after the predicted-alert exclusion fix (commit 827080a), live app pharma-twin-dev
+# GET /api/value/summary?industry=manufacturing&pipeline_id=<deployment-id>&window=24h ; window 2026-11-19T21:55:03Z to 2026-11-20T21:55:03Z
+# Check against Lakebase for the same window (alert_event 'opened', distinct alert_id + opened_at):
+#   mfg-alert-spindle-temp 73 episodes == meta.episodes_total 73; medtech-model-spindle-risk 6 == meta.predicted_alerts 6.
+#   Before the fix the 6 predicted alerts were counted as excursions too (the earlier capture: 63 incl. predictions).
 {
     "success": true,
     "data": {
@@ -129,11 +133,11 @@
             "warnings": []
         },
         "actuals": {
-            "excursion_events_detected": 63,
+            "excursion_events_detected": 73,
             "caught_in_time": 1,
-            "not_caught_in_time": 62,
+            "not_caught_in_time": 72,
             "deadline_before_alert": 0,
-            "capture_rate_observed": 0.0159,
+            "capture_rate_observed": 0.0137,
             "lots_protected": 2,
             "lots_quarantined": 2,
             "parts_quarantined": 6,
@@ -141,10 +145,10 @@
             "ncrs_opened": 1,
             "cmm_inspections": 1,
             "cost_avoided_to_date": 48250.0,
-            "exposure_if_scrapped": 3084500.0,
+            "exposure_if_scrapped": 3582000.0,
             "formula": {
                 "cost_avoided_to_date": "caught_in_time \u00d7 (loss_per_event \u2212 inspection_cost) = 1 \u00d7 ($49,750 \u2212 $1,500) = $48,250",
-                "exposure_if_scrapped": "not_caught_in_time \u00d7 loss_per_event = 62 \u00d7 $49,750 = $3,084,500"
+                "exposure_if_scrapped": "not_caught_in_time \u00d7 loss_per_event = 72 \u00d7 $49,750 = $3,582,000"
             }
         }
     },
@@ -156,14 +160,15 @@
             "industry:manufacturing"
         ],
         "alias_since": "2026-11-20T14:50:18.006913+00:00",
-        "window_start": "2026-11-19T20:46:19.408786+00:00",
-        "window_end": "2026-11-20T20:46:19.408786+00:00",
+        "window_start": "2026-11-19T21:55:02.983152+00:00",
+        "window_end": "2026-11-20T21:55:02.983152+00:00",
         "data_available": true,
         "parts_per_lot": 15,
-        "episodes_total": 63,
+        "episodes_total": 73,
         "truncated": true,
         "recent_shown": 20,
-        "samples_shown": 63,
+        "samples_shown": 73,
+        "predicted_alerts": 6,
         "pipeline_id": "f9c44d56-<uuid>",
         "window": "24h"
     }

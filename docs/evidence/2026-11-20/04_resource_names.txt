@@ -4,7 +4,7 @@
  "name": "pharma-twin-dev",
  "url": "https://pharma-twin-dev-<workspace-id>.aws.databricksapps.com",
  "service_principal_client_id": "02ab07ab-<sp-client-id>",
- "service_principal_name": "app-501era pharma-twin-dev"
+ "service_principal_name": "<sp-display-name>"
 }
 compute ACTIVE app RUNNING
 ## Bundle
@@ -54,5 +54,5 @@ bundle name: pharma-digital-twin ; root: /Workspace/Users/<owner>/.bundle/pharma
 ## Kafka topics (from deploy payload / validation)
   pharma-twin.manufacturing.realtime (consumed), pharma-twin.manufacturing.microbatch (created by the validation topics step)
 ## Original deployment untouched (read-only check)
-  iot-digital-twin ACTIVE sp 6ce122f2…
-  iot-twin-dev-<owner> ACTIVE sp c2bfe7c0…
+  iot-digital-twin ACTIVE sp <upstream-sp, not ours>
+  iot-twin-dev-<owner> ACTIVE sp <upstream-sp, not ours>

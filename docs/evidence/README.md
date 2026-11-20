@@ -41,9 +41,9 @@ Files `01`-`12` were captured between 14:30 and 16:30 UTC (isolation + medtech c
 | Genie: question, generated SQL and result rows (3 questions, with a reviewer note on one SQL) | [`10_genie_transcript.txt`](2026-11-20/10_genie_transcript.txt) |
 | `/api/latency/streaming` returns data; P50 / P99 measured over stated windows | [`11_streaming_latency.txt`](2026-11-20/11_streaming_latency.txt) |
 | Latency: 3.5 h steady state, then the degradation tail, from the metrics table | [`11b_streaming_latency_steady_and_tail.txt`](2026-11-20/11b_streaming_latency_steady_and_tail.txt) |
-| Pipeline health check run against the new deployment (Overall FAIL, traced to the CDF stall) | [`12_health_check_summary.txt`](2026-11-20/12_health_check_summary.txt), snapshot [`ops/notebooks/runs/manufacturing_realtime_2026-11-20.ipynb`](../../ops/notebooks/runs/manufacturing_realtime_2026-11-20.ipynb) |
-| `/api/value/summary` (executive value model) returns real data | [`13_value_summary.json.txt`](2026-11-20/13_value_summary.json.txt) |
-| `/api/ops/summary` (operations metrics) returns real data; one percentile defect noted | [`14_ops_summary.json.txt`](2026-11-20/14_ops_summary.json.txt) |
+| Pipeline health check run against the new deployment (Overall FAIL: two causes, the CDF stall and the consumer falling behind) | [`12_health_check_summary.txt`](2026-11-20/12_health_check_summary.txt), snapshot [`ops/notebooks/runs/manufacturing_realtime_2026-11-20.ipynb`](../../ops/notebooks/runs/manufacturing_realtime_2026-11-20.ipynb) |
+| `/api/value/summary` returns real data; recaptured after the predicted-alert fix (73 excursions == Lakebase; 6 predicted alerts reported apart in `meta.predicted_alerts`) | [`13_value_summary.json.txt`](2026-11-20/13_value_summary.json.txt) |
+| `/api/ops/summary` returns real data, recaptured likewise; one percentile defect noted | [`14_ops_summary.json.txt`](2026-11-20/14_ops_summary.json.txt) |
 | A grounded AI action plan for a real Spindle 3 alert: grounding check, Lakebase audit row, UC mirror row, and Genie answering "which rows did the AI use?" | [`15_genai_action_plan.txt`](2026-11-20/15_genai_action_plan.txt) |
 | A predicted (model) alert appears and clears; its lead time measured honestly | [`16_predicted_alert.txt`](2026-11-20/16_predicted_alert.txt) |
 | Medical-device KPI notebook on live data: EXECUTIVE, OPERATIONS, MODEL RISK SCORE, AI ACTION PLANS | [`usecases/medtech/medtech_kpis.ipynb`](../../usecases/medtech/medtech_kpis.ipynb) |
@@ -56,12 +56,23 @@ Files `01`-`12` were captured between 14:30 and 16:30 UTC (isolation + medtech c
 | 19:30:00-20:49:28 (degradation) | 500 Hz | 9 / 2,121,825 | 7 ms, worst batch 103.6 s | median batch 124.3 s, worst batch **496.1 s** |
 | 15:05-15:40 | 2000 Hz | 2 / 1,598,263 | 7 ms, then 17.9 s | 23 ms, then **317.2 s** |
 
+**The degradation continued past the capture window:** the worst batch P99 from 16:01 to 21:07 is
+**579.4 s** (batch 50 at 21:07:58; 51 batches, 53 counting the two 2000 Hz batches at 15:15 and
+15:38), and later batches reached 800.0 s (21:27) and 861.5 s (21:49).
+
 The values are Spark's own per-batch percentiles; a window's P99 is bounded above by its worst
 batch P99. The tails are queuing (`processing_p99` stays 1 ms): the consumer fell behind the
 producer. No earlier latency figure is reused.
 
 ### Known gaps found while collecting this evidence
 
+- **Health check FAIL, two causes.** (1) Lakehouse Sync stopped, so the cold-tier, CDF and
+  reconciliation checks fail; (2) the consumer fell behind the producer, so the freshness,
+  silent-sensor and latency checks fail. `lakets_gap_fill` at 40.2 % of buckets is **not explained**
+  by either and needs its own look.
+- **Predicted alerts counted as excursions (fixed here).** With the risk model merged, every
+  predicted alert became a value/ops episode; the scoped CTE now excludes the model rule
+  (`13`, `14` recaptured).
 - **Lakehouse Sync stall (open).** The UC history table stopped at Delta version 1000 (19:29:32);
   2.2 GB of WAL lag; the pipeline branch's compute then returned `Couldn't connect to compute node`
   and restarted. Consumer throughput fell below the producer rate from 19:32 (`07b`, `11b`).

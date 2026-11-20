@@ -5,7 +5,7 @@
  "name": "pharma-twin-dev",
  "url": "https://pharma-twin-dev-<workspace-id>.aws.databricksapps.com",
  "service_principal_client_id": "02ab07ab-<uuid>",
- "service_principal_name": "app-501era pharma-twin-dev",
+ "service_principal_name": "<sp-display-name>",
  "compute": "ACTIVE",
  "app": "RUNNING",
  "resources": [
@@ -115,5 +115,5 @@
     ]
 }
 ## original deployment untouched (read-only)
-  iot-digital-twin ACTIVE sp 6ce122f2…
-  iot-twin-dev-<owner> ACTIVE sp c2bfe7c0…
+  iot-digital-twin ACTIVE sp <upstream-sp, not ours>
+  iot-twin-dev-<owner> ACTIVE sp <upstream-sp, not ours>

@@ -168,10 +168,12 @@ databricks jobs submit --no-wait -p <profile> --json '{
 ```
 
 The committed run (~21:00 UTC) reports **Overall FAIL (28 PASS, 10 WARN, 9 FAIL, 1 SKIPPED)**.
-The FAILs trace to one event: Lakehouse Sync stopped at Delta version 1000 at 19:29 UTC, so the
-cold-tier and CDF checks fail and Lakebase no longer reconciles with Delta, and from 19:32 the
-consumer wrote fewer rows than the producer sent, so the freshness, silent-sensor and latency checks
-fail. An earlier run the same day at 16:25, before the stall, scored 40 PASS, 5 WARN, 2 FAIL,
+The FAILs have two causes: (1) Lakehouse Sync stopped at Delta version 1000 at 19:29 UTC, so the
+cold-tier and CDF checks fail and Lakebase no longer reconciles with Delta; (2) from 19:32 the
+consumer wrote fewer rows than the producer sent, so the freshness, silent-sensor and latency
+checks fail. `lakets_gap_fill` (229 of 570 buckets, 40.2 %) is not explained by either. The
+degradation continued after this run: the worst batch e2e P99 reached 579.4 s at 21:07 and 861.5 s
+at 21:49. An earlier run the same day at 16:25, before the stall, scored 40 PASS, 5 WARN, 2 FAIL,
 1 SKIPPED; its two FAILs came from one batch recorded while the producer ran at 2000 Hz. At 500 Hz
 the stream held e2e p50 7 ms and p99 median 13 ms (worst 29 ms) over 41 batches from 16:01 to
 19:27. The `metrics_batch_duration` FAIL threshold (60 s) also flags Real-Time Mode's normal 300 s

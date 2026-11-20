@@ -54,7 +54,8 @@ Overall: FAIL  28 PASS | 10 WARN | 9 FAIL | 1 SKIPPED (1 not applicable to this
 7. Cross-checks & data quality | xc_schema_hot | PASS | 0 missing, 0 extra, 0 drifted
 7. Cross-checks & data quality | xc_sse_evidence | PASS | LVC lag 0s, 2617 alert events
 
-# Reading: the FAILs trace to one cause seen across this evidence: Lakehouse Sync stopped at Delta version 1000 at
-# 19:29:32 (07b), so the cold tier and CDF checks fail and Lakebase vs Delta no longer reconcile; consumer throughput
-# fell below the producer rate from 19:32, so freshness, silent-sensor and latency checks fail (11b). The 16:25 run's
+# Reading: two causes. (1) Lakehouse Sync stopped at Delta version 1000 at 19:29:32 (07b): the cold-tier, CDF and
+# reconciliation checks fail. (2) From 19:32 the consumer wrote fewer rows than the producer sent (11b, 05c): the
+# freshness, silent-sensor and latency checks fail. lakets_gap_fill (40.2 % of buckets) is NOT explained by either.
+# The degradation continued after this run (worst batch e2e P99 579.4 s at 21:07, 861.5 s at 21:49). The 16:25 run's
 # only FAILs were the 2000 Hz backlog batch (metrics_e2e_latency, metrics_batch_duration).
