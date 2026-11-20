@@ -1,0 +1,65 @@
+# Spindle 3 thermal-risk model: serverless training job + Model Serving endpoint.
+# Names default to the RESOURCE_PREFIX convention (pharma-twin / pharma_twin) and
+# are bundle variables. The endpoint serves a registered UC model version, so a
+# brand-new workspace needs one training run first: see docs/ml-risk-model.md
+# ("Bootstrap") or scripts/submit_risk_model_training.py.
+resources:
+  jobs:
+    risk_model_train:
+      name: ${var.risk_job_name}
+      description: >-
+        Builds windowed Spindle 3 features (shared with the app scorer), labels
+        excursions beyond the validated limit within the horizon, trains LightGBM
+        with a time-based split, logs to MLflow, registers
+        ${var.uc_catalog}.${var.risk_model_schema}.${var.risk_model_short_name}
+        with alias champion and repoints the serving endpoint.
+      tags:
+        project: pharma-twin
+        component: spindle-risk-model
+      max_concurrent_runs: 1
+      tasks:
+        - task_key: train
+          environment_key: ml
+          spark_python_task:
+            python_file: ../ml/train_spindle_risk.py
+            parameters:
+              - --src-root
+              - ${workspace.file_path}/src
+              - --catalog
+              - ${var.uc_catalog}
+              - --schema
+              - ${var.risk_model_schema}
+              - --model-name
+              - ${var.risk_model_short_name}
+              - --telemetry-table
+              - ${var.uc_catalog}.${var.uc_schema}.manufacturing_realtime
+              - --data-source
+              - ${var.risk_training_data_source}
+              - --alias
+              - champion
+              - --endpoint-name
+              - ${resources.model_serving_endpoints.spindle_risk.name}
+      environments:
+        - environment_key: ml
+          spec:
+            client: "4"
+            dependencies:
+              - mlflow==3.1.0
+              - lightgbm==4.5.0
+              - scikit-learn==1.5.2
+              - ../lib/iot_data_simulator-0.1.0-py3-none-any.whl
+
+  model_serving_endpoints:
+    spindle_risk:
+      name: ${var.risk_endpoint_name}
+      config:
+        served_entities:
+          # The training job moves this to the new champion version after each
+          # run; bump risk_model_version to pin it in the bundle as well.
+          - entity_name: ${var.uc_catalog}.${var.risk_model_schema}.${var.risk_model_short_name}
+            entity_version: ${var.risk_model_version}
+            workload_size: Small
+            scale_to_zero_enabled: true
+      tags:
+        - key: project
+          value: pharma-twin

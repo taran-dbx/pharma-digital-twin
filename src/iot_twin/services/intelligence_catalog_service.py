@@ -10,10 +10,16 @@ Tables:
 - intelligence_maintenance_records
 - intelligence_alert_rules
 - intelligence_alert_snapshot  (read-only snapshot contract; Genie cannot mutate alerts)
+
+The snapshot carries the thermal-risk model's output on predicted alerts
+(``alert_kind``, ``risk_score``, ``model_name``, ``model_version``,
+``top_features``); tables created before those columns existed are migrated
+with ``ALTER TABLE ... ADD COLUMNS`` on provision. See docs/ml-risk-model.md.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import Iterable
@@ -23,6 +29,7 @@ from databricks.sdk import WorkspaceClient
 
 from iot_twin.core.workspace_config import get_uc_catalog, get_uc_schema
 from iot_twin.domain.catalog import CURATED_DOMAIN_INDUSTRIES, get_domain
+from iot_twin.ml.risk_contract import alert_kind_for, risk_score_of
 from iot_twin.services.dbsql_service import execute_dbsql
 from iot_twin.services.industry.industry_catalog_service import resolve_warehouse_id
 from iot_twin.services.uc_ident import sql_fqn
@@ -36,6 +43,37 @@ TABLE_NAMES: tuple[str, ...] = (
     "intelligence_alert_rules",
     "intelligence_alert_snapshot",
 )
+
+# Snapshot columns, in insert order. The first eleven are the original contract;
+# MODEL_SNAPSHOT_COLUMNS were added with the thermal-risk model.
+ALERT_SNAPSHOT_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("alert_id", "STRING"),
+    ("industry", "STRING"),
+    ("rule_id", "STRING"),
+    ("sensor_id", "STRING"),
+    ("status", "STRING"),
+    ("severity", "STRING"),
+    ("fault_code", "STRING"),
+    ("value", "DOUBLE"),
+    ("threshold", "DOUBLE"),
+    ("opened_at", "STRING"),
+    ("updated_at", "STRING"),
+    ("alert_kind", "STRING"),
+    ("risk_score", "DOUBLE"),
+    ("model_name", "STRING"),
+    ("model_version", "STRING"),
+    ("top_features", "STRING"),
+    ("metadata", "STRING"),
+)
+MODEL_SNAPSHOT_COLUMNS: tuple[str, ...] = (
+    "alert_kind",
+    "risk_score",
+    "model_name",
+    "model_version",
+    "top_features",
+    "metadata",
+)
+ALERT_SNAPSHOT_COLUMN_LIST = ", ".join(name for name, _ in ALERT_SNAPSHOT_COLUMNS)
 
 _TABLE_DDL: dict[str, str] = {
     "intelligence_assets": """
@@ -72,19 +110,9 @@ threshold DOUBLE,
 severity STRING,
 fault_code STRING
 """,
-    "intelligence_alert_snapshot": """
-alert_id STRING,
-industry STRING,
-rule_id STRING,
-sensor_id STRING,
-status STRING,
-severity STRING,
-fault_code STRING,
-value DOUBLE,
-threshold DOUBLE,
-opened_at STRING,
-updated_at STRING
-""",
+    "intelligence_alert_snapshot": ",\n".join(
+        f"{name} {sql_type}" for name, sql_type in ALERT_SNAPSHOT_COLUMNS
+    ),
 }
 
 _KIND_BY_NAME: dict[str, str] = {
@@ -204,9 +232,30 @@ async def provision_reference_tables(
             f"{_TABLE_DDL[name].strip()}\n) USING DELTA"
         )
         await execute_dbsql(ddl, wh)
+        if name == "intelligence_alert_snapshot":
+            await _ensure_snapshot_columns(sql_fqn(catalog, schema, name), wh)
         results.append({"resource": f"Table '{fqn}'", "status": "created"})
         tables[_KIND_BY_NAME[name]] = fqn
     return {"catalog": catalog, "schema": schema, "results": results, "tables": tables}
+
+
+async def _ensure_snapshot_columns(table_sql: str, warehouse_id: str) -> list[str]:
+    """Add the model columns to a snapshot table created before they existed."""
+    described = await execute_dbsql(f"DESCRIBE TABLE {table_sql}", warehouse_id)
+    existing = {
+        str(row.get("col_name") or "").strip().lower()
+        for row in described.get("data") or []
+        if isinstance(row, dict)
+    }
+    if not existing:
+        return []
+    types = dict(ALERT_SNAPSHOT_COLUMNS)
+    missing = [name for name in MODEL_SNAPSHOT_COLUMNS if name not in existing]
+    if missing:
+        columns = ", ".join(f"{name} {types[name]}" for name in missing)
+        await execute_dbsql(f"ALTER TABLE {table_sql} ADD COLUMNS ({columns})", warehouse_id)
+        logger.info("Added model columns to %s: %s", table_sql, missing)
+    return missing
 
 
 def _asset_rows() -> list[str]:
@@ -267,17 +316,47 @@ def _alert_rule_rows() -> list[str]:
     return rows
 
 
+def _sql_json(value: Any) -> str:
+    if value in (None, "", [], {}):
+        return "NULL"
+    return _sql_str(json.dumps(value, default=str, sort_keys=True))
+
+
+def _model_snapshot_values(alert: dict[str, Any]) -> list[str]:
+    metadata = alert.get("metadata") if isinstance(alert.get("metadata"), dict) else {}
+    rule_id = alert.get("rule_id")
+    kind = alert.get("alert_kind") or alert_kind_for(rule_id, metadata)
+    score = alert.get("risk_score")
+    if score is None:
+        score = risk_score_of(rule_id, metadata)
+    return [
+        _sql_str(kind),
+        _sql_num(score),
+        _sql_str(metadata.get("model_name")),
+        _sql_str(metadata.get("model_version")),
+        _sql_json(metadata.get("top_features")),
+        _sql_json(metadata),
+    ]
+
+
 def _alert_snapshot_rows(alerts: Iterable[dict[str, Any]]) -> list[str]:
     rows: list[str] = []
     for alert in alerts:
-        rows.append(
-            f"({_sql_str(alert.get('id'))}, {_sql_str(alert.get('industry'))}, "
-            f"{_sql_str(alert.get('rule_id'))}, {_sql_str(alert.get('sensor_id'))}, "
-            f"{_sql_str(alert.get('status'))}, {_sql_str(alert.get('severity'))}, "
-            f"{_sql_str(alert.get('fault_code'))}, {_sql_num(alert.get('value'))}, "
-            f"{_sql_num(alert.get('threshold'))}, {_sql_str(alert.get('opened_at'))}, "
-            f"{_sql_str(alert.get('updated_at'))})"
-        )
+        values = [
+            _sql_str(alert.get("id")),
+            _sql_str(alert.get("industry")),
+            _sql_str(alert.get("rule_id")),
+            _sql_str(alert.get("sensor_id")),
+            _sql_str(alert.get("status")),
+            _sql_str(alert.get("severity")),
+            _sql_str(alert.get("fault_code")),
+            _sql_num(alert.get("value")),
+            _sql_num(alert.get("threshold")),
+            _sql_str(alert.get("opened_at")),
+            _sql_str(alert.get("updated_at")),
+            *_model_snapshot_values(alert),
+        ]
+        rows.append(f"({', '.join(values)})")
     return rows
 
 
@@ -346,7 +425,7 @@ async def sync_reference_data(
             _quoted_table("intelligence_alert_snapshot"),
             wh,
             _alert_snapshot_rows(alerts or ()),
-            "alert_id, industry, rule_id, sensor_id, status, severity, fault_code, value, threshold, opened_at, updated_at",
+            ALERT_SNAPSHOT_COLUMN_LIST,
         ),
     }
     logger.info("Intelligence catalog sync complete: %s", counts)

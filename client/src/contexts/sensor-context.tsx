@@ -96,6 +96,9 @@ export function alertFromLifecycle(event: AlertLifecycleEvent): AlertRecord {
     acknowledged_at: event.acknowledged_at,
     acknowledged_by: event.acknowledged_by,
     cleared_at: event.cleared_at,
+    ...(event.metadata ? { metadata: event.metadata } : {}),
+    ...(event.alert_kind ? { alert_kind: event.alert_kind } : {}),
+    ...(event.risk_score !== undefined ? { risk_score: event.risk_score } : {}),
   };
 }
 

@@ -48,6 +48,12 @@ resources:
             value_from: genie-space
           - name: USAGE_TRACKING_ENABLED
             value: ${var.usage_tracking_enabled}
+          - name: RISK_ENDPOINT_NAME
+            value_from: risk-endpoint
+          - name: RISK_MODEL_NAME
+            value: ${var.uc_catalog}.${var.risk_model_schema}.${var.risk_model_short_name}
+          - name: RISK_ALERT_THRESHOLD
+            value: ${var.risk_alert_threshold}
       resources:
         - name: sql-warehouse
           sql_warehouse:
@@ -58,6 +64,10 @@ resources:
             name: ${var.resource_prefix}-genie
             space_id: ${var.genie_space_id}
             permission: CAN_VIEW
+        - name: risk-endpoint
+          serving_endpoint:
+            name: ${resources.model_serving_endpoints.spindle_risk.name}
+            permission: CAN_QUERY
         - name: lakebase
           postgres:
             branch: projects/${var.lakebase_project}/branches/${var.lakebase_branch}

@@ -1,0 +1,27 @@
+{
+  "creation_timestamp": 1795187135000,
+  "last_updated_timestamp": 1795192719000,
+  "name": "pharma-twin-spindle-risk",
+  "served_entities": [
+    {
+      "entity_name": "<catalog>.pharma_twin.spindle_thermal_risk",
+      "entity_version": "4",
+      "name": "spindle_thermal_risk-4",
+      "scale_to_zero_enabled": true,
+      "workload_size": "Small"
+    }
+  ],
+  "state": {
+    "config_update": "NOT_UPDATING",
+    "ready": "READY"
+  },
+  "traffic": {
+    "routes": [
+      {
+        "served_entity_name": "spindle_thermal_risk-4",
+        "served_model_name": "spindle_thermal_risk-4",
+        "traffic_percentage": 100
+      }
+    ]
+  }
+}

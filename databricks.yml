@@ -70,6 +70,28 @@ variables:
   usage_tracking_enabled:
     description: Usage tracking via dbdemos-tracker ("false" to opt out).
     default: "true"
+  # Spindle 3 thermal-risk model (resources/risk_model.yml, docs/ml-risk-model.md).
+  risk_model_schema:
+    description: UC schema (in uc_catalog) holding the registered thermal-risk model.
+    default: pharma_twin
+  risk_model_short_name:
+    description: UC model name; the full name is <uc_catalog>.<risk_model_schema>.<this>.
+    default: spindle_thermal_risk
+  risk_model_version:
+    description: "Model version the endpoint serves after a bundle deploy (keep it at the current @champion: every training run prints the --var to use)."
+    default: "4"
+  risk_endpoint_name:
+    description: Model Serving endpoint for the thermal-risk model.
+    default: pharma-twin-spindle-risk
+  risk_job_name:
+    description: Training job name.
+    default: pharma-twin-risk-model-train
+  risk_training_data_source:
+    description: "auto (real telemetry when it has enough excursions, else synthetic), synthetic or real."
+    default: auto
+  risk_alert_threshold:
+    description: "Predicted-alert cut-off. \"model\" uses the decision_threshold the served model version ships; a number overrides it."
+    default: model
 
 # Ships the built SPA (static/dist is tracked), the package, app.yaml, the
 # vendored wheels (simulator, dbdemos-tracker) and requirements. Replaces .databricksignore.

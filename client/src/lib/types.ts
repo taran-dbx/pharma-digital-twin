@@ -370,6 +370,10 @@ export interface AlertRecord {
   acknowledged_by: string | null;
   cleared_at: string | null;
   metadata?: Record<string, unknown>;
+  /** "predicted" for the thermal-risk model alert, "breached" for limit rules. */
+  alert_kind?: "predicted" | "breached";
+  /** Model risk score on predicted alerts (also in metadata.risk_score). */
+  risk_score?: number | null;
 }
 
 export interface AlertListResponse {
@@ -527,6 +531,9 @@ export interface AlertLifecycleEvent {
   cleared_at: string | null;
   sensor_type?: string;
   timestamp?: string;
+  alert_kind?: "predicted" | "breached";
+  risk_score?: number | null;
+  metadata?: Record<string, unknown>;
 }
 
 /**
