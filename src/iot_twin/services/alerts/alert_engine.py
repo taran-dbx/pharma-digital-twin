@@ -32,6 +32,7 @@ from iot_twin.services.alerts.alert_sse import (
 logger = logging.getLogger("iot_digital_twin.services.alert_engine")
 
 ACTIVE_STATUSES = ("open", "acknowledged")
+EXCURSION_STARTED_KEY = "excursion_started_at"
 
 _DB_EVENT_TYPES = {
     EVENT_OPENED: "opened",
@@ -593,7 +594,11 @@ class AlertEngine:
                     threshold=float(rule.threshold),
                     opened_at=now,
                     updated_at=now,
-                    metadata=open_metadata(rule, index.get(rule.sensor_id), industry, now),
+                    metadata={
+                        **open_metadata(rule, index.get(rule.sensor_id), industry, now),
+                        # First over-limit reading seen; excursion windows start here.
+                        EXCURSION_STARTED_KEY: started.isoformat(),
+                    },
                 )
                 if existing is not None:
                     alert = replace(alert, id=existing.id)

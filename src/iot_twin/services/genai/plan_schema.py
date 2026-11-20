@@ -195,7 +195,7 @@ def grounded_numbers(grounding: GroundingSet, trusted_text: str = "") -> list[fl
                 values.add(float(len(value)))
         values.update(nums)
         values.update(n * 100 for n in nums if 0 < abs(n) <= 1)
-        if item.source in {"alert", "risk_score", "alert_rule", "readings", "lot"}:
+        if item.source in {"alert", "risk_score", "alert_rule", "readings", "lot", "projected_rft"}:
             values.update(abs(a - b) for a in nums for b in nums)
     values.update(float(m.group(0)) for m in _CLAIM_NUMBER.finditer(trusted_text))
     values.add(float(len(grounding.by_source("lot"))))

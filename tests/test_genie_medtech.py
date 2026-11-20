@@ -35,13 +35,27 @@ def _instructions(industry: str, mode: str) -> str:
 
 
 class TestProfile:
-    def test_manufacturing_health_term_is_first_pass_yield_not_oee(self) -> None:
+    def test_manufacturing_health_term_is_a_process_health_index_c7840(self) -> None:
+        """[C7840][regression] A x P x Q is a process health index, not OEE or first-pass yield."""
         profile = profile_for("manufacturing")
         assert profile.medtech is True
-        assert "first-pass yield" in profile.health_term
-        assert "right-first-time" in profile.health_term
+        assert profile.health_term == "process health index (telemetry approximation)"
+        assert "first-pass" not in profile.health_term
         assert "oee" not in profile.health_term.lower()
-        assert profile.health_alias == "fpy_proxy_pct"
+        assert profile.health_alias == "process_health_pct"
+
+    @pytest.mark.parametrize("mode", MODES)
+    def test_one_first_pass_yield_definition_c7840(self, mode: str) -> None:
+        """[C7840][smoke] Genie's only first-pass-yield proxy is the parts-based projected RFT."""
+        from iot_twin.domain.lot_context import PROJECTED_RFT_DEFINITION
+
+        text = gss.build_serialized_space("manufacturing", mode)
+        assert PROJECTED_RFT_DEFINITION in text
+        assert (
+            "process health index (telemetry approximation) (approximation) = Availability" in text
+        )
+        assert "share of in-range" not in text
+        assert "projected_rft_pct" in text
 
     @pytest.mark.parametrize("industry", OTHERS)
     def test_other_industries_unchanged(self, industry: str) -> None:
@@ -59,7 +73,7 @@ class TestStarters:
             questions
         )
         blob = " ".join(questions).lower()
-        for topic in ("ncr", "quarantine", "detect", "first-pass yield"):
+        for topic in ("ncr", "quarantine", "detect", "right-first-time"):
             assert topic in blob, (mode, topic)
 
     @pytest.mark.parametrize("mode", MODES)

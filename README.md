@@ -45,7 +45,7 @@ A scheduled thermal excursion drives the demo:
 | Owner | KPIs |
 |---|---|
 | Alex Morgan, VP Quality & Site Head | cost of poor quality, lots scrapped / quarantined, lot-release lead time |
-| Shreya, Head of Manufacturing Operations | time-to-detect, NCRs opened, right-first-time / first-pass yield, MTTR |
+| Shreya, Head of Manufacturing Operations | time-to-detect, NCRs opened, projected right-first-time (first-pass yield proxy), MTTR |
 
 The internal industry id stays `manufacturing`, so topic, table and pipeline names do not change;
 only the labels moved to the medical-device story. [docs/domain-medtech.md](docs/domain-medtech.md)
@@ -89,7 +89,7 @@ databricks.yml           Declarative Automation Bundle (DABs) definition
 resources/               bundle resource definitions (the app)
 docs/                    architecture, deployment and API documentation
 ops/                     operator tooling: the pipeline health-check notebook
-usecases/                customer-facing KPI notebooks (medical-device process health, alarms, throughput)
+usecases/                customer-facing KPI notebooks (medical-device process health, alarms, rate vs target)
 ```
 
 ## Quick start
@@ -203,7 +203,7 @@ run locally through `pre-commit`.
 | [docs/domain-medtech.md](docs/domain-medtech.md) | Medical-device glossary (IQ/OQ/PQ, DHR, NCR, CAPA, UDI, QMSR, Part 11) and how each maps to the app |
 | [docs/api.md](docs/api.md) | API routes by router; live OpenAPI at `/docs` and `/openapi.json` |
 | [ops/README.md](ops/README.md) | Pipeline health-check notebook (read-only, inline report) |
-| [usecases/README.md](usecases/README.md) | Medical-device KPI notebook: right-first-time process health, downtime and alarms, sensor health, throughput |
+| [usecases/README.md](usecases/README.md) | Medical-device KPI notebook: process health index, downtime and alarms, sensor health, spindle and pack-line rate versus target |
 | [tests/e2e/playwright/README.md](tests/e2e/playwright/README.md) | Browser QA |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Workflow, standards, commit conventions |
 | [CHANGELOG.md](CHANGELOG.md) | Notable changes |

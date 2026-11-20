@@ -170,7 +170,14 @@ class TestStarterQuestions:
     def test_manufacturing_topics_per_mode(self, mode: str) -> None:
         questions = gss.starter_questions("manufacturing", mode)
         blob = " ".join(questions).lower()
-        for topic in ("first-pass yield", "downtime", "anomal", "fault", "maintenance"):
+        for topic in (
+            "process health index",
+            "right-first-time",
+            "downtime",
+            "anomal",
+            "fault",
+            "maintenance",
+        ):
             assert topic in blob, (mode, topic)
         assert "oee" not in blob
         assert len(questions) == len(set(questions))

@@ -156,6 +156,7 @@ ALL_ALERT_RESPONSE_ACTIONS: tuple[str, ...] = (
     *LEGACY_ALERT_RESPONSE_ACTIONS,
 )
 ALERT_RESPONSE_ACTION_CHECK = "alert_response_action_check"
+ALERT_RESPONSE_ALERT_FK = "alert_response_alert_id_fkey"
 _ACTION_LIST_SQL = ", ".join(f"'{action}'" for action in ALL_ALERT_RESPONSE_ACTIONS)
 
 # Part 11-style audit fields; actor and timestamp are recorded_by / created_at.
@@ -170,7 +171,7 @@ ALERT_RESPONSE_DDL = f"""
 CREATE TABLE IF NOT EXISTS alert_response (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     alert_id UUID NOT NULL
-        REFERENCES alert(id) ON DELETE CASCADE,
+        CONSTRAINT {ALERT_RESPONSE_ALERT_FK} REFERENCES alert(id) ON DELETE RESTRICT,
     episode_opened_at TIMESTAMPTZ NOT NULL,
     action TEXT NOT NULL
         CONSTRAINT {ALERT_RESPONSE_ACTION_CHECK} CHECK (action IN ({_ACTION_LIST_SQL})),
@@ -231,6 +232,30 @@ END
 $$
 """
 
+# Signed decisions must outlive their alert row: an alert delete is refused
+# instead of cascading. Rebuilt only while the FK still cascades.
+ALERT_RESPONSE_FK_MIGRATION = f"""
+DO $$
+DECLARE
+    fk_name TEXT;
+BEGIN
+    SELECT conname INTO fk_name
+    FROM pg_constraint
+    WHERE conrelid = 'alert_response'::regclass
+      AND contype = 'f'
+      AND confrelid = 'alert'::regclass
+      AND confdeltype = 'c'
+    LIMIT 1;
+    IF fk_name IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE alert_response DROP CONSTRAINT %I', fk_name);
+        ALTER TABLE alert_response ADD CONSTRAINT {ALERT_RESPONSE_ALERT_FK}
+            FOREIGN KEY (alert_id) REFERENCES alert(id) ON DELETE RESTRICT;
+    END IF;
+END
+$$
+"""
+
+
 PRODUCTION_STATE_DDL = """
 CREATE TABLE IF NOT EXISTS production_state (
     industry TEXT PRIMARY KEY,
@@ -264,11 +289,14 @@ PRODUCTION_EVENT_INDEXES = (
 # Part 11-style trace of every AI action plan: who asked, when, which endpoint and
 # model answered, the exact prompt (template version + hash), the exact rows it was
 # given (grounding_rows, with citation ids), the answer and its grounding check.
-# Deliberately no FK to ``alert``: an audit record must outlive the alert row.
-GENAI_ACTION_PLAN_AUDIT_DDL = """
+# Like alert_response, the FK is ON DELETE RESTRICT: an alert with audited AI
+# plans cannot be deleted, so the trace always outlives (and points at) its alert.
+GENAI_AUDIT_ALERT_FK = "genai_action_plan_audit_alert_id_fkey"
+GENAI_ACTION_PLAN_AUDIT_DDL = f"""
 CREATE TABLE IF NOT EXISTS genai_action_plan_audit (
     id UUID PRIMARY KEY,
-    alert_id UUID NOT NULL,
+    alert_id UUID NOT NULL
+        CONSTRAINT {GENAI_AUDIT_ALERT_FK} REFERENCES alert(id) ON DELETE RESTRICT,
     industry TEXT,
     requested_by TEXT NOT NULL,
     requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -279,7 +307,7 @@ CREATE TABLE IF NOT EXISTS genai_action_plan_audit (
     prompt_hash TEXT NOT NULL,
     grounding_hash TEXT NOT NULL,
     grounding_rows JSONB NOT NULL DEFAULT '[]'::jsonb,
-    response JSONB NOT NULL DEFAULT '{}'::jsonb,
+    response JSONB NOT NULL DEFAULT '{{}}'::jsonb,
     grounding_check TEXT NOT NULL CHECK (grounding_check IN ('pass', 'fail')),
     grounding_reasons JSONB NOT NULL DEFAULT '[]'::jsonb,
     status TEXT NOT NULL CHECK (status IN ('generated', 'rejected', 'error')),
@@ -291,6 +319,7 @@ CREATE TABLE IF NOT EXISTS genai_action_plan_audit (
     applied_by TEXT,
     applied_at TIMESTAMPTZ,
     applied_response_id UUID
+        REFERENCES alert_response(id) ON DELETE RESTRICT
 )
 """
 
@@ -393,6 +422,7 @@ async def ensure_alert_response_table(db: _Executor) -> None:
     for step, sql in (
         ("audit columns", ALERT_RESPONSE_AUDIT_MIGRATION),
         ("action check", ALERT_RESPONSE_ACTION_MIGRATION),
+        ("delete rule", ALERT_RESPONSE_FK_MIGRATION),
     ):
         try:
             await db.execute(sql)

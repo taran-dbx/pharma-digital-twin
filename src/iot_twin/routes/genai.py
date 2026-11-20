@@ -23,7 +23,7 @@ from iot_twin.core.auth import require_identity
 from iot_twin.core.state import AppState, get_app_state
 from iot_twin.services import app_permissions
 from iot_twin.services.alerts.alert_engine import engine_for
-from iot_twin.services.alerts.alert_responses import response_store_for
+from iot_twin.services.alerts.alert_responses import ResponseStoreUnavailable, response_store_for
 from iot_twin.services.genai.action_plan import (
     ActionPlanModelError,
     PlanRequest,
@@ -31,7 +31,7 @@ from iot_twin.services.genai.action_plan import (
     generate_action_plan,
     readings_query,
 )
-from iot_twin.services.genai.audit_store import audit_store_for
+from iot_twin.services.genai.audit_store import AuditStoreUnavailable, audit_store_for
 from iot_twin.services.genai.audit_sync import mark_audit_dirty
 from iot_twin.services.genai.grounding import GroundingSources
 from iot_twin.services.industry.industry_templates import MODES
@@ -101,12 +101,14 @@ async def create_action_plan(
     alert = await engine_for(state).get_alert(alert_id, db=db)
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")
-    sources = await _sources(state, alert, body.get("mode"), user_email)
     store = audit_store_for(state)
     try:
+        sources = await _sources(state, alert, body.get("mode"), user_email)
         record = await generate_action_plan(
             PlanRequest(alert=alert, requested_by=user_email), sources, store, db=db
         )
+    except (ResponseStoreUnavailable, AuditStoreUnavailable) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ActionPlanModelError as exc:
         mark_audit_dirty(state)
         return JSONResponse(
@@ -128,7 +130,10 @@ async def list_action_plans(
     alert = await engine_for(state).get_alert(alert_id, db=db)
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")
-    plans = await audit_store_for(state).list_for_alert(alert_id, db=db)
+    try:
+        plans = await audit_store_for(state).list_for_alert(alert_id, db=db)
+    except AuditStoreUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"alert_id": alert_id, "plans": [plan.summary() for plan in plans]}
 
 
@@ -139,7 +144,10 @@ async def get_action_plan_trace(
     _user: str = Depends(require_identity),
 ):
     plan_id = require_uuid(plan_id, "plan_id")
-    record = await audit_store_for(state).get(plan_id, db=_backend_db(state))
+    try:
+        record = await audit_store_for(state).get(plan_id, db=_backend_db(state))
+    except AuditStoreUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     if record is None:
         raise HTTPException(status_code=404, detail="Action plan not found")
     return record.trace()

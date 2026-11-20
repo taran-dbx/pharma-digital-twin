@@ -267,7 +267,8 @@ def test_alert_response_schema_is_constrained_c7426_smoke() -> None:
         "'request_maintenance', 'hold_batch', 'send_to_inspect'))"
     ) in ddl
     assert "UNIQUE (alert_id, episode_opened_at, action)" in ddl
-    assert "REFERENCES alert(id) ON DELETE CASCADE" in ddl
+    # Signed records outlive their alert: deletes are refused, not cascaded.
+    assert "REFERENCES alert(id) ON DELETE RESTRICT" in ddl
 
 
 @pytest.mark.asyncio
@@ -432,3 +433,101 @@ async def test_unupgraded_table_keeps_the_signature_in_reference_c7835_defect() 
     assert "audit" not in response.reference
     (listed,) = await store.list_for(alert, db=db)
     assert listed.signature_meaning == "reviewed"
+
+
+class StaleCheckDb(FakeResponseDb):
+    """A table whose CHECK predates the med-device actions (asyncpg-style errors)."""
+
+    class CheckViolationError(Exception):
+        sqlstate = "23514"
+
+    async def fetchrow(self, sql: str, *args):
+        compact = " ".join(sql.split()).lower()
+        if compact.startswith("insert into alert_response") and args[3] not in {
+            "hold_batch",
+            "send_to_inspect",
+            "request_maintenance",
+        }:
+            raise self.CheckViolationError(
+                'violates check constraint "alert_response_action_check"'
+            )
+        return await super().fetchrow(sql, *args)
+
+
+@pytest.mark.asyncio
+async def test_ncr_numbers_differ_per_episode_on_the_same_day_c7836_defect() -> None:
+    """[C7836][defect] Two excursions of one alert row on one day get distinct NCR ids."""
+    from iot_twin.services.alerts.alert_responses import ncr_number
+
+    clock = Clock(datetime(2026, 10, 20, 13, 48, 52, tzinfo=UTC))
+    engine = AlertEngine(now_fn=clock)
+    rule = _instant_spindle_rule()
+    first = (await engine.evaluate([{**SPINDLE, "value": 66.3}], [rule]))[0].alert
+    clock.instant += timedelta(seconds=56)
+    await engine.evaluate([{**SPINDLE, "value": 53.0}], [rule])
+    clock.instant += timedelta(seconds=244)
+    second = (await engine.evaluate([{**SPINDLE, "value": 64.0}], [rule]))[0].alert
+    assert second.id == first.id
+    assert ncr_number(first) == f"NCR-20261020-134852-{first.id.replace('-', '')[:4].upper()}"
+    assert ncr_number(second) != ncr_number(first)
+
+
+@pytest.mark.asyncio
+class TestDurableSignedRecords:
+    async def test_stale_check_stores_mapped_actions_and_refuses_ncr_c7837_defect(
+        self, cell
+    ) -> None:
+        """[C7837][defect] No silent in-memory records: map to legacy names or 503."""
+        client, state, _clock, queue = cell
+        state.app_backend_available = True
+        state.app_backend_db = StaleCheckDb()
+        alert_id = (await _spindle_reading(state, 66.3))[0].alert.id
+        _drain(queue)
+
+        held = await client.post(
+            f"/api/alerts/{alert_id}/responses", json=_signed("quarantine_lot")
+        )
+        assert held.status_code == 200
+        assert held.json()["response"]["action"] == "quarantine_lot"
+        assert state.app_backend_db.rows[0]["action"] == "hold_batch"
+
+        ncr = await client.post(f"/api/alerts/{alert_id}/responses", json=_signed("open_ncr"))
+        assert ncr.status_code == 503
+        assert "not upgraded" in ncr.json()["detail"]
+        assert response_store_for(state)._memory == {}
+        assert [e["response"]["action"] for e in _drain(queue)] == ["quarantine_lot"]
+
+    async def test_database_errors_are_503_not_memory_c7837_regression(self, cell) -> None:
+        """[C7837][regression] A failing backend refuses the decision instead of faking it."""
+
+        class DownDb:
+            async def fetchrow(self, *_args):
+                raise ConnectionError("connection reset")
+
+            async def fetch(self, *_args):
+                raise ConnectionError("connection reset")
+
+        client, state, _clock, _queue = cell
+        alert_id = (await _spindle_reading(state, 66.3))[0].alert.id
+        state.app_backend_available = True
+        state.app_backend_db = DownDb()
+        resp = await client.post(f"/api/alerts/{alert_id}/responses", json=_signed("open_ncr"))
+        assert resp.status_code == 503
+        assert response_store_for(state)._memory == {}
+
+    async def test_legacy_clients_default_to_legacy_unsigned_c7838_regression(self, cell) -> None:
+        """[C7838][regression] Older clients posting only a legacy action still work, marked unsigned."""
+        client, state, _clock, _queue = cell
+        alert_id = (await _spindle_reading(state, 66.3))[0].alert.id
+        resp = await client.post(f"/api/alerts/{alert_id}/responses", json={"action": "hold_batch"})
+        assert resp.status_code == 200
+        record = resp.json()["response"]
+        assert record["signature_meaning"] == "legacy-unsigned"
+        assert record["reason"] == "Recorded by a legacy client without a signature"
+        new = await client.post(f"/api/alerts/{alert_id}/responses", json={"action": "open_ncr"})
+        assert new.status_code == 422
+        forged = await client.post(
+            f"/api/alerts/{alert_id}/responses",
+            json={"action": "open_ncr", "reason": "x", "signature_meaning": "legacy-unsigned"},
+        )
+        assert forged.status_code == 422

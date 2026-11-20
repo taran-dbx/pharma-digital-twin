@@ -8,6 +8,7 @@ plan can be traced back to the row it came from:
 * ``alert_response:<uuid>``            — signed decisions already recorded
 * ``readings:<query-hash>#<n>``        — 10 s buckets of the excursion window (DBSQL)
 * ``lot:<lot_id>``                     — lots and part serials at risk (lot clock)
+* ``projected_rft:<alert_id>``         — projected right-first-time over those lots
 * ``alert_rule:<rule_id>``             — the validated limit and OQ/PQ refs (catalog)
 * ``maintenance:<event_id>``           — maintenance history of the asset/component
 * ``risk_score:<alert_id>``            — model risk score, when the alert carries one
@@ -32,8 +33,14 @@ from iot_twin.domain.catalog import (
     list_maintenance_history,
     list_sensors,
 )
-from iot_twin.domain.lot_context import LOT_METADATA_KEYS, lot_disposition, parts_in_window
-from iot_twin.services.alerts.alert_engine import AlertRecord
+from iot_twin.domain.lot_context import (
+    LOT_METADATA_KEYS,
+    PROJECTED_RFT_DEFINITION,
+    lot_disposition,
+    parts_in_window,
+)
+from iot_twin.services.alerts.alert_engine import EXCURSION_STARTED_KEY, AlertRecord
+from iot_twin.services.alerts.alert_responses import excursion_start, ncr_number
 
 logger = logging.getLogger(__name__)
 
@@ -131,8 +138,8 @@ def _json_safe(value: Any, depth: int = 0) -> Any:
 
 
 def excursion_window(alert: AlertRecord, now: datetime) -> tuple[datetime, datetime]:
-    """``[opened, cleared-or-now]`` for the episode, never inverted."""
-    start = _as_utc(alert.opened_at or now)
+    """``[first over-limit reading, cleared-or-now]`` — the same window as the QA hold."""
+    start = excursion_start(alert, _as_utc(now))
     end = _as_utc(alert.cleared_at) if alert.cleared_at else _as_utc(now)
     return start, max(start, end)
 
@@ -148,6 +155,8 @@ def _alert_item(alert: AlertRecord) -> GroundingItem:
         "value": alert.value,
         "threshold": alert.threshold,
         "opened_at": _iso(alert.opened_at),
+        "excursion_started_at": alert.metadata.get(EXCURSION_STARTED_KEY),
+        "ncr_id_if_opened": ncr_number(alert) if alert.industry == "manufacturing" else None,
         "acknowledged_at": _iso(alert.acknowledged_at),
         "acknowledged_by": alert.acknowledged_by,
         "cleared_at": _iso(alert.cleared_at),
@@ -212,10 +221,12 @@ def _maintenance_items(alert: AlertRecord) -> list[GroundingItem]:
     ]
 
 
-def _lot_items(alert: AlertRecord, start: datetime, end: datetime) -> list[GroundingItem]:
+def _lot_items(
+    alert: AlertRecord, start: datetime, end: datetime, now: datetime
+) -> list[GroundingItem]:
     if (alert.industry or "") != "manufacturing" or not _lot_tracked(alert):
         return []
-    disposition = lot_disposition(start, end)
+    disposition = lot_disposition(start, end, now)
     parts = parts_in_window(start, end)
     items = []
     for lot_id, dhr in zip(disposition["lot_ids"], disposition["dhr_refs"], strict=True):
@@ -235,6 +246,20 @@ def _lot_items(alert: AlertRecord, start: datetime, end: datetime) -> list[Groun
                     "part_number": disposition["part_number"],
                     "udi_di": disposition["udi_di"],
                     "work_order": disposition["work_order"],
+                },
+            )
+        )
+    rft = disposition.get("projected_rft")
+    if rft:
+        items.append(
+            GroundingItem(
+                f"projected_rft:{alert.id}",
+                "projected_rft",
+                alert.id,
+                {
+                    **rft,
+                    "lot_ids": list(disposition["lot_ids"]),
+                    "definition": PROJECTED_RFT_DEFINITION,
                 },
             )
         )
@@ -450,7 +475,7 @@ async def assemble_grounding(
     items.extend(readings)
     gaps.extend([gap] if gap else [])
 
-    items.extend(_lot_items(alert, start, end))
+    items.extend(_lot_items(alert, start, end, at))
     rule = _rule_for(alert)
     if rule is not None:
         items.append(_rule_item(rule))

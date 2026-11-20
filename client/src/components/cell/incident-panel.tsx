@@ -312,7 +312,7 @@ export function IncidentPanel({
               <li key={step.action} className={`${done ? "is-done" : ""}${stopsCell ? " is-primary" : ""}`}>
                 <span className="cell-response__station">{STATION_INFO[step.station].code}</span>
                 <div className="cellops-actions__body">
-                  <b>{done ? decisionLabel(step, model.batchHeld) : step.title}</b>
+                  <b>{done ? decisionLabel(step, model.batchHeld, done) : step.title}</b>
                   {done ? (
                     <span data-testid={`decision-${step.action}`}>
                       Signed {clockOf(done.created_at)} by {who(done.recorded_by)}

@@ -43,7 +43,7 @@ const KPI_ICON: Record<string, LucideIcon> = {
   [CELL_STATE]: Factory,
   "Spindle 3 temperature": Thermometer,
   "Parts at risk": PackageX,
-  "First-pass yield": ShieldCheck,
+  "Projected RFT": ShieldCheck,
   "Time to detect": Timer,
   "NCRs opened": ClipboardX,
   "Last device event": RadioTower,
@@ -139,14 +139,15 @@ function kpiValue(label: string, model: MachiningCellModel, episodes: AlertEpiso
         } CoPQ if scrapped`,
       };
     }
-    case "First-pass yield": {
-      const rft = quality.rightFirstTime;
-      if (!rft) return { icon, v: "—", tone: "idle", foot: "Right-first-time per lot after an excursion" };
+    case "Projected RFT": {
+      // PROJECTED_RFT_DEFINITION: (parts started - parts at risk) / parts started.
+      const rft = quality.projectedRft;
+      if (!rft) return { icon, v: "—", tone: "idle", foot: "Projected right-first-time · no excursion yet" };
       return {
         icon,
         v: formatNumber(rft.pct, 1),
-        tone: rft.good === rft.total ? "ok" : "warn",
-        foot: `${rft.good} of ${rft.total} right first time · ${quality.disposition?.lotIds.join(", ") ?? ""}`,
+        tone: rft.partsAtRisk === 0 ? "ok" : "warn",
+        foot: `${rft.good} of ${rft.partsStarted} parts started · projected, no CMM results yet`,
       };
     }
     case "Time to detect": {

@@ -93,7 +93,7 @@ medical-device quality grounding: Trinity Medical's orthopaedic implant cell, th
 temperature limit as a validated process parameter (OQ/PQ references, fault code
 `VPP-SPINDLE3-TEMP`), lot context read from the telemetry `metadata` column (`lot_id`,
 `part_serial`, `work_order`, `part_number`, `udi_di`, `dhr_ref`), time-to-detect and MTTR
-definitions, and a first-pass-yield (right-first-time) proxy instead of OEE. Other industries
+definitions, a *process health index (telemetry approximation)* instead of OEE, and the parts-based projected right-first-time as the only first-pass-yield proxy. Other industries
 use an "operating health index" (availability x performance x quality) with their own sensors
 and units. See [domain-medtech.md](domain-medtech.md) for the glossary. An industry
 the app does not offer reports `supported: false` on `/status` and 404 on the other
@@ -202,14 +202,21 @@ tables exist but were empty in that workspace, because only realtime was running
 its space does not include the metrics table.
 
 The space also carries these instructions (other industries say "operating health index" where
-manufacturing says first-pass-yield proxy):
+manufacturing says "process health index (telemetry approximation)"):
 
 - **Downtime**: intervals where `fault_active` is true, counted in distinct minutes.
 - **Availability**: 1 − fault minutes / observed minutes.
 - **Performance**: `value / nominal_value`, capped at 1.
 - **Quality**: the share of readings inside `[min_value, max_value]`.
-- **First-pass yield (right-first-time) proxy**: the product of the three above. It is an
-  approximation from telemetry, not CMM pass/fail or lot-release data, and Genie says so.
+- **Process health index (telemetry approximation)**: the product of the three above. It is an
+  approximation from telemetry, not CMM pass/fail or lot-release data, and Genie says so. It is
+  never called first-pass yield.
+- **First-pass yield / right-first-time** (manufacturing only): **Projected right-first-time** = (parts started − parts at risk) / parts started, over the lots an excursion touched. Parts at risk are the parts whose cut overlapped the time Spindle 3 was outside its validated limit. *Projected*, because no CMM results exist yet. Genie counts parts started as
+  distinct `part_serial` values on `cnc_1_*` readings in the lot. The app's QA hold runs from the
+  first over-limit reading until the alert clears below the hysteresis band, so it can name one
+  more part than Genie's over-limit readings; the app's list is authoritative. The canonical text is
+  `PROJECTED_RFT_DEFINITION` in `src/iot_twin/domain/lot_context.py` (mirrored in
+  `client/src/lib/manufacturing-quality.ts`).
 - **Anomaly**: a value outside `[min_value, max_value]`.
 
 For manufacturing the instructions add the medical-device context:

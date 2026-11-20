@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from iot_twin.domain.lot_context import PROJECTED_RFT_DEFINITION
 from iot_twin.services.genie.genie_industry_profile import IndustryProfile
 from iot_twin.services.uc_ident import sql_fqn
 
@@ -32,15 +33,16 @@ def _common_starters(profile: IndustryProfile) -> tuple[str, ...]:
 # Medical-device quality questions (Trinity Medical orthopaedic implant cell).
 # Every one is answerable from telemetry lot metadata + intelligence_* tables;
 # NCR numbers and dispositions live in the app's decision log (see instructions).
+EXPLAIN_FLAG_STARTER = "Explain why Spindle 3 was flagged and what the AI recommended"
 MEDTECH_STARTERS: tuple[str, ...] = (
     "Which lots were machined while Spindle 3 was outside its validated limit?",
     "Which part serials should be quarantined for the latest Spindle 3 excursion?",
     "How long did it take to detect each Spindle 3 excursion this week?",
+    "What is the projected right-first-time of each lot touched by a Spindle 3 excursion today?",
     "Which Spindle 3 validated-limit excursions this shift need an NCR, and what is each alert's status?",
-    "Explain why Spindle 3 was flagged and what the AI recommended",
+    EXPLAIN_FLAG_STARTER,
     "Which rows did the AI use for the latest Spindle 3 alert, and did its plan pass the grounding check?",
 )
-EXPLAIN_FLAG_STARTER = MEDTECH_STARTERS[4]
 RISK_MODEL_RULE = "medtech-model-spindle-risk"
 
 SPINDLE_TEMP_SENSOR = "cnc_1_spindle_temp"
@@ -270,11 +272,14 @@ def _medtech_context_lines(t: str, mode: str, lit: str) -> list[str]:
         "udi_di (UDI device identifier) and dhr_ref (device history record) are in the same "
         f"{t}.metadata column. Parts at risk for an excursion = distinct part_serial values "
         f"on '{SPINDLE_TEMP_SENSOR}' readings above the validated limit; the rest of the lot "
-        "is a release candidate pending QA review.",
+        "is a release candidate pending QA review. The app's QA hold is slightly wider (it "
+        "runs from the first over-limit reading until the alert clears below the hysteresis "
+        "band), so it can name one more part than this query; the app's list is authoritative.",
         "Time to detect = intelligence_alert_snapshot.opened_at minus the first reading above "
         "the validated limit in the same excursion. MTTR = cleared/updated time minus opened_at.",
-        "First-pass yield / right-first-time here is a telemetry proxy (share of in-range "
-        "readings), not CMM or lot-release data; say so.",
+        f"First-pass yield / right-first-time means ONLY this: {PROJECTED_RFT_DEFINITION} "
+        f"Parts started = distinct {serial} values on cnc_1_* readings in the lot. Never call "
+        "the process health index first-pass yield.",
         "NCRs, QA holds (quarantine_lot), CMM inspection requests and their Part 11-style "
         "audit fields (actor, timestamp, reason, comment, signature meaning) are recorded in "
         "the app's decision log, not in these tables. For NCR numbers or dispositions, list the "
@@ -434,6 +439,29 @@ def _maintenance_sql(
     )
 
 
+def _projected_rft_sql(tel: str, refs: dict[str, str], industry: str, mode: str) -> str:
+    """PROJECTED_RFT_DEFINITION per lot touched by a Spindle 3 excursion (last 24 h)."""
+    rules = _quoted(refs["alert_rules"])
+    lot = metadata_key(mode, "lot_id", "t.")
+    serial = metadata_key(mode, "part_serial", "t.")
+    where = _cdc_where(telemetry_row_filter(mode, industry, "t."))
+    window = "t.event_time >= current_timestamp() - INTERVAL 24 HOURS"
+    return (
+        f"WITH started AS (SELECT {lot} AS lot_id, COUNT(DISTINCT {serial}) AS parts_started "
+        f"FROM {tel} t WHERE {where}t.sensor_name LIKE 'cnc_1_%' AND {window} "
+        f"AND {lot} IS NOT NULL GROUP BY 1), "
+        f"at_risk AS (SELECT {lot} AS lot_id, COUNT(DISTINCT {serial}) AS parts_at_risk "
+        f"FROM {tel} t JOIN {rules} r ON r.rule_id = '{SPINDLE_TEMP_RULE}' "
+        f"AND r.industry = {_literal(industry)} WHERE {where}"
+        f"t.sensor_name = '{SPINDLE_TEMP_SENSOR}' AND t.value > r.threshold AND {window} "
+        f"AND {lot} IS NOT NULL GROUP BY 1) "
+        "SELECT s.lot_id, s.parts_started, a.parts_at_risk, "
+        "ROUND(100 * (s.parts_started - a.parts_at_risk) / s.parts_started, 1) "
+        "AS projected_rft_pct FROM started s JOIN at_risk a ON a.lot_id = s.lot_id "
+        "ORDER BY s.lot_id DESC"
+    )
+
+
 def _excursion_lots_sql(tel: str, refs: dict[str, str], industry: str, mode: str) -> str:
     """Lots (and parts at risk) machined while Spindle 3 exceeded its validated limit."""
     rules = _quoted(refs["alert_rules"])
@@ -516,6 +544,10 @@ def example_sqls(
                 (
                     MEDTECH_STARTERS[0],
                     _excursion_lots_sql(tel, refs, industry, mode),
+                ),
+                (
+                    MEDTECH_STARTERS[3],
+                    _projected_rft_sql(tel, refs, industry, mode),
                 ),
                 (EXPLAIN_FLAG_STARTER, _explain_flag_sql(refs, industry)),
             ]

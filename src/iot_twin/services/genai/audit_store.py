@@ -6,8 +6,8 @@ to the prompt and the exact rows it was given. The only later write is
 ``applied_by`` / ``applied_at`` / ``applied_response_id``, set once when a
 person signs a decision through the response workflow citing the plan.
 
-Falls back to process memory when Lakebase is unavailable, like the alert
-response store.
+With Lakebase bound the store persists or refuses (``AuditStoreUnavailable``);
+process memory is only used when no Lakebase is configured.
 """
 
 from __future__ import annotations
@@ -191,8 +191,19 @@ def _row_to_record(row: Any) -> AuditRecord:
     )
 
 
+class AuditStoreUnavailable(RuntimeError):
+    """Lakebase is bound but the audit could not be read or written (→ 503)."""
+
+
 class GenaiAuditStore:
-    """Lakebase-backed action-plan audit with an in-memory fallback."""
+    """Lakebase-backed action-plan audit.
+
+    With a database, every read and write goes to Lakebase or raises
+    :class:`AuditStoreUnavailable` — an AI answer is never shown without its
+    audit row, and an audit row never silently lands in memory (same rule as
+    signed decisions). Process memory is used only when no Lakebase is bound
+    (local runs and tests).
+    """
 
     def __init__(self) -> None:
         self._memory: dict[str, AuditRecord] = {}
@@ -202,9 +213,10 @@ class GenaiAuditStore:
         if db is not None:
             try:
                 await db.execute(_INSERT_SQL, *entry.insert_args())
-                return entry
-            except Exception:
-                logger.exception("genai audit persist failed; recording in memory")
+            except Exception as exc:
+                logger.exception("genai audit persist failed")
+                raise AuditStoreUnavailable(f"action plan audit not persisted: {exc}") from exc
+            return entry
         async with self._lock:
             self._memory = {**self._memory, entry.id: entry}
         return entry
@@ -213,42 +225,35 @@ class GenaiAuditStore:
         if db is not None:
             try:
                 row = await db.fetchrow(_GET_SQL, plan_id)
-                if row is not None:
-                    return _row_to_record(row)
-            except Exception:
-                logger.exception("genai audit read failed; using memory")
+            except Exception as exc:
+                raise AuditStoreUnavailable(f"action plan audit read failed: {exc}") from exc
+            return _row_to_record(row) if row is not None else None
         async with self._lock:
             return self._memory.get(plan_id)
 
     async def list_for_alert(
         self, alert_id: str, db: Any | None = None, limit: int = 20
     ) -> list[AuditRecord]:
-        found: dict[str, AuditRecord] = {}
         if db is not None:
             try:
-                found = {
-                    str(r["id"]): _row_to_record(r)
-                    for r in await db.fetch(_LIST_SQL, alert_id, limit)
-                }
-            except Exception:
-                logger.exception("genai audit list failed; using memory")
+                rows = await db.fetch(_LIST_SQL, alert_id, limit)
+            except Exception as exc:
+                raise AuditStoreUnavailable(f"action plan audit list failed: {exc}") from exc
+            return [_row_to_record(r) for r in rows]
         async with self._lock:
             memory = [r for r in self._memory.values() if r.alert_id == alert_id]
-        merged = {**{r.id: r for r in memory}, **found}
-        return sorted(merged.values(), key=lambda r: r.requested_at, reverse=True)[:limit]
+        return sorted(memory, key=lambda r: r.requested_at, reverse=True)[:limit]
 
     async def list_recent(self, db: Any | None = None, limit: int = 500) -> list[AuditRecord]:
-        found: dict[str, AuditRecord] = {}
         if db is not None:
             try:
-                found = {
-                    str(r["id"]): _row_to_record(r) for r in await db.fetch(_RECENT_SQL, limit)
-                }
-            except Exception:
-                logger.exception("genai audit recent list failed; using memory")
+                rows = await db.fetch(_RECENT_SQL, limit)
+            except Exception as exc:
+                raise AuditStoreUnavailable(f"action plan audit list failed: {exc}") from exc
+            return [_row_to_record(r) for r in rows]
         async with self._lock:
-            merged = {**self._memory, **found}
-        return sorted(merged.values(), key=lambda r: r.requested_at, reverse=True)[:limit]
+            memory = list(self._memory.values())
+        return sorted(memory, key=lambda r: r.requested_at, reverse=True)[:limit]
 
     async def mark_applied(
         self,
@@ -259,15 +264,14 @@ class GenaiAuditStore:
         db: Any | None = None,
         now: datetime | None = None,
     ) -> AuditRecord | None:
-        """Record that a person applied the plan; first application wins."""
+        """Record that a person applied the plan; first application wins (None after)."""
         at = _as_utc(now or datetime.now(UTC))
         if db is not None:
             try:
                 row = await db.fetchrow(_APPLY_SQL, plan_id, applied_by, at, response_id)
-                if row is not None:
-                    return _row_to_record(row)
-            except Exception:
-                logger.exception("genai audit apply failed; trying memory")
+            except Exception as exc:
+                raise AuditStoreUnavailable(f"action plan apply not recorded: {exc}") from exc
+            return _row_to_record(row) if row is not None else None
         async with self._lock:
             current = self._memory.get(plan_id)
             if current is None or current.applied_at is not None:

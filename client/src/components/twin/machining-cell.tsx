@@ -1249,7 +1249,7 @@ function CellScene(props: MachiningCellProps & { view: CellView; theme: Resolved
   };
   const decisionText = (station: CellStationId) =>
     RESPONSE_STEPS.filter((step) => step.station === station && decisions[step.action])
-      .map((step) => decisionLabel(step, batchHeld))
+      .map((step) => decisionLabel(step, batchHeld, decisions[step.action]))
       .join(" · ") || undefined;
 
   return (
