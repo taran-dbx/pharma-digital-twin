@@ -19,6 +19,8 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
+from iot_twin.services.db.savepoint import savepoint
+
 logger = logging.getLogger(__name__)
 
 _JSON_COLUMNS = ("grounding_rows", "response", "grounding_reasons")
@@ -82,6 +84,21 @@ SET applied_by = $2, applied_at = $3, applied_response_id = $4::uuid,
 WHERE id = $1::uuid AND applied_at IS NULL
 RETURNING *
 """
+
+# Tables created before applied_override_reason existed (owner has not upgraded).
+_APPLY_SQL_LEGACY = """
+UPDATE genai_action_plan_audit
+SET applied_by = $2, applied_at = $3, applied_response_id = $4::uuid
+WHERE id = $1::uuid AND applied_at IS NULL
+RETURNING *
+"""
+
+
+def _missing_override_column(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "applied_override_reason" in msg and (
+        "does not exist" in msg or "undefinedcolumn" in type(exc).__name__.lower()
+    )
 
 
 @dataclass(frozen=True)
@@ -266,6 +283,35 @@ class GenaiAuditStore:
             memory = list(self._memory.values())
         return sorted(memory, key=lambda r: r.requested_at, reverse=True)[:limit]
 
+    @staticmethod
+    async def _apply_row(
+        db: Any,
+        plan_id: str,
+        applied_by: str,
+        at: datetime,
+        response_id: str,
+        override_reason: str | None,
+    ) -> Any:
+        base = (plan_id, applied_by, at, response_id)
+        try:
+            return await _apply_once(db, _APPLY_SQL, *base, override_reason)
+        except Exception as exc:
+            if not _missing_override_column(exc):
+                raise AuditStoreUnavailable(f"action plan apply not recorded: {exc}") from exc
+            if override_reason is not None:
+                raise AuditStoreUnavailable(
+                    "genai_action_plan_audit has no applied_override_reason column (table not "
+                    "upgraded); its owner must run ensure_app_schema before an override can be "
+                    "recorded"
+                ) from exc
+            logger.warning(
+                "genai_action_plan_audit not upgraded; applying without the override column"
+            )
+        try:
+            return await _apply_once(db, _APPLY_SQL_LEGACY, *base)
+        except Exception as exc:
+            raise AuditStoreUnavailable(f"action plan apply not recorded: {exc}") from exc
+
     async def mark_applied(
         self,
         plan_id: str,
@@ -279,12 +325,7 @@ class GenaiAuditStore:
         """Record that a person applied the plan; first application wins (None after)."""
         at = _as_utc(now or datetime.now(UTC))
         if db is not None:
-            try:
-                row = await db.fetchrow(
-                    _APPLY_SQL, plan_id, applied_by, at, response_id, override_reason
-                )
-            except Exception as exc:
-                raise AuditStoreUnavailable(f"action plan apply not recorded: {exc}") from exc
+            row = await self._apply_row(db, plan_id, applied_by, at, response_id, override_reason)
             return _row_to_record(row) if row is not None else None
         async with self._lock:
             current = self._memory.get(plan_id)
@@ -299,6 +340,12 @@ class GenaiAuditStore:
             )
             self._memory = {**self._memory, plan_id: updated}
             return updated
+
+
+async def _apply_once(db: Any, sql: str, *args: Any) -> Any:
+    # Savepoint: inside the signing transaction a failed UPDATE must not abort it.
+    async with savepoint(db):
+        return await db.fetchrow(sql, *args)
 
 
 def audit_store_for(state: Any) -> GenaiAuditStore:

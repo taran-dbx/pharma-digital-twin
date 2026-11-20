@@ -52,6 +52,7 @@ from iot_twin.services.alerts.alert_engine import (
     EXCURSION_STARTED_KEY,
     AlertRecord,
 )
+from iot_twin.services.db.savepoint import savepoint
 
 logger = logging.getLogger(__name__)
 
@@ -464,16 +465,19 @@ class AlertResponseStore:
             response.recorded_by,
             json.dumps(reference),
         )
-        if not audit_columns:
-            return await db.fetchrow(_INSERT_LEGACY, *base)
-        return await db.fetchrow(
-            _INSERT_SIGNED,
-            *base,
-            response.reason,
-            response.comment,
-            response.signature_meaning,
-            response.signed_at,
-        )
+        # A savepoint per attempt: inside a caller's transaction (plan-linked
+        # signing) a failed INSERT must not abort it before the fallback retry.
+        async with savepoint(db):
+            if not audit_columns:
+                return await db.fetchrow(_INSERT_LEGACY, *base)
+            return await db.fetchrow(
+                _INSERT_SIGNED,
+                *base,
+                response.reason,
+                response.comment,
+                response.signature_meaning,
+                response.signed_at,
+            )
 
     async def _insert(self, db: Any, response: AlertResponse) -> tuple[Any, str]:
         """Persist ``response``; returns (row or None on conflict, stored action).
