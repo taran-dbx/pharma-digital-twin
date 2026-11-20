@@ -5,6 +5,9 @@ Spindle 3 on CNC-1 (Ti-6Al-4V hip stems) has a validated thermal limit of 60 °C
 once the limit is **breached**. The thermal-risk model scores the spindle every few
 seconds and opens a **predicted** alert *before* the limit trips. That alert goes
 to the same alert table, lifecycle, SSE stream, Genie snapshot and cell UI.
+On the live producer's scheduled heat event, which has no early warning signal,
+the model warns **7 s before the excursion onset**. The minutes of lead in the
+metrics come from a synthetic precursor (see the model card).
 
 ```
 readings ─► evaluate_and_emit ─► threshold rules ─────────────► AlertEngine ─► alert / alert_event (Lakebase)
@@ -41,7 +44,7 @@ The names follow the `RESOURCE_PREFIX` convention (default `pharma-twin` /
 | `risk_model_short_name` | `spindle_thermal_risk` | UC model name, `RISK_MODEL_NAME` |
 | `risk_endpoint_name` | `pharma-twin-spindle-risk` | serving endpoint, `RISK_ENDPOINT_NAME` (via `value_from: risk-endpoint`) |
 | `risk_job_name` | `pharma-twin-risk-model-train` | training job |
-| `risk_model_version` | `1` | version the endpoint serves at deploy time (the job repoints it to the champion) |
+| `risk_model_version` | `4` (the current `@champion`) | version the endpoint serves after a `bundle deploy`. **Keep it equal to `@champion`**: each training run prints the `--var risk_model_version=N` to use |
 | `risk_training_data_source` | `auto` | `auto`, `synthetic` or `real` |
 | `risk_alert_threshold` | `model` | `RISK_ALERT_THRESHOLD`: `model` uses the cut-off the served version ships; a number overrides it |
 
@@ -109,9 +112,15 @@ An embargo of `window_s + horizon_s` (180 s) drops the training rows just before
 each boundary, because their feature window or label horizon overlaps the next
 period. The cut-off is chosen on validation as the highest-recall threshold with
 precision ≥ 0.9 (fallback: best F1), then evaluated once on test. The clear
-level is the cut-off minus `--clear-hysteresis` (0.05). The job logs the
-calm-score spread (`val_calm_score_p50/p90`) and warns if the clear level is under
-the p90. Both thresholds are stored in the model version (a `decision`
+level is the cut-off minus `--clear-hysteresis` (0.05). The job checks the cut-off
+against calm running. *Calm* means label-0 windows that are steady: at least
+8 °C below the limit, with the temperature changing less than 5 °C/min. Near-miss
+ramps that stay under the limit are not calm, so they don't count. The job logs
+`val_calm_score_p50/p90/p99`, the p99 per wear band (0–1000, 1000–2000 and
+2000–3000 h), and `val_negative_score_p99`, the p99 over every label-0 window.
+It warns when any calm p99 is at or above the cut-off, or when the calm p90 is
+above the clear level. On v4 the calm p99 is 0.28 (at most 0.29 per band),
+against a 0.47 cut-off. Both thresholds are stored in the model version (a `decision`
 artifact), so the served pyfunc returns `decision_threshold` and
 `clear_threshold` with every score. A single-class split fails training on
 train/validation; on test it skips ROC-AUC / PR-AUC with a warning.
@@ -132,7 +141,13 @@ train/validation; on test it skips ROC-AUC / PR-AUC with a warning.
 | Mean lead before onset | 75.9 s |
 | Lead time gained vs the threshold rule | mean 77.8 s, median 101 s |
 | Rows train / validation / test (after the 180 s embargo) | 18,479 / 4,628 / 7,725 |
+| Live producer heat event (no precursor) | 7 s before onset (first score over the cut-off 12 s into the ramp; onset at 19 s) |
 <!-- metrics:end -->
+
+The app scores each pipeline at most every `RISK_SCORE_INTERVAL_S` (5 s), so on
+the live heat event a scoring round can land up to 5 s after the score crosses
+the cut-off. That can use up most of the 7 s. Lower the interval if the live lead
+matters.
 
 "Lead time" is measured per excursion. The onset is the first over-limit
 reading; the alert engine records it on the breach alert as
@@ -194,11 +209,16 @@ badge shows the same quantity for the live episode: the breach alert's
 ### The endpoint version and `bundle deploy`
 
 The training job repoints the endpoint to the new champion. A later
-`databricks bundle deploy` **reverts** it to `var.risk_model_version` (default
-`1`), because the bundle owns the endpoint config. The job log and its summary
-print the override to use, for example `--var risk_model_version=3`. Set it in
-the target's variable overrides, or rerun the job after a deploy. The app logs
-`serves … but @champion is v…` while the two differ.
+`databricks bundle deploy` **reverts** it to `var.risk_model_version`, because the
+bundle owns the endpoint config. The default is `4`, the current champion. **After
+every training run, update it** (or always deploy with `--var risk_model_version=N`):
+the job log and its summary print the override to use. While the endpoint serves
+a version that is not `@champion`, the app does two things:
+
+* it logs `serves … but @champion is v…`;
+* it **ignores that version's embedded cut-off and clear level**, logging one
+  warning that names them, and falls back to the contract defaults (0.47 / 0.42).
+  `RISK_ALERT_THRESHOLD` still overrides either way.
 
 ### Prerequisites and grants
 
@@ -211,8 +231,12 @@ the target's variable overrides, or rerun the job after a deploy. The app logs
   * permission to create or manage the serving endpoint.
 * **App service principal:**
   * `CAN_QUERY` on the endpoint, which the `risk-endpoint` resource grants;
-  * optionally `EXECUTE` (or `BROWSE`) on the UC model, for the champion-mismatch
-    warning.
+  * `EXECUTE` (or `BROWSE`) on the UC model, for the champion check. It is not
+    an app resource type, so grant it in UC:
+    `GRANT EXECUTE ON FUNCTION <catalog>.pharma_twin.spindle_thermal_risk TO <app-sp>`,
+    or use Catalog Explorer → model → Permissions. Without it, the app logs one
+    warning (`served-vs-champion check is off`) and uses the served version's
+    thresholds.
 
 ### Bootstrap on a new workspace
 

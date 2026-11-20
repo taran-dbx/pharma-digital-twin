@@ -63,8 +63,8 @@ variables:
     description: UC model name; the full name is <uc_catalog>.<risk_model_schema>.<this>.
     default: spindle_thermal_risk
   risk_model_version:
-    description: Model version the endpoint serves at deploy; the training job repoints it to the champion.
-    default: "1"
+    description: "Model version the endpoint serves after a bundle deploy (keep it at the current @champion: every training run prints the --var to use)."
+    default: "4"
   risk_endpoint_name:
     description: Model Serving endpoint for the thermal-risk model.
     default: pharma-twin-spindle-risk

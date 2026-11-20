@@ -328,3 +328,33 @@ class TestReviewFixes:
         assert clear_threshold_for(0.22, 0.05) == 0.17
         assert clear_threshold_for(0.03, 0.05) == 0.01
         assert two_classes([0, 1, 1]) and not two_classes([0, 0])
+
+
+class TestCalmScoreCheck:
+    def test_is_calm_excludes_near_misses(self) -> None:
+        from iot_twin.ml.evaluation import is_calm
+
+        assert is_calm(0, 12.0, 1.0)
+        assert not is_calm(1, 12.0, 1.0)
+        assert not is_calm(0, 4.0, 1.0)  # close to the limit
+        assert not is_calm(0, 12.0, 9.0)  # a ramp that stays under the limit
+
+    def test_p99_per_wear_band_against_the_cut_off(self) -> None:
+        from iot_twin.ml.evaluation import calm_score_check
+
+        scores = [0.1] * 99 + [0.2] + [0.1] * 90 + [0.6] * 10  # worn band: p99 = 0.6
+        wear = [500.0] * 100 + [2500.0] * 100
+        metrics, problems = calm_score_check(scores, [True] * 200, wear, cutoff=0.47, clear=0.42)
+        assert metrics["val_calm_score_p99_wear_0_1000h"] < 0.47
+        assert metrics["val_calm_score_p99_wear_2000_3000h"] > 0.47
+        assert "1000_2000" not in " ".join(metrics)  # empty band skipped
+        assert any("2000-3000 h" in p for p in problems)
+
+    def test_no_problems_for_quiet_calm_scores_and_mask_is_respected(self) -> None:
+        from iot_twin.ml.evaluation import calm_score_check
+
+        scores = [0.1] * 50 + [0.9] * 50
+        mask = [True] * 50 + [False] * 50
+        metrics, problems = calm_score_check(scores, mask, [3000.0] * 100, cutoff=0.47, clear=0.42)
+        assert problems == [] and metrics["val_calm_score_p99"] == pytest.approx(0.1)
+        assert "val_calm_score_p99_wear_2000_3000h" in metrics  # 3000 h is in the top band

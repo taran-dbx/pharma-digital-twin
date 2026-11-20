@@ -178,8 +178,10 @@ def train_and_evaluate(training_set: Any, args: argparse.Namespace) -> dict[str,
     from sklearn.metrics import average_precision_score, roc_auc_score
 
     from iot_twin.ml.evaluation import (
+        calm_score_check,
         choose_threshold,
         clear_threshold_for,
+        is_calm,
         precision_recall_at,
         quantile,
         two_classes,
@@ -218,14 +220,21 @@ def train_and_evaluate(training_set: Any, args: argparse.Namespace) -> dict[str,
         list(y_val), list(val_scores), min_precision=args.min_precision
     )
     clear = clear_threshold_for(threshold, args.clear_hysteresis)
-    calm = [float(s) for s, y in zip(val_scores, y_val, strict=True) if y == 0]
-    calm_p90 = quantile(calm, 0.9)
-    if clear < calm_p90:
-        logger.warning(
-            "clear level %.3f is under the calm-score p90 %.3f: alerts may not clear",
-            clear,
-            calm_p90,
-        )
+    calm_mask = [
+        is_calm(int(y), float(margin), float(slope))
+        for y, margin, slope in zip(y_val, x_val["temp_margin_c"], x_val["temp_slope"], strict=True)
+    ]
+    calm_metrics, calm_problems = calm_score_check(
+        [float(s) for s in val_scores],
+        calm_mask,
+        [float(h) for h in x_val["hours_since_maintenance"]],
+        cutoff=threshold,
+        clear=clear,
+    )
+    negatives = [float(s) for s, y in zip(val_scores, y_val, strict=True) if y == 0]
+    calm_metrics["val_negative_score_p99"] = quantile(negatives, 0.99)
+    for problem in calm_problems:
+        logger.warning("calm-score check: %s", problem)
     test_scores = model.predict_proba(x_test)[:, 1]
     at_cut = precision_recall_at(list(y_test), list(test_scores), threshold)
 
@@ -256,8 +265,8 @@ def train_and_evaluate(training_set: Any, args: argparse.Namespace) -> dict[str,
         "test_f1_at_threshold": at_cut["f1"],
         "decision_threshold": float(threshold),
         "clear_threshold": float(clear),
-        "val_calm_score_p50": quantile(calm, 0.5),
-        "val_calm_score_p90": calm_p90,
+        **calm_metrics,
+        "calm_check_problems": float(len(calm_problems)),
         "embargo_s": float(embargo),
         "val_pr_auc": float(average_precision_score(y_val, val_scores)),
         "best_iteration": float(model.best_iteration_ or LGBM_PARAMS["n_estimators"]),

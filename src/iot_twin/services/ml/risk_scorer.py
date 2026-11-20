@@ -292,6 +292,10 @@ class SpindleRiskScorer:
         self.inflight = False
         self._model: tuple[str, str, float] | None = None
         self._warned_version: str | None = None
+        self._warned_lookup = False
+        self._warned_thresholds: str | None = None
+        # True while the endpoint serves a version other than @champion.
+        self.off_champion = False
         self.tasks: set[asyncio.Task] = set()
         self.stats: dict[str, Any] = {"calls": 0, "failures": 0, "last_score": None}
 
@@ -383,9 +387,20 @@ class SpindleRiskScorer:
         try:
             champion = await self._call(self._champion, name)
         except Exception as exc:
-            logger.debug("champion lookup for %s failed: %s", name, exc)
+            if not self._warned_lookup:
+                self._warned_lookup = True
+                logger.warning(
+                    "risk endpoint %s: cannot read @%s of %s (%s); the served-vs-champion "
+                    "check is off. Grant the app service principal EXECUTE on the model "
+                    "to enable it (docs/ml-risk-model.md)",
+                    self.config.endpoint_name,
+                    CHAMPION_ALIAS,
+                    name,
+                    exc,
+                )
             return
         self.stats["champion_version"] = champion
+        self.off_champion = bool(champion and champion != version)
         if champion and champion != version and self._warned_version != version:
             self._warned_version = version
             logger.warning(
@@ -442,6 +457,7 @@ class SpindleRiskScorer:
         name, version = await self._model_identity()
         at = max(reading_epoch(r) or 0.0 for r in lane.buffer)
         self.stats["last_score"] = prediction.risk_score
+        decision, clear = self._embedded_thresholds(prediction, version)
         return RiskScore(
             risk_score=prediction.risk_score,
             top_features=prediction.top_features,
@@ -450,9 +466,37 @@ class SpindleRiskScorer:
             at=at,
             lot=self._lot_for(lane, at),
             pipeline_id=pipeline_id,
-            decision_threshold=prediction.decision_threshold,
-            clear_threshold=prediction.clear_threshold,
+            decision_threshold=decision,
+            clear_threshold=clear,
         )
+
+    def _embedded_thresholds(
+        self, prediction: Prediction, version: str
+    ) -> tuple[float | None, float | None]:
+        """The served version's cut-off / clear level, unless it is not the champion.
+
+        Off-champion thresholds were tuned for another model version, so they are
+        ignored (contract defaults apply) with one warning that names them.
+        ``RISK_ALERT_THRESHOLD`` still overrides either way.
+        """
+        if not self.off_champion or prediction.decision_threshold is None:
+            return prediction.decision_threshold, prediction.clear_threshold
+        if self._warned_thresholds != version:
+            self._warned_thresholds = version
+            logger.warning(
+                "risk endpoint %s serves v%s, not @%s v%s: ignoring its cut-off %.2f / clear "
+                "%s and using %.2f / %.2f (set RISK_ALERT_THRESHOLD to pin one)",
+                self.config.endpoint_name,
+                version,
+                CHAMPION_ALIAS,
+                self.stats.get("champion_version"),
+                prediction.decision_threshold,
+                prediction.clear_threshold,
+                DEFAULT_THRESHOLD,
+                DEFAULT_THRESHOLD - DEFAULT_HYSTERESIS,
+            )
+        self.stats["ignored_thresholds_from"] = version
+        return None, None
 
 
 def _metadata(reading: Mapping[str, Any]) -> dict[str, Any]:

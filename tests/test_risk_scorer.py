@@ -420,3 +420,51 @@ class TestEndToEnd:
         task = rs.observe_and_score(state, _readings(), industry="manufacturing", pipeline_id=None)
         assert task is not None
         assert await task == []
+
+
+@pytest.mark.asyncio
+class TestChampionGuards:
+    def _scorer(self, served: str, champion) -> rs.SpindleRiskScorer:
+        def champion_fn(name, timeout):
+            if isinstance(champion, Exception):
+                raise champion
+            return champion
+
+        return rs.SpindleRiskScorer(
+            _config(),
+            query_fn=FakeEndpoint(score=0.5),
+            served_model_fn=lambda name, timeout: ("cat.pharma_twin.spindle_thermal_risk", served),
+            champion_fn=champion_fn,
+            now_fn=Clock(),
+            limit_c=60.0,
+            last_maintenance_at=T0,
+        )
+
+    async def test_off_champion_thresholds_are_ignored_with_a_named_warning(self, caplog) -> None:
+        scorer = self._scorer("1", "4")
+        scorer.observe(_readings())
+        with caplog.at_level("WARNING"):
+            result = await scorer.score_once()
+        assert result is not None and scorer.off_champion
+        # The endpoint returned 0.22 / 0.17; they are dropped for the contract defaults.
+        assert result.decision_threshold is None and result.clear_threshold is None
+        assert result.thresholds(_config()) == (0.47, 0.05)
+        assert "ignoring its cut-off 0.22 / clear 0.17" in caplog.text
+        assert result.as_ingest(_config(threshold=0.3))["threshold"] == 0.3  # env still wins
+
+    async def test_champion_thresholds_are_used(self) -> None:
+        scorer = self._scorer("4", "4")
+        scorer.observe(_readings())
+        result = await scorer.score_once()
+        assert result is not None and not scorer.off_champion
+        assert (result.decision_threshold, result.clear_threshold) == (0.22, 0.17)
+
+    async def test_lookup_failure_warns_once(self, caplog) -> None:
+        scorer = self._scorer("4", PermissionError("no EXECUTE on the model"))
+        scorer.observe(_readings())
+        with caplog.at_level("WARNING"):
+            assert await scorer.score_once() is not None
+            scorer._model = None  # force the next round to look up again
+            assert await scorer.score_once() is not None
+        assert caplog.text.count("served-vs-champion check is off") == 1
+        assert "EXECUTE" in caplog.text
