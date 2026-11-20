@@ -70,6 +70,9 @@ def test_snapshot_is_valid_labelled_and_clean(path, checker):
     assert first.cell_type == "markdown"
     assert first.source == f"**LIVE RUN, redacted, {match['date']}**"
     code = [c for c in notebook.cells if c.cell_type == "code"]
+    guard = code[0]
+    assert guard.id == "snapshot-guard" and not guard.outputs, "first code cell must be the guard"
+    assert 'raise SystemExit("snapshot only' in guard.source, "snapshots must not be runnable"
     assert sum(1 for c in code if c.outputs) >= 8, "outputs must be kept"
     for cell in code:
         assert all(o.output_type != "error" for o in cell.outputs), cell.id
@@ -115,7 +118,10 @@ def test_export_keeps_outputs_and_adds_label(exporter, tmp_path):
     assert exporter.main([str(export), str(out), "--date", "2026-01-02"]) == 0
     notebook = nbformat.read(out, as_version=4)
     assert notebook.cells[0].source == "**LIVE RUN, redacted, 2026-01-02**"
-    code = [c for c in notebook.cells if c.cell_type == "code"]
+    assert notebook.cells[1].id == exporter.SNAPSHOT_GUARD_ID
+    code = [
+        c for c in notebook.cells if c.cell_type == "code" and c.id != exporter.SNAPSHOT_GUARD_ID
+    ]
     assert all(c.outputs for c in code)
     assert code[0].outputs[0]["data"]["text/html"].startswith("<b>out")
     assert code[0].outputs[0]["data"]["text/plain"].startswith("out")
