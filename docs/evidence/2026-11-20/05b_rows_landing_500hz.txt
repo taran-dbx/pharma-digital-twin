@@ -1,0 +1,24 @@
+# Producer -> MSK -> RTM consumer -> Lakebase: rows landing over time
+# Run B: producer rate_hz=500 (setup mode_configs.realtime.rate_hz=500; producer heartbeat ack_rps ~488, failed=0),
+# consumer job 2 workers, deployment pharma-twin-manufacturing-realtime. Sampled every ~60 s from the pipeline branch
+# (pg_stat_user_tables.n_tup_ins over the sensor_readings chunks; max(event_time); now()-max(event_time)).
+# 16:01-16:03: producer start-up delay (120 s, waits for the consumer cluster). 16:09-16:10: the dip is the CMM
+# inspection decision stopping the mill and pack line (production 'stopped' 16:09:08, 'running' 16:10:30, see 08).
+utc_time | total_inserted | inserted_since_prev | rows_per_s | newest_event_time | lag_s | rows_last_60s
+16:01:06 | 2098169 | None | None | 15:55:15.006230 | 351.2 | 0
+16:02:09 | 2098169 | 0 | 0 | 15:55:15.006230 | 414.1 | 0
+16:03:10 | 2098169 | 0 | 0 | 15:55:15.006230 | 476.0 | 0
+16:04:13 | 2126948 | 28779 | 462 | 16:04:13.263859 | -0.0 | 28994
+16:05:17 | 2158179 | 31231 | 489 | 16:05:17.193019 | -0.0 | 29187
+16:06:20 | 2188955 | 30776 | 488 | 16:06:20.221574 | 0.0 | 29194
+16:07:22 | 2219397 | 30442 | 489 | 16:07:22.535298 | 0.0 | 29260
+16:08:30 | 2252523 | 33528 | 488 | 16:08:31.044393 | -0.2 | 29354
+16:09:36 | 2278881 | 26358 | 397 | 16:09:36.931749 | -0.1 | 23165
+16:10:38 | 2296379 | 17498 | 283 | 16:10:38.771373 | 0.0 | 16951
+16:11:42 | 2327243 | 30864 | 487 | 16:11:42.407711 | -0.2 | 29290
+16:12:46 | 2358547 | 31304 | 485 | 16:12:46.732074 | -0.1 | 29294
+16:13:51 | 2390180 | 31633 | 491 | 16:13:51.105258 | 0.0 | 29271
+
+# Note: three raw sampler lines lost their newline in the background output; the rows_last_60s values of
+# 16:04:13, 16:05:17 and 16:06:20 were re-split by hand (28994, 29187, 29194). Other columns are verbatim.
+# Result: steady state ~488 rows/s ingested with ~0 s lag (newest event_time == now). Total inserted grew 2,098,169 -> 2,390,180.

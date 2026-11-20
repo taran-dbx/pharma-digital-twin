@@ -1,0 +1,205 @@
+# Genie conversation (per-pipeline space created by the deploy; asked through the app's /api/genie/pipelines/<setup-id>/realtime API, app SP auth)
+# captured 2026-11-20T16:12:51Z; one conversation, three messages; question, generated SQL, result rows (first 10) and Genie's answer text
+Q: Which part serials should be quarantined for the latest Spindle 3 excursion? | status: COMPLETED
+  SQL:
+WITH rule_threshold AS (
+  SELECT MAX(`intelligence_alert_rules`.`threshold`) AS `validated_limit_c`
+  FROM <catalog>.`pharma_twin`.`intelligence_alert_rules`
+  WHERE `intelligence_alert_rules`.`industry` = 'manufacturing'
+    AND `intelligence_alert_rules`.`rule_id` = 'mfg-alert-spindle-temp'
+), over_limit AS (
+  SELECT
+    `lb__shadow_manufacturing_sensor_readings_history`.`event_time`,
+    `lb__shadow_manufacturing_sensor_readings_history`.`value`,
+    `lb__shadow_manufacturing_sensor_readings_history`.`metadata`:lot_id::string AS `lot_id`,
+    `lb__shadow_manufacturing_sensor_readings_history`.`metadata`:work_order::string AS `work_order`,
+    `lb__shadow_manufacturing_sensor_readings_history`.`metadata`:dhr_ref::string AS `dhr_ref`,
+    `lb__shadow_manufacturing_sensor_readings_history`.`metadata`:part_serial::string AS `part_serial`,
+    `rule_threshold`.`validated_limit_c`,
+    CASE
+      WHEN LAG(`lb__shadow_manufacturing_sensor_readings_history`.`event_time`) OVER (ORDER BY `lb__shadow_manufacturing_sensor_readings_history`.`event_time`) IS NULL THEN 1
+      WHEN `lb__shadow_manufacturing_sensor_readings_history`.`event_time` > LAG(`lb__shadow_manufacturing_sensor_readings_history`.`event_time`) OVER (ORDER BY `lb__shadow_manufacturing_sensor_readings_history`.`event_time`) + INTERVAL 5 MINUTES THEN 1
+      ELSE 0
+    END AS `new_excursion_flag`
+  FROM <catalog>.`pharma_twin`.`lb__shadow_manufacturing_sensor_readings_history`
+  CROSS JOIN rule_threshold
+  WHERE `lb__shadow_manufacturing_sensor_readings_history`.`_pg_change_type` IN ('insert', 'update_postimage')
+    AND `lb__shadow_manufacturing_sensor_readings_history`.`industry` = 'manufacturing'
+    AND `lb__shadow_manufacturing_sensor_readings_history`.`sensor_name` = 'cnc_1_spindle_temp'
+    AND `lb__shadow_manufacturing_sensor_readings_history`.`event_time` IS NOT NULL
+    AND `lb__shadow_manufacturing_sensor_readings_history`.`metadata`:part_serial::string IS NOT NULL
+    AND `lb__shadow_manufacturing_sensor_readings_history`.`metadata`:lot_id::string IS NOT NULL
+    AND `lb__shadow_manufacturing_sensor_readings_history`.`value` > `rule_threshold`.`validated_limit_c`
+), excursions AS (
+  SELECT
+    `over_limit`.*,
+    SUM(`over_limit`.`new_excursion_flag`) OVER (ORDER BY `over_limit`.`event_time` ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS `excursion_id`
+  FROM over_limit
+), latest_excursion AS (
+  SELECT `excursions`.`excursion_id`
+  FROM excursions
+  GROUP BY `excursions`.`excursion_id`
+  ORDER BY MAX(`excursions`.`event_time`) DESC
+  LIMIT 1
+)
+SELECT
+  `excursions`.`lot_id`,
+  `excursions`.`work_order`,
+  `excursions`.`dhr_ref`,
+  `excursions`.`part_serial`,
+  MIN(`excursions`.`event_time`) AS `first_over_limit_at`,
+  MAX(`excursions`.`event_time`) AS `last_over_limit_at`,
+  MAX(`excursions`.`value`) AS `peak_temp_c`,
+  MAX(`excursions`.`validated_limit_c`) AS `validated_limit_c`
+FROM excursions
+INNER JOIN latest_excursion
+  ON `excursions`.`excursion_id` = `latest_excursion`.`excursion_id`
+WHERE `excursions`.`work_order` IS NOT NULL
+  AND `excursions`.`dhr_ref` IS NOT NULL
+GROUP BY
+  `excursions`.`lot_id`,
+  `excursions`.`work_order`,
+  `excursions`.`dhr_ref`,
+  `excursions`.`part_serial`
+ORDER BY `excursions`.`lot_id`, `excursions`.`part_serial`
+  text: The latest Spindle 3 excursion in the query affects **2 part serials** in lot **TM-HS12-261120-193** under work order **WO-TM-24817** and DHR **DHR-TM-HS12-261120-193**; these are the parts identified by the data as at risk for quarantine review.
+- **TM-HS12-261120-193-12** — first over limit at **2
+  result columns: ['lot_id', 'work_order', 'dhr_ref', 'part_serial', 'first_over_limit_at', 'last_over_limit_at', 'peak_temp_c', 'validated_limit_c']
+    ['TM-HS12-261120-192', 'WO-TM-24817', 'DHR-TM-HS12-261120-192', 'TM-HS12-261120-192-12', '2026-11-20T16:03:44.439Z', '2026-11-20T16:03:59.993Z', '74.61073251275552', '60.0']
+    ['TM-HS12-261120-192', 'WO-TM-24817', 'DHR-TM-HS12-261120-192', 'TM-HS12-261120-192-13', '2026-11-20T16:04:00.035Z', '2026-11-20T16:04:19.993Z', '74.97149621851375', '60.0']
+    ['TM-HS12-261120-192', 'WO-TM-24817', 'DHR-TM-HS12-261120-192', 'TM-HS12-261120-192-14', '2026-11-20T16:04:20.040Z', '2026-11-20T16:04:39.998Z', '75.0', '60.0']
+    ['TM-HS12-261120-192', 'WO-TM-24817', 'DHR-TM-HS12-261120-192', 'TM-HS12-261120-192-15', '2026-11-20T16:04:40.086Z', '2026-11-20T16:04:46.254Z', '65.8503056877008', '60.0']
+    ['TM-HS12-261120-193', 'WO-TM-24817', 'DHR-TM-HS12-261120-193', 'TM-HS12-261120-193-12', '2026-11-20T16:08:43.408Z', '2026-11-20T16:08:59.997Z', '73.16544721443374', '60.0']
+    ['TM-HS12-261120-193', 'WO-TM-24817', 'DHR-TM-HS12-261120-193', 'TM-HS12-261120-193-13', '2026-11-20T16:09:00.002Z', '2026-11-20T16:09:10.498Z', '74.46464321293945', '60.0']
+  rows returned: 6 truncated: False
+Q: Which Spindle 3 validated-limit excursions this shift need an NCR, and what is each alert's status? | status: COMPLETED
+  SQL:
+WITH rule_cte AS (
+  SELECT
+    MAX(`intelligence_alert_rules`.`threshold`) AS validated_limit_c,
+    MAX(`intelligence_alert_rules`.`fault_code`) AS fault_code,
+    MAX(`intelligence_alert_rules`.`severity`) AS rule_severity
+  FROM <catalog>.`pharma_twin`.`intelligence_alert_rules`
+  WHERE `intelligence_alert_rules`.`industry` = 'manufacturing'
+    AND `intelligence_alert_rules`.`rule_id` = 'mfg-alert-spindle-temp'
+), sensor_cte AS (
+  SELECT MAX(`intelligence_sensor_bindings`.`sensor_id`) AS sensor_id
+  FROM <catalog>.`pharma_twin`.`intelligence_sensor_bindings`
+  WHERE `intelligence_sensor_bindings`.`industry` = 'manufacturing'
+    AND `intelligence_sensor_bindings`.`sensor_name` = 'cnc_1_spindle_temp'
+), over_limit AS (
+  SELECT
+    `lb__shadow_manufacturing_sensor_readings_history`.`event_time`,
+    `lb__shadow_manufacturing_sensor_readings_history`.`metadata`:lot_id::string AS lot_id,
+    `lb__shadow_manufacturing_sensor_readings_history`.`metadata`:part_serial::string AS part_serial,
+    `lb__shadow_manufacturing_sensor_readings_history`.`value`,
+    rule_cte.validated_limit_c,
+    CASE
+      WHEN LAG(`lb__shadow_manufacturing_sensor_readings_history`.`event_time`) OVER (ORDER BY `lb__shadow_manufacturing_sensor_readings_history`.`event_time`) IS NULL THEN 1
+      WHEN `lb__shadow_manufacturing_sensor_readings_history`.`event_time` > LAG(`lb__shadow_manufacturing_sensor_readings_history`.`event_time`) OVER (ORDER BY `lb__shadow_manufacturing_sensor_readings_history`.`event_time`) + INTERVAL 5 MINUTES THEN 1
+      ELSE 0
+    END AS new_excursion_flag
+  FROM <catalog>.`pharma_twin`.`lb__shadow_manufacturing_sensor_readings_history`
+  CROSS JOIN rule_cte
+  WHERE `lb__shadow_manufacturing_sensor_readings_history`.`_pg_change_type` IN ('insert', 'update_postimage')
+    AND `lb__shadow_manufacturing_sensor_readings_history`.`industry` = 'manufacturing'
+    AND `lb__shadow_manufacturing_sensor_readings_history`.`sensor_name` = 'cnc_1_spindle_temp'
+    AND `lb__shadow_manufacturing_sensor_readings_history`.`event_time` IS NOT NULL
+    AND `lb__shadow_manufacturing_sensor_readings_history`.`event_time` >= current_timestamp() - INTERVAL 24 HOURS
+    AND `lb__shadow_manufacturing_sensor_readings_history`.`value` > rule_cte.validated_limit_c
+), excursion_rows AS (
+  SELECT
+    over_limit.event_time,
+    over_limit.lot_id,
+    over_limit.part_serial,
+    over_limit.value,
+    over_limit.validated_limit_c,
+    SUM(over_limit.new_excursion_flag) OVER (ORDER BY over_limit.event_time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS excursion_id
+  FROM over_limit
+), excursion_summary AS (
+  SELECT
+    excursion_rows.excursion_id,
+    MIN(excursion_rows.event_time) AS first_over_limit_at,
+    MAX(excursion_rows.event_time) AS last_over_limit_at,
+    MAX(excursion_rows.value) AS peak_temp_c,
+    MAX(excursion_rows.validated_limit_c) AS validated_limit_c,
+    COUNT(DISTINCT excursion_rows.part_serial) AS parts_at_risk,
+    CONCAT_WS(', ', SORT_ARRAY(COLLECT_SET(excursion_rows.lot_id))) AS lots_at_risk
+  FROM excursion_rows
+  WHERE excursion_rows.lot_id IS NOT NULL
+    AND excursion_rows.part_serial IS NOT NULL
+  GROUP BY excursion_rows.excursion_id
+), alert_candidates AS (
+  SELECT
+    excursion_summary.excursion_id,
+    `intelligence_alert_snapshot`.`alert_id`,
+    `intelligence_alert_snapshot`.`status`,
+    `intelligence_alert_snapshot`.`severity`,
+    `intelligence_alert_snapshot`.`fault_code`,
+    TO_TIMESTAMP(`intelligence_alert_snapshot`.`opened_at`) AS opened_at,
+    TO_TIMESTAMP(`intelligence_alert_snapshot`.`updated_at`) AS updated_at,
+    ROW_NUMBER() OVER (
+      PARTITION BY excursion_summary.excursion_id
+      ORDER BY ABS(UNIX_TIMESTAMP(TO_TIMESTAMP(`intelligence_alert_snapshot`.`opened_at`)) - UNIX_TIMESTAMP(excursion_summary.first_over_limit_at)) ASC,
+               TO_TIMESTAMP(`intelligence_alert_snapshot`.`opened_at`) DESC
+    ) AS rn
+  FROM excursion_summary
+  CROSS JOIN sensor_cte
+  CROSS JOIN rule_cte
+  LEFT JOIN <catalog>.`pharma_twin`.`intelligence_alert_snapshot`
+    ON `intelligence_alert_snapshot`.`industry` = 'manufacturing'
+   AND `intelligence_alert_snapshot`.`sensor_id` = sensor_cte.sensor_id
+   AND `intelligence_alert_snapshot`.`rule_id` = 'mfg-alert-spindle-temp'
+   AND `intelligence_alert_snapshot`.`fault_code` = rule_cte.fault_code
+   AND TO_TIMESTAMP(`intelligence_alert_snapshot`.`opened_at`) >= excursion_summary.first_over_limit_at - INTERVAL 30 MINUTES
+   AND TO_TIMESTAMP(`intelligence_alert_snapshot`.`opened_at`) <= excursion_summary.last_over_limit_at + INTERVAL 30 MINUTES
+)
+SELECT
+  excursion_summary.excursion_id,
+  excursion_summary.first_over_limit_at,
+  excursion_summary.last_over_limit_at,
+  excursion_summary.lots_at_risk,
+  excursion_summary.parts_at_risk,
+  excursion_summary.peak_temp_c,
+  excursion_summary.validated_limit_c,
+  alert_candidates.alert_id,
+  COALESCE(alert_candidates.status, 'no_snapshot_match') AS alert_status,
+  COALESCE(alert_candidates.severity, rule_cte.rule_severity) AS alert_severity,
+  alert_candidates.fault_code,
+  alert_candidates.opened_at AS alert_opened_at,
+  alert_candidates.updated_at AS alert_updated_at,
+  CASE
+    WHEN excursion_summary.parts_at_risk > 0 THEN 'recommend_ncr_review'
+    ELSE 'review_no_parts_identified'
+  END AS ncr_recommendation
+FROM excursion_summary
+CROSS JOIN rule_cte
+LEFT JOIN alert_candidates
+  ON excursion_summary.excursion_id = alert_candidates.excursion_id
+ AND alert_candidates.rn = 1
+ORDER BY excursion_summary.first_over_limit_at DESC
+  text: All **3 Spindle 3 validated-limit excursions this shift** are flagged as **recommend_ncr_review**. The latest two excursions are tied to alert **9c7b00f1-<uuid>** with status **acknowledged**, while the earliest excursion has **no matching alert snapshot**.
+
+- **Excursion 3** — 
+  result columns: ['excursion_id', 'first_over_limit_at', 'last_over_limit_at', 'lots_at_risk', 'parts_at_risk', 'peak_temp_c', 'validated_limit_c', 'alert_id', 'alert_status', 'alert_severity', 'fault_code', 'alert_opened_at', 'alert_updated_at', 'ncr_recommendation']
+    ['3', '2026-11-20T16:03:44.439Z', '2026-11-20T16:14:00.686Z', 'TM-HS12-261120-192, TM-HS12-261120-193, TM-HS12-261120-194', '8', '75.0', '60.0', '9c7b00f1-<uuid>', 'acknowledged', 'crit', 'VPP-SPINDLE3-TEMP', '2026-11-20T16:08:52.695Z', '2026-11-20T16:09:10.728Z', 'recommend_ncr_review']
+    ['2', '2026-11-20T15:53:43.574Z', '2026-11-20T15:53:56.689Z', 'TM-HS12-261120-190', '1', '71.49050894215671', '60.0', '9c7b00f1-<uuid>', 'acknowledged', 'crit', 'VPP-SPINDLE3-TEMP', '2026-11-20T16:08:52.695Z', '2026-11-20T16:09:10.728Z', 'recommend_ncr_review']
+    ['1', '2026-11-20T15:08:40.281Z', '2026-11-20T15:24:46.670Z', 'TM-HS12-3957, TM-HS12-3958, TM-HS12-3959, TM-HS12-3960', '16', '75.0', '60.0', None, 'no_snapshot_match', 'crit', None, None, None, 'recommend_ncr_review']
+  rows returned: 3 truncated: False
+Q: What is the end-to-end p99 latency of the real-time stream over the last hour? | status: COMPLETED
+  SQL:
+SELECT MAX(`manufacturing_metrics`.`e2e_p99`) AS `e2e_p99_ms`
+FROM <catalog>.`pharma_twin`.`manufacturing_metrics`
+WHERE `manufacturing_metrics`.`mode` = 'realtime'
+  AND `manufacturing_metrics`.`timestamp` IS NOT NULL
+  AND `manufacturing_metrics`.`e2e_p99` IS NOT NULL
+  AND `manufacturing_metrics`.`timestamp` >= current_timestamp() - INTERVAL 1 HOUR
+  text: The end-to-end p99 latency of the **realtime** stream over the last hour was **317,150.0 ms**. Because the query returns the maximum `e2e_p99` value in that one-hour window, **317,150.0 ms** is the highest p99 latency observed during the last hour.
+  result columns: ['e2e_p99_ms']
+    ['317150.0']
+  rows returned: 1 truncated: False
+
+# Reviewer note: Q1's generated SQL splits excursions on a >5-minute gap between over-limit readings. The Spindle 3 heat
+# cycle is exactly 300 s, so it merged the 16:03 (lot -192) and 16:08 (lot -193) excursions into one and returned 6 rows.
+# Genie's answer text names the correct 2 serials of lot -193; the app's signed quarantine scope (08/09) is the
+# authoritative record. Q3 reflects the 2000 Hz backlog batch still inside the last hour (see 05a / 11).

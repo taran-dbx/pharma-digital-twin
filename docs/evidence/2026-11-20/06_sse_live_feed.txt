@@ -1,0 +1,12 @@
+# captured 2026-11-20T15:52:53Z — GET /api/events?industry=manufacturing for 35 s (curl -N), live app pharma-twin-dev
+# response headers (subset)
+HTTP/2 200 
+content-type: text/event-stream; charset=utf-8
+x-accel-buffering: no
+# data events received in 35 s: 325
+# event types: {'sensor_update': 325}
+# sensor readings carried: 32500 | distinct sensors: 19
+# per-sensor counts: {'assy_line_1_motor_current': 2700, 'assy_line_1_position': 1211, 'assy_line_1_speed': 1800, 'cnc_1_coolant_flow': 2700, 'cnc_1_coolant_temp': 1211, 'cnc_1_spindle_power': 1211, 'cnc_1_spindle_speed': 1211, 'cnc_1_spindle_temp': 1800, 'cnc_1_vibration': 1800, 'compressor_1_flow': 2700, 'compressor_1_motor_temp': 1211, 'compressor_1_pressure': 1800, 'hvac_ahu_1_return_temp': 2700, 'hvac_ahu_1_supply_temp': 1800, 'hvac_zone_1_humidity': 1211, 'hvac_zone_1_temp': 1800, 'press_1_cycle_count': 1211, 'press_1_hydraulic_oil_temp': 1211, 'press_1_pressure': 1212}
+# first 2 events (verbatim, truncated):
+data: {"type": "sensor_update", "source": "sss", "sensors": [{"sensor_name": "assy_line_1_motor_current", "industry": "manufacturing", "value": 12.763716358046413, "unit": "A", "sensor_type": "current", "timestamp": "2026-11-20T15:52:22.185281", "fault_active": false}, {"sensor_name": "compressor_1_flow", "industry": "manufacturing", "value": 310.7067515220372, "unit": "CFM", "sensor_type": "flow", "timestamp": "2026-11-20T15:52:22.185763", "fault_active": false}, {"sensor_name": "hvac_ahu_1_return_temp", "industry": "manufacturing", "value": 22.173038697694185, "unit": "\u00b0C", "sensor_type": "temperature", "timestamp": "2026-11-20T15:52:22.186020", "fault_active": false}, {"sensor_name":
+data: {"type": "sensor_update", "source": "sss", "sensors": [{"sensor_name": "press_1_pressure", "industry": "manufacturing", "value": 198.61354108555815, "unit": "bar", "sensor_type": "pressure", "timestamp": "2026-11-20T15:51:45.840850", "fault_active": false}, {"sensor_name": "press_1_hydraulic_oil_temp", "industry": "manufacturing", "value": 46.85524151127194, "unit": "\u00b0C", "sensor_type": "temperature", "timestamp": "2026-11-20T15:51:45.840936", "fault_active": false}, {"sensor_name": "press_1_cycle_count", "industry": "manufacturing", "value": 123477.98206702423, "unit": "count", "sensor_type": "position", "timestamp": "2026-11-20T15:51:45.841016", "fault_active": false}, {"sensor_

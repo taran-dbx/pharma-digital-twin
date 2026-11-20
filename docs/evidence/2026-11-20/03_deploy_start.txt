@@ -1,0 +1,47 @@
+# captured 2026-11-20T14:55:57Z
+$ POST /api/admin/pipelines/<setup-id>/deploy/realtime (gate_override=false)
+{
+    "mode": "realtime",
+    "job_id": <id>,
+    "job_name": "pharma-twin-manufacturing-realtime",
+    "action": "created",
+    "num_workers": 1,
+    "spark_version": "18.2.x-scala2.13",
+    "tasks": [
+        "rtm_consumer",
+        "data_producer"
+    ],
+    "notebook_path": "/Workspace/Users/02ab07ab-<sp-client-id>/.pharma-twin/manufacturing_realtime_consumer_1795186543",
+    "producer_notebook_path": "/Workspace/Users/02ab07ab-<sp-client-id>/.pharma-twin/manufacturing_realtime_producer_1795186544",
+    "url": "https://<workspace-host>/jobs/<id>",
+    "genie_space": {
+        "space_id": "<genie-id>",
+        "action": "created",
+        "tables": [
+            "<catalog>.pharma_twin.intelligence_alert_rules",
+            "<catalog>.pharma_twin.intelligence_alert_snapshot",
+            "<catalog>.pharma_twin.intelligence_assets",
+            "<catalog>.pharma_twin.intelligence_maintenance_records",
+            "<catalog>.pharma_twin.intelligence_sensor_bindings",
+            "<catalog>.pharma_twin.lb__shadow_manufacturing_sensor_readings_history",
+            "<catalog>.pharma_twin.manufacturing_metrics"
+        ]
+    }
+}
+$ POST /api/admin/pipelines/<setup-id>/realtime/start
+{
+    "job_id": "<id>",
+    "run_id": null,
+    "state": "STARTING",
+    "cdf": {
+        "setup_id": "b545783e-<uuid>",
+        "deployment_id": "f9c44d56-<uuid>",
+        "industry": "manufacturing",
+        "branch": "manufacturing",
+        "shadow_table": "lakets_cdf._shadow_manufacturing_sensor_readings",
+        "delta_table": "<catalog>.pharma_twin.lb__shadow_manufacturing_sensor_readings_history",
+        "cdf_config": "projects/pharma-twin-pipelines/branches/manufacturing/databases/databricks-postgres/cdf-configs/lakets_cdf",
+        "status": "streaming",
+        "migration": "already_exists"
+    }
+}

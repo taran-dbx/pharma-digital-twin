@@ -1,0 +1,28 @@
+# Reopened-episode quarantine scope check (after feat/medtech-domain @0cabab1: per-episode metadata reset on reopen)
+# One alert row is reused for every episode of rule mfg-alert-spindle-temp. Earlier episodes of the SAME row, seen by
+# polling /api/alerts every 15 s after the redeploy: opened 15:56:08 (lot TM-HS12-261120-191); opened 16:03:50,
+# excursion_started_at 16:03:48 (lot TM-HS12-261120-192), cleared ~16:04:47. Decisions were recorded on the episode
+# that reopened at 16:08:52.
+episode opened_at              : 2026-11-20T16:08:52.695972+00:00
+metadata.excursion_started_at  : 2026-11-20T16:08:50.405501+00:00
+metadata.lot_id / part_serial  : TM-HS12-261120-193 / TM-HS12-261120-193-12
+quarantine reference.excursion : {'end': '2026-11-20T16:09:05.076080+00:00', 'open': True, 'start': '2026-11-20T16:08:50.405501+00:00'}
+quarantine reference.lot_ids   : ['TM-HS12-261120-193']
+quarantine reference.parts     : ['TM-HS12-261120-193-12', 'TM-HS12-261120-193-13']
+parts_released (same lots)     : 13 of 15 per lot
+projected_rft                  : {'pct': 84.62, 'good': 11, 'parts_at_risk': 2, 'parts_started': 13}
+CHECK PASS: scope starts at THIS episode's excursion_started_at
+CHECK PASS: scope starts at most 5 s before this episode's opened_at
+CHECK PASS: scope is shorter than one 300 s heat cycle
+CHECK PASS: only this episode's lot (not -191 / -192)
+CHECK PASS: every part serial belongs to that lot
+RESULT: PASS
+
+## raw alert-row transitions (poll every 15 s of GET /api/alerts?industry=manufacturing; empty line = no open alert)
+## utc  status  opened  cleared  metadata.excursion_started_at  metadata.lot_id
+16:02:38 open opened 15:56:08 cleared  exc_start 15:56:06 lot TM-HS12-261120-191
+16:03:26 
+16:03:59 open opened 16:03:50 cleared  exc_start 16:03:48 lot TM-HS12-261120-192
+16:04:47 
+16:09:06 acknowledged opened 16:08:52 cleared  exc_start 16:08:50 lot TM-HS12-261120-193
+16:10:42 

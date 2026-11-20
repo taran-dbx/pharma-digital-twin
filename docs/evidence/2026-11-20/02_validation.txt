@@ -1,0 +1,30 @@
+# captured 2026-11-20T14:46:28Z — industry=manufacturing mode=realtime
+$ GET /api/admin/industries/manufacturing/validate/state (step statuses)
+  done                             passed   2026-11-20T14:45:50.907596+00:00
+  topics_created                   passed   2026-11-20T14:42:59.078238+00:00
+  realtime:cleanup                 passed   2026-11-20T14:45:49.988583+00:00
+  provision_cluster                passed   2026-11-20T14:41:20.799634+00:00
+  realtime:read_back               passed   2026-11-20T14:45:41.306815+00:00
+  schema_conformance               passed   2026-11-20T14:42:59.591372+00:00
+  realtime:cdf_manual              passed   2026-11-20T14:45:34.657241+00:00
+  realtime:cdf_verify              passed   2026-11-20T14:45:39.070883+00:00
+  realtime:dbsql_read              passed   2026-11-20T14:45:44.547330+00:00
+  realtime:write_test              passed   2026-11-20T14:45:32.626447+00:00
+  show_final_notebook              passed   2026-11-20T14:45:50.448879+00:00
+  source_connectivity              passed   2026-11-20T14:41:36.127729+00:00
+  realtime:metrics_check           passed   2026-11-20T14:45:46.126233+00:00
+  realtime:partitions_precreate    passed   2026-11-20T14:43:00.000360+00:00
+$ GET /api/admin/industries/manufacturing/validate/can-deploy
+{
+    "industry": "manufacturing",
+    "can_deploy": true,
+    "data_purged": true,
+    "outstanding": [],
+    "modes": {
+        "realtime": {
+            "can_deploy": true,
+            "data_purged": true,
+            "outstanding": []
+        }
+    }
+}

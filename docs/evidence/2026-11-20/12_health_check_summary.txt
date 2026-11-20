@@ -1,0 +1,59 @@
+# ops/notebooks/pipeline_health_check.ipynb run against the NEW deployment (serverless, sample=false, redact=true,
+# industry=manufacturing, mode=realtime, lookback_hours=2, app_backend_project=pharma-twin-backend,
+# pipelines_project=pharma-twin-pipelines, uc_schema=pharma_twin). Full snapshot: ops/notebooks/runs/manufacturing_realtime_2026-11-20.ipynb
+# First attempt aborted (Python kernel SIGABRT in cell 13, the known psycopg2-on-serverless crash); re-run succeeded.
+Overall: FAIL  40 PASS | 5 WARN | 2 FAIL | 1 SKIPPED (1 not applicable to this mode)
+
+## every check (section | check | status | value)
+6. Streaming metrics | metrics_batch_duration | FAIL | p95 = 1,404.2 s
+6. Streaming metrics | metrics_e2e_latency | FAIL | p95 of batch p99 = 317.1 s
+3. Lakebase hot tier | lb_out_of_order | WARN | 1,214 of 50,000 (2.43%)
+4. LakeTS outcomes | lakets_gap_fill | WARN | 133 of 570 (23.3%)
+4. LakeTS outcomes | lakets_rollups | WARN | refresh age 39.7m, 24 pending
+4. LakeTS outcomes | lakets_tiering | WARN | no policy
+7. Cross-checks & data quality | xc_schema_cold | WARN | 0 missing, 7 extra, 1 drifted
+6. Streaming metrics | zerobus_ingest | SKIPPED | -
+1. Header & resolved pipeline | control_plane_record | PASS | deployed
+2. Pipeline & job health | cdf_enabled | PASS | True
+2. Pipeline & job health | deployment_status | PASS | deployed
+2. Pipeline & job health | job_compute | PASS | RTM on
+2. Pipeline & job health | job_last_run | PASS | RUNNING/-
+2. Pipeline & job health | job_recent_failures | PASS | 0 of last 5
+2. Pipeline & job health | job_task_health | PASS | 0 broken of 2
+3. Lakebase hot tier | lb_chronotable | PASS | 90 forward partitions
+3. Lakebase hot tier | lb_connect | PASS | 13 columns
+3. Lakebase hot tier | lb_duplicates | PASS | 0 rows (0.0000%)
+3. Lakebase hot tier | lb_freshness | PASS | 2s
+3. Lakebase hot tier | lb_ingest_rate | PASS | 29,278/min vs 22,689/min
+3. Lakebase hot tier | lb_nulls | PASS | required 0.000%, optional max 0.000%
+3. Lakebase hot tier | lb_rows_window | PASS | 2,722,724
+3. Lakebase hot tier | lb_silent_sensors | PASS | 0 of 19 (0.0%)
+3. Lakebase hot tier | lb_size | PASS | 0.5 GB
+4. LakeTS outcomes | lakets_cdf_state | PASS | sync=True, wal2delta=STREAMING, lag 5.8 MB
+4. LakeTS outcomes | lakets_installed | PASS | 0.1.0
+4. LakeTS outcomes | lakets_lvc | PASS | lag 0s, 23 series
+4. LakeTS outcomes | lakets_ops_jobs | PASS | 4/4 deployed, 0 failing
+4. LakeTS outcomes | lakets_partitions | PASS | 90 forward, 98 created in 2h
+4. LakeTS outcomes | lakets_rate_of_change | PASS | 6,166 outliers (0.23%)
+4. LakeTS outcomes | lakets_value_range | PASS | 0 of 2,726,479 (0.00%)
+5. CDF / Unity Catalog cold tier | uc_cdf_lag | PASS | -3s
+5. CDF / Unity Catalog cold tier | uc_cdf_state | PASS | enabled=True, ledger=True, wal2delta=STREAMING
+5. CDF / Unity Catalog cold tier | uc_connect | PASS | 5 tables listed
+5. CDF / Unity Catalog cold tier | uc_freshness | PASS | 15s
+5. CDF / Unity Catalog cold tier | uc_last_commit | PASS | 2s ago (wal2delta.append)
+5. CDF / Unity Catalog cold tier | uc_rows_window | PASS | 2,724,336
+5. CDF / Unity Catalog cold tier | uc_small_files | PASS | 34 files, avg 2.6 MB
+5. CDF / Unity Catalog cold tier | uc_tables | PASS | 2/2 present
+6. Streaming metrics | metrics_freshness | PASS | 4.0m
+6. Streaming metrics | metrics_table | PASS | 14 batches
+6. Streaming metrics | metrics_throughput | PASS | processed/input = 1.04 (235.2 vs 225.3 rows/s)
+7. Cross-checks & data quality | xc_duplicates_cold | PASS | 100 rows (0.0037%)
+7. Cross-checks & data quality | xc_e2e_latency | PASS | 2s to Lakebase
+7. Cross-checks & data quality | xc_nulls_cold | PASS | required 0.000%, optional max 0.000%
+7. Cross-checks & data quality | xc_reconciliation | PASS | Lakebase 2,288,178 vs Delta 2,288,378 (0.01%)
+7. Cross-checks & data quality | xc_schema_hot | PASS | 0 missing, 0 extra, 0 drifted
+7. Cross-checks & data quality | xc_sse_evidence | PASS | LVC lag 0s, 2138 alert events
+
+# Reading: both FAILs come from the 2000 Hz backlog batch (completed 15:38, p99 317 s, 1,404 s execution) that is
+# still inside the 2 h lookback; the 500 Hz batches after 16:01 measure p50 7 ms / p99 15-29 ms (see 11).
+# metrics_batch_duration's FAIL threshold (60 s) also flags Real-Time Mode's normal 300 s trigger.

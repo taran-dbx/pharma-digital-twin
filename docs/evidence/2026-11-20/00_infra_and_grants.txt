@@ -1,0 +1,40 @@
+# captured 2026-11-20T16:29:10Z — infrastructure created for the isolated deployment and the grants given to the new app SP
+## Created (all names checked for the pharma-twin / pharma_twin prefix before the call)
+  Lakebase projects: pharma-twin-backend (app control plane), pharma-twin-pipelines (per-pipeline sinks); database databricks_postgres
+  UC schema: <catalog>.pharma_twin (+ managed volume stream_checkpoints, intelligence_* tables)
+  Secret scope: pharma-twin-secrets   Group: pharma-twin-admins   Genie spaces: 'pharma-twin copilot' (shared) + per-pipeline
+  App: pharma-twin-dev (bundle pharma-digital-twin, target dev), own SP 02ab07ab-<sp-client-id>
+## Lakebase project zombie check (list endpoints / databases succeed)
+   projects/pharma-twin-backend/branches/production/endpoints/primary ACTIVE
+   projects/pharma-twin-pipelines/branches/production/endpoints/primary ACTIVE
+## UC grants held by the app SP
+   READ SECRET | SCHEMA | <catalog>.pharma_twin
+   MODIFY | SCHEMA | <catalog>.pharma_twin
+   SELECT | SCHEMA | <catalog>.pharma_twin
+   CREATE SECRET | SCHEMA | <catalog>.pharma_twin
+   USE SCHEMA | SCHEMA | <catalog>.pharma_twin
+   EXTERNAL USE SCHEMA | SCHEMA | <catalog>.pharma_twin
+   CREATE TABLE | SCHEMA | <catalog>.pharma_twin
+   READ METADATA | METASTORE | metastore_aws_us_east_1
+   USE CATALOG | CATALOG | <catalog>
+   BROWSE | CATALOG | <catalog>
+   READ METADATA | METASTORE | metastore_aws_us_east_1
+   READ VOLUME | VOLUME | <catalog>.pharma_twin.stream_checkpoints
+   WRITE VOLUME | VOLUME | <catalog>.pharma_twin.stream_checkpoints
+   READ METADATA | METASTORE | metastore_aws_us_east_1
+   WRITE FILES | EXTERNAL LOCATION | <external-location>
+   CREATE MANAGED STORAGE | EXTERNAL LOCATION | <external-location>
+   BROWSE | EXTERNAL LOCATION | <external-location>
+   READ FILES | EXTERNAL LOCATION | <external-location>
+   CREATE EXTERNAL TABLE | EXTERNAL LOCATION | <external-location>
+   READ METADATA | METASTORE | metastore_aws_us_east_1
+   ACCESS | CREDENTIAL | iot-rtm-sc
+   READ METADATA | METASTORE | metastore_aws_us_east_1
+## Workspace object permissions for the SP
+  Lakebase project pharma-twin-pipelines -> ['CAN_MANAGE'] (required to create the per-industry branch)
+  app pharma-twin-dev -> ['CAN_USE']
+  warehouse <warehouse-id> -> CAN_USE (bundle app resource sql-warehouse)
+  Lakebase pharma-twin-backend public schema -> GRANT USAGE, CREATE (run as project owner)
+## SP entitlements
+   ['workspace-access', 'databricks-sql-access', 'allow-cluster-create']
+## Not granted (deliberately): MANAGE on the shared catalog, ALL PRIVILEGES, allow-instance-pool-create
