@@ -167,11 +167,13 @@ databricks jobs submit --no-wait -p <profile> --json '{
     "dependencies": ["databricks-sdk>=0.133.0", "psycopg2-binary"]}}]}'
 ```
 
-That run reports **Overall FAIL (40 PASS, 5 WARN, 2 FAIL, 1 SKIPPED)**. Both FAILs
-(`metrics_e2e_latency`, `metrics_batch_duration`) come from one batch recorded while the
-producer ran at its default 2000 Hz, faster than the consumer could write to Lakebase (about
-950 rows/s); after the producer was set to 500 Hz every batch measured e2e p50 7 ms and p99
-15-29 ms. The `metrics_batch_duration` FAIL threshold (60 s) also flags Real-Time Mode's normal
-300 s trigger. The measurements behind this are in
-[`docs/evidence/2026-11-20/`](../docs/evidence/README.md). The first attempt of this run aborted
-with the known psycopg2 SIGABRT on serverless and was re-run, as described above.
+The committed run (~21:00 UTC) reports **Overall FAIL (28 PASS, 10 WARN, 9 FAIL, 1 SKIPPED)**.
+The FAILs trace to one event: Lakehouse Sync stopped at Delta version 1000 at 19:29 UTC, so the
+cold-tier and CDF checks fail and Lakebase no longer reconciles with Delta, and from 19:32 the
+consumer wrote fewer rows than the producer sent, so the freshness, silent-sensor and latency checks
+fail. An earlier run the same day at 16:25, before the stall, scored 40 PASS, 5 WARN, 2 FAIL,
+1 SKIPPED; its two FAILs came from one batch recorded while the producer ran at 2000 Hz. At 500 Hz
+the stream held e2e p50 7 ms and p99 median 13 ms (worst 29 ms) over 41 batches from 16:01 to
+19:27. The `metrics_batch_duration` FAIL threshold (60 s) also flags Real-Time Mode's normal 300 s
+trigger. The measurements are in [`docs/evidence/2026-11-20/`](../docs/evidence/README.md). The
+first attempt of a run on serverless can abort with the known psycopg2 SIGABRT; re-run it.
