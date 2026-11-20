@@ -351,18 +351,29 @@ class SpindleRiskScorer:
 
     # -- endpoint calls -----------------------------------------------------
     async def _call(self, fn: Callable[..., Any], *args: Any) -> Any:
-        """Run ``fn`` on the scorer's executor; busy until the thread returns."""
+        """Run ``fn`` on the scorer's executor; busy until the thread returns.
+
+        ``inflight`` is cleared by the worker thread itself, in a ``finally``
+        that runs before the thread hands its result back. So on the normal path
+        it is already False when this coroutine resumes, on every Python version
+        (no reliance on when an asyncio done-callback runs). After a timeout the
+        abandoned thread keeps it True until the call really ends.
+        """
         loop = asyncio.get_running_loop()
         self.inflight = True
-        call = functools.partial(fn, *args, self.config.timeout_s)
+        call = functools.partial(self._run_worker, fn, *args, self.config.timeout_s)
         future = loop.run_in_executor(self._executor, call)
-        future.add_done_callback(self._finished)
         return await asyncio.wait_for(asyncio.shield(future), timeout=self.config.timeout_s)
 
-    def _finished(self, future: asyncio.Future) -> None:
-        self.inflight = False
-        if not future.cancelled() and future.exception() is not None:
-            logger.debug("risk endpoint call finished with %r", future.exception())
+    def _run_worker(self, fn: Callable[..., Any], *args: Any) -> Any:
+        """Worker-thread body: the call, then release the busy flag."""
+        try:
+            return fn(*args)
+        except Exception as exc:
+            logger.debug("risk endpoint call finished with %r", exc)
+            raise
+        finally:
+            self.inflight = False
 
     async def _model_identity(self) -> tuple[str, str]:
         cached = self._model

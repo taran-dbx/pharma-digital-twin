@@ -279,6 +279,20 @@ class TestScorer:
         assert not scorer.inflight
         scorer.close()
 
+    async def test_busy_flag_is_clear_when_a_call_returns(self) -> None:
+        """Deterministic on every Python: no awaiting task sees a stale busy flag."""
+        endpoint = FakeEndpoint(fail=RuntimeError("503"))
+        scorer = _scorer(endpoint, breaker_failures=10)  # keep the breaker closed
+        scorer.observe(_readings())
+        for _ in range(3):
+            assert await scorer.score_once() is None
+            assert not scorer.inflight  # cleared before score_once resumed
+        assert len(endpoint.records) == 3
+        assert "skipped_busy" not in scorer.stats
+        endpoint.fail = None
+        assert await scorer.score_once() is not None
+        assert not scorer.inflight
+
     async def test_calls_run_on_the_dedicated_executor_with_the_timeout(self) -> None:
         endpoint = FakeEndpoint()
         scorer = _scorer(endpoint, timeout_s=2.5)
