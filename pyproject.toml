@@ -93,7 +93,7 @@ known-first-party = ["iot_twin"]
 "tests/**" = ["E402", "B017", "SIM117"]
 # Operator scripts adjust sys.path before importing app modules.
 "scripts/**" = ["E402"]
-# Stored run snapshots start with a `raise SystemExit` guard cell (they must never be
+# Stored run snapshots start with a `raise RuntimeError` guard cell (they must never be
 # re-run), so the notebook's `from __future__` cell is no longer the first statement.
 "ops/notebooks/runs/*.ipynb" = ["F404"]
 
@@ -115,6 +115,7 @@ asyncio_default_fixture_loop_scope = "function"
 addopts = "--strict-markers"
 markers = [
     "integration: talks to a live Databricks workspace; skipped unless configured",
+    "non_admin: run route tests as a non-admin caller (the default is admin)",
 ]
 
 # ── Mypy ───────────────────────────────────────────────────────────────────

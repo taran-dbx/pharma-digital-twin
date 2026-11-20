@@ -60,7 +60,7 @@ def _make_ws(existing_keys: list[str], sp_app_id: str | None = None) -> MagicMoc
     return w
 
 
-async def _post_provision_secrets(w: MagicMock, scope: str = "iot_scope") -> dict[str, Any]:
+async def _post_provision_secrets(w: MagicMock, scope: str = "pharma-twin-scope") -> dict[str, Any]:
     app = _build_app()
     transport = ASGITransport(app=app)
     body = {"secrets": {"scope": scope}}
@@ -111,7 +111,7 @@ class TestProvisionSecretsAppGrant:
             existing_keys=["zerobus-client-id", "zerobus-client-secret"],
             sp_app_id="existing-app-id",
         )
-        out = await _post_provision_secrets(w, scope="iot_scope")
+        out = await _post_provision_secrets(w, scope="pharma-twin-scope")
 
         assert out["resp"].status_code == 200
         # SP must NOT be created on the already-exists path
@@ -120,7 +120,7 @@ class TestProvisionSecretsAppGrant:
         w.service_principals.list.assert_called_once()
         _, kwargs = w.service_principals.list.call_args
         filt = kwargs.get("filter", "")
-        assert "pharma-twin-sss-iot_scope" in filt
+        assert "pharma-twin-sss-pharma-twin-scope" in filt
 
         out["grant"].assert_called_once()
         args = out["grant"].call_args.args

@@ -17,6 +17,7 @@ from httpx import ASGITransport, AsyncClient
 from iot_twin.core import config
 from iot_twin.core.auth import get_current_user
 from iot_twin.core.config import NotOwnedError
+from tests._fakes import fake_credential
 
 ROOT = Path(__file__).resolve().parents[1]
 FOREIGN = (
@@ -319,3 +320,344 @@ def test_e2e_setup_guard_uses_the_ledger_check() -> None:
     guard = source[source.index("async def _assert_owned_setup") :]
     guard = guard[: guard.index("\ndef ")]
     assert "assert_owned_ledger(" in guard and "shared_catalog=get_uc_catalog()" in guard
+
+
+# =====================================================================================
+# Round 3: secret scopes, UC targets, direct-mode Lakebase, admin gate, teardown
+# =====================================================================================
+UPSTREAM_SCOPE = "iot-secrets"
+FOREIGN_SCOPES = (UPSTREAM_SCOPE, "other-scope", "pharma-twin/../iot-secrets")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", FOREIGN_SCOPES)
+async def test_provision_secrets_scope_rejects_foreign_scope(scope, no_client) -> None:
+    from iot_twin.services import provisioning_service as ps
+
+    with pytest.raises(NotOwnedError):
+        await ps.provision_secrets_scope(scope)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", FOREIGN_SCOPES)
+async def test_ensure_streaming_sp_rejects_before_any_workspace_call(scope) -> None:
+    from iot_twin.services import provisioning_service as ps
+
+    w = MagicMock()
+    provision_scope = AsyncMock()
+    with pytest.raises(NotOwnedError):
+        await ps.ensure_streaming_sp(w, scope, provision_scope=provision_scope)
+    assert w.mock_calls == []
+    provision_scope.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_setup_rejects_foreign_scope_before_client() -> None:
+    from iot_twin.core.state import AppState
+    from iot_twin.services.pipelines import pipeline_setup_service as pss
+
+    with patch.object(pss, "_new_ws") as new_ws, pytest.raises(NotOwnedError):
+        await pss.setup_pipeline_lakebase(
+            AppState(), {"pipeline_id": "p", "secret_scope": UPSTREAM_SCOPE}
+        )
+    new_ws.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("module", "path", "body"),
+    [
+        ("settings", "/api/settings/provision", {"secrets": {"scope": "iot-secrets"}}),
+        ("settings", "/api/settings/provision/secrets", {"secrets": {"scope": "iot-secrets"}}),
+        (
+            "settings",
+            "/api/settings/provision/lakebase",
+            {"lakebase": {"project_id": "pharma-twin-p"}, "secrets": {"scope": "iot-secrets"}},
+        ),
+        (
+            "setup",
+            "/api/setup/pipeline-lakebase",
+            {
+                "pipeline_id": "p-1",
+                "lb_project_id": "pharma-twin-p",
+                "secret_scope": UPSTREAM_SCOPE,
+            },
+        ),
+    ],
+)
+async def test_routes_return_403_for_foreign_scope(module, path, body, no_client) -> None:
+    import importlib
+
+    router = importlib.import_module(f"iot_twin.routes.{module}").router
+    with (
+        patch("iot_twin.services.provisioning_service.ensure_streaming_sp") as sp,
+        patch("iot_twin.routes.settings.ensure_streaming_sp") as sp_route,
+    ):
+        resp = await _post(_app(router), path, body)
+    assert resp.status_code == 403, resp.text
+    assert "secret scope" in resp.json()["error"]
+    sp.assert_not_called()
+    sp_route.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_secrets_route_rechecks_stored_scope(no_client) -> None:
+    import json
+
+    from iot_twin.routes import provisioning
+
+    app = _app(provisioning.router)
+    state = app.state.app_state
+    state.db_available = True
+    state.db = MagicMock()
+    state.db.fetchrow = AsyncMock(
+        return_value={"resources": json.dumps({"secret_scope": UPSTREAM_SCOPE})}
+    )
+    resp = await _post(app, "/api/pipelines/p-1/secrets", {"secrets": {"k": "v"}})
+    assert resp.status_code == 403, resp.text
+
+
+# --- UC targets -------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("catalog", "schema"),
+    [
+        ("iot_pharmaceutical", "raw"),
+        ("other_catalog", "raw"),
+        ("shared-catalog", "rtm_lakets_zb"),
+        ("shared-catalog", None),
+    ],
+)
+def test_assert_owned_uc_rejects(monkeypatch, catalog, schema) -> None:
+    from iot_twin.services.ownership import assert_owned_uc
+
+    with pytest.raises(NotOwnedError):
+        assert_owned_uc(catalog, schema, shared_catalog="shared-catalog")
+
+
+@pytest.mark.parametrize(
+    ("catalog", "schema"),
+    [
+        ("pharma_twin_pharmaceutical", "raw"),
+        ("shared-catalog", "pharma_twin"),
+        ("pharma-twin", None),
+    ],
+)
+def test_assert_owned_uc_accepts(catalog, schema) -> None:
+    from iot_twin.services.ownership import assert_owned_uc
+
+    assert_owned_uc(catalog, schema, shared_catalog="shared-catalog")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "uc",
+    [
+        {"catalog_pattern": "iot_{name}"},
+        {"catalog_pattern": "shared-catalog", "schemas": ["raw"]},
+        {"catalog_pattern": "shared-catalog", "schemas": ["pharma_twin", "rtm_lakets_zb"]},
+    ],
+)
+async def test_provision_uc_catalog_rejects_foreign_target(monkeypatch, uc, no_client) -> None:
+    from iot_twin.services import provisioning_service as ps
+
+    monkeypatch.setenv("UC_CATALOG", "shared-catalog")
+    with pytest.raises(NotOwnedError):
+        await ps.provision_uc_catalog(uc)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("module", "path", "body"),
+    [
+        ("provisioning", "/api/provision/uc", {"catalog": "iot_pharmaceutical", "schema": "raw"}),
+        ("provisioning", "/api/provision/uc", {"catalog": "shared-catalog", "schema": "raw"}),
+        (
+            "provisioning",
+            "/api/provision/pipeline-catalog",
+            {"pipeline_id": "p-1", "catalog_pattern": "iot_{name}"},
+        ),
+        ("settings", "/api/settings/provision/uc", {"uc": {"catalog_pattern": "iot_{name}"}}),
+        ("settings", "/api/settings/provision", {"uc": {"catalog_pattern": "iot_{name}"}}),
+    ],
+)
+async def test_routes_return_403_for_foreign_uc(monkeypatch, module, path, body, no_client) -> None:
+    import importlib
+
+    monkeypatch.setenv("UC_CATALOG", "shared-catalog")
+    router = importlib.import_module(f"iot_twin.routes.{module}").router
+    resp = await _post(_app(router), path, body)
+    assert resp.status_code == 403, resp.text
+    assert "not owned" in resp.json()["error"] or "shared catalog" in resp.json()["error"]
+
+
+# --- Direct-mode Lakebase -------------------------------------------------------------------
+DIRECT = {"mode": "direct", "host": "pg.example", "user": "u", "password": fake_credential("pg")}
+
+
+@pytest.mark.asyncio
+async def test_direct_mode_disabled_by_default(monkeypatch, no_client) -> None:
+    from iot_twin.routes import lakets
+    from iot_twin.services import ownership
+    from iot_twin.services import provisioning_service as ps
+
+    monkeypatch.delenv(ownership.ALLOW_DIRECT_LAKEBASE_ENV, raising=False)
+    lb = {**DIRECT, "project_id": "pharma-twin-p"}
+    with pytest.raises(NotOwnedError, match="disabled"):
+        await ps.provision_lakebase_table(lb)
+    with patch.object(lakets.asyncpg, "connect") as connect, pytest.raises(NotOwnedError):
+        await lakets._open_lakebase_conn(lb)
+    connect.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "lb",
+    [
+        {**DIRECT},  # no project to resolve the host from
+        {**DIRECT, "project_id": "iot-pipelines"},  # foreign project
+        {**DIRECT, "project_id": "pharma-twin-p", "host": "upstream.example"},  # host mismatch
+    ],
+)
+async def test_direct_mode_requires_host_of_owned_endpoint(monkeypatch, lb) -> None:
+    from iot_twin.services import ownership
+
+    monkeypatch.setenv(ownership.ALLOW_DIRECT_LAKEBASE_ENV, "true")
+    ws = MagicMock()
+    ws.postgres.list_endpoints.return_value = [MagicMock(name="ep")]
+    ws.postgres.get_endpoint.return_value.status.hosts.host = "pg.example"
+    with pytest.raises(NotOwnedError):
+        ownership.assert_direct_lakebase(lb, ws=ws)
+
+
+def test_direct_mode_accepts_host_of_owned_endpoint(monkeypatch) -> None:
+    from iot_twin.services import ownership
+
+    monkeypatch.setenv(ownership.ALLOW_DIRECT_LAKEBASE_ENV, "true")
+    ws = MagicMock()
+    ws.postgres.list_endpoints.return_value = [MagicMock()]
+    ws.postgres.get_endpoint.return_value.status.hosts.host = "pg.example"
+    ownership.assert_direct_lakebase({**DIRECT, "project_id": "pharma-twin-p"}, ws=ws)
+    ws.postgres.list_endpoints.assert_called_once_with(
+        parent="projects/pharma-twin-p/branches/production"
+    )
+
+
+def test_internal_direct_bypasses_flag_but_not_host_check(monkeypatch) -> None:
+    from iot_twin.services import ownership
+
+    monkeypatch.delenv(ownership.ALLOW_DIRECT_LAKEBASE_ENV, raising=False)
+    ws = MagicMock()
+    ws.postgres.list_endpoints.return_value = [MagicMock()]
+    ws.postgres.get_endpoint.return_value.status.hosts.host = "pg.example"
+    ownership.assert_direct_lakebase(
+        {**DIRECT, "project_id": "pharma-twin-p"}, internal=True, ws=ws
+    )
+    with pytest.raises(NotOwnedError):
+        ownership.assert_direct_lakebase(
+            {**DIRECT, "project_id": "pharma-twin-p", "host": "other"}, internal=True, ws=ws
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("module", "path", "body"),
+    [
+        ("provisioning", "/api/provision/lakebase-table", {**DIRECT, "table_name": "t"}),
+        ("settings", "/api/settings/provision/lakebase", {"lakebase": DIRECT}),
+        ("settings", "/api/settings/provision", {"lakebase": DIRECT}),
+    ],
+)
+async def test_routes_reject_direct_mode_by_default(monkeypatch, module, path, body, no_client):
+    import importlib
+
+    from iot_twin.services import ownership
+
+    monkeypatch.delenv(ownership.ALLOW_DIRECT_LAKEBASE_ENV, raising=False)
+    router = importlib.import_module(f"iot_twin.routes.{module}").router
+    resp = await _post(_app(router), path, body)
+    assert resp.status_code == 403, resp.text
+    assert "direct-mode" in resp.json()["error"]
+
+
+# --- Admin gate --------------------------------------------------------------------------------
+ADMIN_ROUTES = [
+    ("settings", "/api/settings/provision"),
+    ("settings", "/api/settings/provision/uc"),
+    ("settings", "/api/settings/provision/secrets"),
+    ("settings", "/api/settings/provision/lakebase"),
+    ("provisioning", "/api/provision/uc"),
+    ("provisioning", "/api/provision/pipeline-catalog"),
+    ("provisioning", "/api/provision/lakebase-table"),
+    ("provisioning", "/api/pipelines/p-1/secrets"),
+    ("lakets", "/api/lakets/sync/check"),
+    ("lakets", "/api/lakets/retention/deploy"),
+    ("setup", "/api/setup/pipeline-lakebase"),
+]
+
+
+@pytest.mark.non_admin
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("module", "path"), ADMIN_ROUTES)
+async def test_write_routes_require_admin(module, path, no_client) -> None:
+    import importlib
+
+    router = importlib.import_module(f"iot_twin.routes.{module}").router
+    resp = await _post(_app(router), path, {"secrets": {"scope": "pharma-twin-secrets"}})
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["detail"] == "admin access required"
+
+
+def test_admin_gate_uses_app_permissions() -> None:
+    """The gate defers to the industry admin check (ADMIN_EMAILS / ADMIN_GROUP / owner)."""
+    import inspect
+
+    from iot_twin.routes import _admin
+
+    assert "app_permissions.is_admin(request)" in inspect.getsource(_admin.require_admin)
+
+
+# --- Misconfiguration is a 500 -------------------------------------------------------------------
+def test_env_misconfiguration_maps_to_500(monkeypatch) -> None:
+    from iot_twin.core.config import IsolationMisconfiguredError, owned_env
+    from iot_twin.routes._ownership import not_owned_response
+
+    monkeypatch.setenv("PIPELINES_LAKEBASE_PROJECT", "iot-pipelines")
+    with pytest.raises(IsolationMisconfiguredError) as info:
+        owned_env("PIPELINES_LAKEBASE_PROJECT")
+    resp = not_owned_response(info.value)
+    assert resp.status_code == 500
+    assert b"isolation misconfiguration" in resp.body
+    assert not_owned_response(NotOwnedError("request name")).status_code == 403
+
+
+# --- Teardown -----------------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_teardown_refuses_foreign_ledger_before_any_deleter(monkeypatch) -> None:
+    from iot_twin.services import resource_ledger, teardown_service
+
+    monkeypatch.setenv("UC_CATALOG", "shared-catalog")
+    rows = [
+        {
+            "id": "r1",
+            "resource_type": "job",
+            "identifier": "1",
+            "metadata": {},
+            "teardown_order": 90,
+        },
+        {
+            "id": "r2",
+            "resource_type": "lakebase_branch",
+            "identifier": "projects/iot-pipelines/branches/pharmaceutical",
+            "metadata": {},
+            "teardown_order": 20,
+        },
+    ]
+    deleter = AsyncMock()
+    with (
+        patch.object(resource_ledger, "resources_in_teardown_order", AsyncMock(return_value=rows)),
+        pytest.raises(NotOwnedError),
+    ):
+        await teardown_service.teardown_setup(
+            MagicMock(), "setup-1", {"job": deleter, "lakebase_branch": deleter}
+        )
+    deleter.assert_not_awaited()

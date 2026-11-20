@@ -13,7 +13,13 @@ from iot_twin.core import resource_names
 from iot_twin.core.auth import get_current_user
 from iot_twin.core.state import AppState, get_app_state
 from iot_twin.models.sql_ddl import LAKEBASE_ROLE_NAME
-from iot_twin.routes._ownership import reject_foreign_project
+from iot_twin.routes._admin import ADMIN_ONLY
+from iot_twin.routes._ownership import (
+    reject_direct_lakebase,
+    reject_foreign_project,
+    reject_foreign_scope,
+    reject_foreign_uc_settings,
+)
 from iot_twin.services.app_permissions import _app_name, grant_app_can_use
 from iot_twin.services.provisioning_service import (
     ensure_streaming_sp,
@@ -96,7 +102,7 @@ async def get_settings_status(
     }
 
 
-@router.post("/api/settings/provision")
+@router.post("/api/settings/provision", dependencies=ADMIN_ONLY)
 async def provision_settings(request: Request, user_email: str = Depends(get_current_user)):
     """Provision all settings resources then re-validate."""
     try:
@@ -108,11 +114,17 @@ async def provision_settings(request: Request, user_email: str = Depends(get_cur
 
     # Run provisioning concurrently
     secrets_scope = (body.get("secrets", {}).get("scope") or "").strip()
+    if rejected := reject_foreign_scope(secrets_scope):
+        return rejected
     uc = body.get("uc", {})
+    if uc.get("catalog_pattern") and (rejected := reject_foreign_uc_settings(uc)):
+        return rejected
     lb = body.get("lakebase", {})
     if (lb.get("mode") or "autoscale") == "autoscale" and (
         rejected := reject_foreign_project((lb.get("project_id") or "").strip())
     ):
+        return rejected
+    if (lb.get("mode") or "autoscale") != "autoscale" and (rejected := reject_direct_lakebase(lb)):
         return rejected
 
     tasks = []
@@ -160,7 +172,7 @@ async def provision_settings(request: Request, user_email: str = Depends(get_cur
     }
 
 
-@router.post("/api/settings/provision/uc")
+@router.post("/api/settings/provision/uc", dependencies=ADMIN_ONLY)
 async def provision_uc_settings(request: Request, user_email: str = Depends(get_current_user)):
     """Provision UC catalog, schemas, volume, and metrics table from UC settings."""
     try:
@@ -169,6 +181,8 @@ async def provision_uc_settings(request: Request, user_email: str = Depends(get_
         return JSONResponse(status_code=400, content={"error": f"Invalid JSON: {exc}"})
 
     uc = body.get("uc", {})
+    if rejected := reject_foreign_uc_settings(uc):
+        return rejected
     provisioned = await provision_uc_catalog(uc)
 
     # After creating schemas, provision the streaming_metrics table in the metrics schema
@@ -194,7 +208,7 @@ async def provision_uc_settings(request: Request, user_email: str = Depends(get_
     return {"provisioned": provisioned, "validation": validation}
 
 
-@router.post("/api/settings/provision/secrets")
+@router.post("/api/settings/provision/secrets", dependencies=ADMIN_ONLY)
 async def provision_secrets_settings(request: Request, user_email: str = Depends(get_current_user)):
     """Provision the secrets scope from secrets settings."""
     try:
@@ -204,6 +218,8 @@ async def provision_secrets_settings(request: Request, user_email: str = Depends
 
     secrets = body.get("secrets", {})
     scope_name = (secrets.get("scope") or "").strip()
+    if rejected := reject_foreign_scope(scope_name):
+        return rejected
     provisioned: list[dict] = []
 
     if not scope_name:
@@ -230,7 +246,7 @@ async def provision_secrets_settings(request: Request, user_email: str = Depends
     return {"provisioned": provisioned, "validation": validation}
 
 
-@router.post("/api/settings/provision/lakebase")
+@router.post("/api/settings/provision/lakebase", dependencies=ADMIN_ONLY)
 async def provision_lakebase_settings(
     request: Request, user_email: str = Depends(get_current_user)
 ):
@@ -245,6 +261,10 @@ async def provision_lakebase_settings(
     lb_user = (body.get("lb_user") or "").strip()
     lb_password = (body.get("lb_password") or "").strip()
     mode = lb.get("mode", "autoscale")
+    if rejected := reject_foreign_scope((secrets.get("scope") or "").strip()):
+        return rejected
+    if mode != "autoscale" and (rejected := reject_direct_lakebase(lb)):
+        return rejected
 
     provisioned: list[dict] = []
     credentials: dict | None = None
@@ -328,7 +348,10 @@ async def provision_lakebase_settings(
                 table_lb["password"] = role_password
                 table_lb["mode"] = "direct"
         # else: keep autoscale mode — provision_lakebase_table will use OAuth
-        table_result = await provision_lakebase_table(table_lb)
+        # The host above was resolved from the owned project's own endpoint.
+        table_result = await provision_lakebase_table(
+            table_lb, internal_direct=table_lb.get("mode") == "direct"
+        )
         provisioned.append(table_result)
 
     else:

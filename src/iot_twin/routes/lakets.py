@@ -15,11 +15,13 @@ from fastapi.responses import JSONResponse
 
 from iot_twin.core.config import NotOwnedError, assert_owned_name
 from iot_twin.core.state import AppState, get_app_state
+from iot_twin.routes._admin import ADMIN_ONLY
 from iot_twin.routes._ownership import reject_foreign_project
 from iot_twin.services import cdf_reconciliation_service
 from iot_twin.services.industry.industry_templates import CURATED_INDUSTRIES
 from iot_twin.services.lakets import lakets_service
 from iot_twin.services.lakets.lakets_deploy_service import deploy_retention_job
+from iot_twin.services.ownership import assert_direct_lakebase
 from iot_twin.services.pipelines.pipeline_db import get_industry_lakebase, get_pipeline_lakebase
 
 logger = logging.getLogger("pharma_twin.routes.lakets")
@@ -102,6 +104,8 @@ async def _open_lakebase_conn(lb: dict) -> Any:
             command_timeout=_LAKEBASE_PROBE_TIMEOUT_SECONDS,
         )
 
+    # Direct mode: flag-gated, host must be an endpoint of an owned project.
+    assert_direct_lakebase(lb)
     return await asyncpg.connect(
         host=lb.get("host", ""),
         database=database,
@@ -138,7 +142,7 @@ async def _is_realtime_industry_deployment(
     return row is not None
 
 
-@router.post("/api/lakets/sync/check")
+@router.post("/api/lakets/sync/check", dependencies=ADMIN_ONLY)
 async def check_sync(request: Request):
     """Probe a Lakebase for Lakehouse Sync readiness.
 
@@ -423,7 +427,7 @@ async def get_lakets_dashboard(
         return _unavailable_dashboard("LakeTS dashboard unavailable")
 
 
-@router.post("/api/lakets/retention/deploy")
+@router.post("/api/lakets/retention/deploy", dependencies=ADMIN_ONLY)
 async def deploy_retention(request: Request):
     """Upload the retention notebook and create/update a daily Databricks Job."""
     try:

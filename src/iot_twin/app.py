@@ -150,7 +150,7 @@ app = FastAPI(title="IoT Digital Twin", lifespan=lifespan)
 
 @app.exception_handler(NotOwnedError)
 async def _not_owned_handler(_request, exc: NotOwnedError):
-    """Backstop: an unhandled ownership rejection is a 403, never a 500."""
+    """Backstop: a rejected request name is a 403; a non-owned env name is a 500."""
     return not_owned_response(exc)
 
 

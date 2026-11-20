@@ -21,7 +21,13 @@ from iot_twin.models.sql_ddl import (
     MATVIEW_INDEX_DDL,
     SENSOR_READINGS_DDL,
 )
-from iot_twin.routes._ownership import reject_foreign_project
+from iot_twin.routes._admin import ADMIN_ONLY
+from iot_twin.routes._ownership import (
+    reject_direct_lakebase,
+    reject_foreign_project,
+    reject_foreign_scope,
+    reject_foreign_uc,
+)
 from iot_twin.services import provisioning_service
 from iot_twin.services.pipelines.pipeline_service import track_resource
 
@@ -328,7 +334,7 @@ def _extract_sse_metrics(sink_config: dict) -> list[str]:
     return [m for m in metrics if isinstance(m, str)]
 
 
-@router.post("/api/provision/uc")
+@router.post("/api/provision/uc", dependencies=ADMIN_ONLY)
 async def provision_uc(
     request: Request,
     user_email: str = Depends(get_current_user),
@@ -353,6 +359,8 @@ async def provision_uc(
             status_code=422,
             content={"error": "Both 'catalog' and 'schema' are required"},
         )
+    if rejected := reject_foreign_uc(catalog_name, [schema_name]):
+        return rejected
 
     try:
         from databricks.sdk import WorkspaceClient
@@ -419,7 +427,7 @@ async def provision_uc(
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
-@router.post("/api/provision/pipeline-catalog")
+@router.post("/api/provision/pipeline-catalog", dependencies=ADMIN_ONLY)
 async def provision_pipeline_catalog(
     request: Request,
     user_email: str = Depends(get_current_user),
@@ -463,6 +471,8 @@ async def provision_pipeline_catalog(
 
     schemas = ["raw", "metrics", "checkpoints"]
     volume_name = "stream_checkpoints"
+    if rejected := reject_foreign_uc(catalog_name, schemas):
+        return rejected
 
     # -- Idempotent early-return: if this pipeline already owns ANY catalog --
     if pipeline_id and state.db_available and state.db:
@@ -571,7 +581,7 @@ async def provision_pipeline_catalog(
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
-@router.post("/api/pipelines/{pipeline_id}/secrets")
+@router.post("/api/pipelines/{pipeline_id}/secrets", dependencies=ADMIN_ONLY)
 async def put_pipeline_secrets(
     pipeline_id: str,
     request: Request,
@@ -600,6 +610,9 @@ async def put_pipeline_secrets(
     if not scope_name:
         short_id = pipeline_id.replace("-", "")[:8]
         scope_name = resource_names.pipeline_secret_scope(short_id)
+    # The stored scope is read back from the database: re-check it before writing.
+    if rejected := reject_foreign_scope(scope_name):
+        return rejected
 
     try:
         from databricks.sdk import WorkspaceClient
@@ -642,6 +655,8 @@ async def list_pipeline_secret_keys(
 
     if not scope_name:
         return {"scope": None, "keys": []}
+    if rejected := reject_foreign_scope(scope_name):
+        return rejected
 
     try:
         from databricks.sdk import WorkspaceClient
@@ -655,7 +670,7 @@ async def list_pipeline_secret_keys(
         return {"scope": scope_name, "keys": []}
 
 
-@router.post("/api/provision/lakebase-table")
+@router.post("/api/provision/lakebase-table", dependencies=ADMIN_ONLY)
 async def provision_lakebase_table(
     request: Request,
     user_email: str = Depends(get_current_user),
@@ -677,6 +692,8 @@ async def provision_lakebase_table(
 
     mode = body.get("mode", "direct")
     table_name = (body.get("table_name") or "").strip()
+    if mode != "autoscale" and (rejected := reject_direct_lakebase(body)):
+        return rejected
     database = body.get("database", "databricks_postgres")
     pipeline_id = body.get("pipeline_id")
 
