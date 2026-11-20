@@ -145,3 +145,33 @@ Real-workspace runs are not auto-regenerated and are not stored next to the samp
 Deliberately kept, dated, redacted live-run snapshots live in
 [`notebooks/runs/`](notebooks/runs/README.md) (how they are produced and re-run is described
 there); always run with `sample=false redact=true`.
+
+### Current snapshot: the isolated `pharma-twin` deployment
+
+`notebooks/runs/manufacturing_realtime_2026-11-20.ipynb` (and its `.html` copy) is a live run
+against this fork's own deployment (app `pharma-twin-dev`, Lakebase projects
+`pharma-twin-backend` / `pharma-twin-pipelines`, schema `pharma_twin`), not the upstream app that
+runs in the same workspace. Run it with the projects passed **explicitly**, never discovered:
+
+```bash
+databricks jobs submit --no-wait -p <profile> --json '{
+  "run_name": "health-check",
+  "tasks": [{"task_key": "main",
+    "notebook_task": {"notebook_path": "<temp path>",
+      "base_parameters": {"industry": "manufacturing", "mode": "realtime", "lookback_hours": "2",
+        "sample": "false", "redact": "true", "setup_id": "<setup id>",
+        "app_backend_project": "pharma-twin-backend", "pipelines_project": "pharma-twin-pipelines",
+        "uc_catalog": "<catalog>", "uc_schema": "pharma_twin", "warehouse_id": "<warehouse id>"}},
+    "environment_key": "e"}],
+  "environments": [{"environment_key": "e", "spec": {"client": "4",
+    "dependencies": ["databricks-sdk>=0.133.0", "psycopg2-binary"]}}]}'
+```
+
+That run reports **Overall FAIL (40 PASS, 5 WARN, 2 FAIL, 1 SKIPPED)**. Both FAILs
+(`metrics_e2e_latency`, `metrics_batch_duration`) come from one batch recorded while the
+producer ran at its default 2000 Hz, faster than the consumer could write to Lakebase (about
+950 rows/s); after the producer was set to 500 Hz every batch measured e2e p50 7 ms and p99
+15-29 ms. The `metrics_batch_duration` FAIL threshold (60 s) also flags Real-Time Mode's normal
+300 s trigger. The measurements behind this are in
+[`docs/evidence/2026-11-20/`](../docs/evidence/README.md). The first attempt of this run aborted
+with the known psycopg2 SIGABRT on serverless and was re-run, as described above.

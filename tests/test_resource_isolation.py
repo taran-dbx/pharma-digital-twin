@@ -278,8 +278,6 @@ ALLOWLIST: dict[str, str] = {
     # Redacted LIVE-RUN snapshots captured from the upstream deployment before the
     # fork (immutable records, regenerated only by re-running the notebook here).
     "ops/notebooks/runs/README.md": "describes the upstream live-run snapshots",
-    "ops/notebooks/runs/manufacturing_realtime_2026-11-20.html": "upstream live-run snapshot",
-    "ops/notebooks/runs/manufacturing_realtime_2026-11-20.ipynb": "upstream live-run snapshot",
     "ops/notebooks/runs/pharmaceutical_realtime_2026-11-20.html": "upstream live-run snapshot",
     "ops/notebooks/runs/pharmaceutical_realtime_2026-11-20.ipynb": "upstream live-run snapshot",
 }
