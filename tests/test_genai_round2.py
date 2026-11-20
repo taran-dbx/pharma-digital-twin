@@ -9,6 +9,7 @@ import uuid
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import timedelta
+from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
@@ -254,7 +255,10 @@ class TestPseudonymKey:
         app.state.app_state = AppState()
         app.include_router(router)
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as http:
-            body = (await http.get("/api/genai/status")).json()
+            with patch("iot_twin.routes.genai.app_permissions.is_admin", return_value=False):
+                assert (await http.get("/api/genai/status")).status_code == 403
+            with patch("iot_twin.routes.genai.app_permissions.is_admin", return_value=True):
+                body = (await http.get("/api/genai/status")).json()
         assert body["pseudonym_key"]["pseudonyms"] == "redacted"
         assert body["append_only_enforced"] is None  # no Lakebase
         assert (

@@ -164,10 +164,13 @@ async def list_action_plans(
 
 @router.get("/api/genai/status")
 async def genai_status(
+    request: Request,
     state: AppState = Depends(get_app_state),
     _user: str = Depends(require_identity),
 ):
-    """Pseudonym key source, append-only enforcement and call limits."""
+    """Pseudonym key source, append-only enforcement and call limits (admin only)."""
+    if not app_permissions.is_admin(request):
+        raise HTTPException(status_code=403, detail="admin access required")
     return await status_payload(state, _backend_db(state))
 
 

@@ -141,7 +141,7 @@ def parse_plan(text: str) -> ParseResult:
 # --------------------------------------------------------------------------- grounding check
 
 # Bumped whenever the rules below change; part of the plan-reuse key.
-CHECKER_VERSION = "grounding-check/2026-11-20.v3"
+CHECKER_VERSION = "grounding-check/2026-11-20.v4"
 
 # A number, optionally with a unit glued or hyphenated on (0.05mm, 5min,
 # 5-minute, 64.2°C, 87%), that is not part of an identifier, date or clock time
@@ -170,6 +170,35 @@ _LOT_OR_SERIAL = re.compile(rf"\b{re.escape(LOT_PREFIX)}-\d{{6}}-\d{{3}}(?:-\d{{
 _TEXT_NUMBER_SOURCES = frozenset({"alert_rule", "readings"})
 _DERIVABLE_SOURCES = frozenset({"alert", "alert_rule", "risk_score", "projected_rft"})
 _DURATION_TOLERANCE_S = 1.0
+# Named timestamp pairs in the alert row whose span a claim may state.
+_DURATION_PAIRS: tuple[tuple[str, str], ...] = (
+    ("excursion_started_at", "opened_at"),  # time to detect
+    ("opened_at", "acknowledged_at"),  # time to acknowledge
+    ("opened_at", "cleared_at"),  # alert open time
+    ("excursion_started_at", "cleared_at"),  # excursion length
+)
+_BUCKET_KEYS = ("bucket_start", "bucket")
+# A risk-model feature identifier that ends in a window token, e.g.
+# ``spindle_temp_slope_5m``. Only that trailing number, in that unit, is grounded.
+_FEATURE_WINDOW = re.compile(r"^[a-z][a-z0-9_]{0,62}_(\d{1,4})(s|m|h)$")
+_UNIT_WORDS: dict[str, str] = {
+    "s": "s",
+    "sec": "s",
+    "secs": "s",
+    "second": "s",
+    "seconds": "s",
+    "m": "m",
+    "min": "m",
+    "mins": "m",
+    "minute": "m",
+    "minutes": "m",
+    "h": "h",
+    "hr": "h",
+    "hrs": "h",
+    "hour": "h",
+    "hours": "h",
+}
+_NEXT_WORD = re.compile(r"^[\s-]*([A-Za-z]+)")
 
 
 @dataclass(frozen=True)
@@ -211,16 +240,35 @@ def _numeric(value: Any) -> float | None:
     return None
 
 
-def _model_metadata_numbers(data: dict[str, Any]) -> list[float]:
-    """Numbers inside the risk model's feature identifiers (``spindle_temp_slope_5m``).
+def feature_windows(data: dict[str, Any]) -> frozenset[tuple[float, str]]:
+    """``(number, unit)`` window lengths of the risk model's features.
 
-    Feature names are structured model metadata, not free text, so "the
-    5-minute slope" is grounded when the risk row is cited.
+    ``top_features`` comes from alert metadata, which is untrusted, so only a
+    strict identifier ending in a window token counts (``spindle_temp_slope_5m``
+    gives ``(5, "m")``). Nothing else in a feature name is a grounded number,
+    and window lengths never feed differences or percentages; they only allow
+    that exact number written with that unit ("5-minute", "5 min", "5m").
+    When the risk model's feature contract lands, its definitions should
+    replace this parsing as the trusted source.
     """
     features = data.get("top_features") or []
     names = [f.get("feature") for f in features if isinstance(f, dict)]
     names += [f for f in features if isinstance(f, str)]
-    return [float(n) for name in names if name for n in re.findall(r"\d+(?:\.\d+)?", str(name))]
+    windows = set()
+    for name in names:
+        match = _FEATURE_WINDOW.match(str(name or ""))
+        if match:
+            windows.add((float(match.group(1)), match.group(2)))
+    return frozenset(windows)
+
+
+def _claim_unit(unit: str, following: str) -> str | None:
+    """Normalised time unit written with a number: glued/hyphenated or the next word."""
+    word = unit.lstrip("-").lower() if unit and unit != "%" else ""
+    if not word:
+        nxt = _NEXT_WORD.match(following)
+        word = nxt.group(1).lower() if nxt else ""
+    return _UNIT_WORDS.get(word)
 
 
 def _item_numbers(item: GroundingItem) -> set[float]:
@@ -230,8 +278,6 @@ def _item_numbers(item: GroundingItem) -> set[float]:
         for leaf in _leaves(item.data):
             if isinstance(leaf, str):
                 nums.extend(float(m.group(1)) for m in _CLAIM_NUMBER.finditer(leaf))
-    if item.source == "risk_score":
-        nums.extend(_model_metadata_numbers(item.data))
     values = set(nums)
     values.update(float(len(v)) for v in item.data.values() if isinstance(v, list))
     values.update(n * 100 for n in nums if 0 < abs(n) <= 1)
@@ -272,20 +318,36 @@ def _timestamp(value: Any) -> float | None:
     return (parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)).timestamp()
 
 
-def _durations(cited: list[GroundingItem]) -> set[float]:
-    """Durations between cited timestamps (onset → opened, opened → cleared, …).
+def _spans(values: set[float], span: float) -> None:
+    values.update({span - _DURATION_TOLERANCE_S, span, span + _DURATION_TOLERANCE_S})
+    values.update({span / 60, span / 3600})
 
-    Seconds with a ±1 s tolerance, and the same span in minutes and hours.
+
+def _durations(cited: list[GroundingItem]) -> set[float]:
+    """Spans a claim may state: named alert-row pairs, and the cited readings' span.
+
+    Pairs: onset → opened (time to detect), opened → acknowledged, opened →
+    cleared, onset → cleared. Readings: first to last cited bucket. Seconds
+    with ±1 s, and the same span in minutes and hours.
     """
-    stamps = sorted(
-        {t for item in cited for t in (_timestamp(leaf) for leaf in _leaves(item.data)) if t}
-    )[:60]
     values: set[float] = set()
-    for i, a in enumerate(stamps):
-        for b in stamps[i + 1 :]:
-            span = b - a
-            values.update({span - _DURATION_TOLERANCE_S, span, span + _DURATION_TOLERANCE_S})
-            values.update({span / 60, span / 3600})
+    for item in cited:
+        if item.source != "alert":
+            continue
+        for start_key, end_key in _DURATION_PAIRS:
+            start = _timestamp(item.data.get(start_key))
+            end = _timestamp(item.data.get(end_key))
+            if start is not None and end is not None and end >= start:
+                _spans(values, end - start)
+    buckets = sorted(
+        t
+        for item in cited
+        if item.source == "readings"
+        for t in (_timestamp(item.data.get(key)) for key in _BUCKET_KEYS)
+        if t is not None
+    )
+    if len(buckets) > 1:
+        _spans(values, buckets[-1] - buckets[0])
     return values
 
 
@@ -337,12 +399,53 @@ def _identifier_reasons(plan: ActionPlan, grounding: GroundingSet) -> list[str]:
     ]
 
 
+def _percent_values(grounding: GroundingSet, citations: Iterable[str]) -> list[float]:
+    """Percentages a claim may state: a cited 0-1 value x100, or a cited ``pct`` field.
+
+    Counts, differences and other raw numbers never support an ``N%`` claim.
+    """
+    cited = set(citations)
+    values: set[float] = set()
+    for item in grounding.items:
+        if item.id not in cited:
+            continue
+        for key, value in _keyed_leaves(item.data):
+            number = _numeric(value)
+            if number is None:
+                continue
+            if 0 < abs(number) <= 1:
+                values.add(number * 100)
+            if "pct" in key or "percent" in key:
+                values.add(number)
+    return sorted(values)
+
+
+def _keyed_leaves(value: Any, key: str = "") -> Iterator[tuple[str, Any]]:
+    if isinstance(value, dict):
+        for k, v in value.items():
+            yield from _keyed_leaves(v, str(k).lower())
+    elif isinstance(value, list | tuple):
+        for v in value:
+            yield from _keyed_leaves(v, key)
+    else:
+        yield key, value
+
+
+def _windows(grounding: GroundingSet, citations: Iterable[str]) -> frozenset[tuple[float, str]]:
+    cited = set(citations)
+    found: set[tuple[float, str]] = set()
+    for item in grounding.by_source("risk_score"):
+        if item.id in cited:
+            found |= feature_windows(item.data)
+    return frozenset(found)
+
+
 def _versions(grounding: GroundingSet, citations: Iterable[str]) -> set[str]:
-    """Version strings a claim may name: cited rows' and the model metadata's."""
+    """Version strings a claim may name: ``model_version`` of the rows it cites."""
     cited = set(citations)
     found: set[str] = set()
     for item in grounding.items:
-        if item.id in cited or item.source == "risk_score":
+        if item.id in cited:
             version = item.data.get("model_version")
             if version is not None:
                 found.update(re.findall(r"\d+(?:\.\d+)*", str(version)))
@@ -366,7 +469,13 @@ def _reference_reasons(
     return reasons, checked
 
 
-def _number_reasons(path: str, text: str, allowed: list[float]) -> tuple[list[str], int]:
+def _number_reasons(
+    path: str,
+    text: str,
+    allowed: list[float],
+    windows: frozenset[tuple[float, str]] = frozenset(),
+    percents: list[float] | None = None,
+) -> tuple[list[str], int]:
     reasons, checked = [], 0
     # Replace with a word character so neighbouring digits stay "glued" (ids stay ids).
     scrubbed = _NON_QUANTITIES.sub("X", text)
@@ -378,9 +487,13 @@ def _number_reasons(path: str, text: str, allowed: list[float]) -> tuple[list[st
         number = float(raw)
         decimals = len(raw.split(".", 1)[1]) if "." in raw else 0
         percent = unit == "%" or bool(_PERCENT_WORD.match(scrubbed[match.end() :]))
-        ok = _matches(number, decimals, allowed) or (
-            percent and _matches(number / 100, decimals + 2, allowed)
-        )
+        if percent:
+            ok = _matches(number, decimals, percents if percents is not None else allowed)
+        else:
+            ok = _matches(number, decimals, allowed)
+        if not ok and not percent and windows:
+            claim_unit = _claim_unit(unit, scrubbed[match.end() :])
+            ok = claim_unit is not None and (number, claim_unit) in windows
         if not ok:
             reasons.append(
                 f"{path}: number {match.group(0).strip()} does not match a value in its cited rows"
@@ -411,7 +524,13 @@ def check_grounding(plan: ActionPlan, grounding: GroundingSet) -> GroundingCheck
                 reasons.append(f"{path}: cites '{citation}', which is not in the grounding set")
             elif citation not in cited:
                 cited.append(citation)
-        found, count = _number_reasons(path, text, allowed_numbers(grounding, citations))
+        found, count = _number_reasons(
+            path,
+            text,
+            allowed_numbers(grounding, citations),
+            _windows(grounding, citations),
+            _percent_values(grounding, citations),
+        )
         refs, ref_count = _reference_reasons(
             path, text, _versions(grounding, citations), step_orders
         )

@@ -12,7 +12,9 @@
   1. ``GENAI_PSEUDONYM_SALT`` — injected from the ``genai-pseudonym-salt``
      secret app resource (scope ``pharma-twin-secrets``); source ``secret``;
   2. a random 32-byte key generated once and persisted in the Lakebase
-     ``genai_settings`` table (:func:`init_key` at boot); source ``lakebase``;
+     ``genai_settings`` table (:func:`init_key` at boot); source ``lakebase``.
+     Only local and non-bundle runs reach this: the bundle always declares the
+     secret resource, and its deploy fails without the secret;
   3. nothing: pseudonyms are not computed and every person becomes
      ``person``; source ``redacted``. There is never a built-in constant key.
 
