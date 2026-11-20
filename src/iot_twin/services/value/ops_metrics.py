@@ -9,9 +9,9 @@ All metrics come from the episodes of one pipeline over a window (see
 * **time to disposition** = first containment decision (quarantine or CMM) - ``opened_at``.
 * **MTTR** = mean ``cleared_at - opened_at`` over cleared episodes: the time to
   bring Spindle 3 back inside its validated limit.
-* **projected right-first-time (RFT)** = (parts started - parts at risk) /
-  parts started, over the lots the excursions touched. "Projected" because no
-  CMM results exist yet; parts at risk are those cut in the containment window.
+* **projected right-first-time** — the canonical ``lot_context.projected_rft``
+  per excursion, summed over the window. "Projected" because no CMM results
+  exist yet.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from typing import Any
 
-from iot_twin.domain.lot_context import PARTS_PER_LOT
+from iot_twin.domain.lot_context import PROJECTED_RFT_DEFINITION, PROJECTED_RFT_LABEL
 from iot_twin.services.value.episodes import Episode
 
 RECENT_EVENTS = 20
@@ -53,23 +53,28 @@ def duration_stats(values: Iterable[float | None]) -> dict[str, Any]:
 
 
 def projected_rft(episodes: Iterable[Episode]) -> dict[str, Any]:
-    """(parts started - parts at risk) / parts started over the lots touched."""
-    lots: set[str] = set()
-    at_risk: set[str] = set()
+    """``PROJECTED_RFT_DEFINITION`` summed over the window's excursions.
+
+    Each excursion's figure comes from ``lot_context.projected_rft`` (via the
+    episode's disposition); the window total is sum(good) / sum(parts started).
+    """
+    started = 0
+    at_risk = 0
     for episode in episodes:
-        disposition = episode.disposition
-        lots.update(disposition["lot_ids"])
-        at_risk.update(disposition["parts_at_risk"])
-    started = len(lots) * PARTS_PER_LOT
-    if started == 0:
-        return {"label": "projected RFT", "pct": None, "parts_started": 0, "parts_at_risk": 0}
-    at_risk_count = min(len(at_risk), started)
-    return {
-        "label": "projected RFT",
-        "pct": round((started - at_risk_count) / started * 100, 2),
+        rft = episode.disposition.get("projected_rft")
+        if rft:
+            started += int(rft["parts_started"])
+            at_risk += int(rft["parts_at_risk"])
+    result: dict[str, Any] = {
+        "label": PROJECTED_RFT_LABEL,
+        "definition": PROJECTED_RFT_DEFINITION,
+        "pct": None,
         "parts_started": started,
-        "parts_at_risk": at_risk_count,
+        "parts_at_risk": at_risk,
     }
+    if started:
+        result["pct"] = round(100.0 * (started - at_risk) / started, 2)
+    return result
 
 
 def _iso(value: Any) -> str | None:

@@ -43,13 +43,12 @@ deployment id.
 rule re-opens, so episodes are keyed by alert id plus the `opened_at` carried in every
 lifecycle event (`alert_event.payload`), exactly as the alert history is.
 
-**Onset.** The event time of the **first over-limit reading** of the excursion. The alert
-engine records it on the `opened` event as `onset_at` (from the reading's `timestamp`, epoch
-seconds, epoch milliseconds or ISO-8601), with `onset_source = "first_reading"`. When that
-reading carried no usable timestamp, or for events written before onset was recorded,
-**onset = `alert.opened_at − rule.duration_s`** (`onset_source = "rule_duration"`, shown as
-"est." in the table). Onset is never later than `opened_at`, so a fast producer clock cannot
-give a negative detection time.
+**Onset.** The **first over-limit reading** the alert engine saw for the excursion
+(`excursion_started_at`). The engine stamps it on the alert row's `metadata` (the live
+episode) and on the `opened` event (every episode, since the row is reused on re-open). When
+neither has it, e.g. for events written before it was recorded, **onset = `alert.opened_at −
+rule.duration_s`** (shown as "est." in the table). This is the same onset the live cell uses
+for its containment window. Onset is never later than `opened_at`.
 
 **Containment window.** Onset → `cleared_at`, or the `request_cmm_inspection` decision if that
 came first (it stops the mill, so no more parts are cut), or the window end while the excursion
@@ -83,9 +82,11 @@ parts held (at risk) and parts released.
 decision. **Cell stops** count `production_event` rows with `state = 'stopped'` linked to the
 pipeline's alerts.
 
-**Projected right-first-time (RFT).** `(parts started − parts at risk) / parts started` over
-the lots the excursions touched (parts started = lots touched × 15). It is *projected* because
-no CMM results exist yet. The A×P×Q figure is the **process health index (telemetry
+**Projected right-first-time.** The app's single first-pass-yield proxy, defined once in
+`domain/lot_context.py` (`projected_rft`) and `client/src/lib/manufacturing-quality.ts`:
+`(parts started − parts at risk) / parts started` over the lots an excursion touched. The
+window figure sums parts started and parts at risk over its excursions. It is *projected*
+because no CMM results exist yet. The A×P×Q figure is the **process health index (telemetry
 approximation)**, not FPY.
 
 **MTTR.** Mean `cleared_at − opened_at` over cleared excursions: the time to bring Spindle 3
@@ -146,7 +147,8 @@ always sums to the cost used.
   MRB may disposition some parts use-as-is, which lowers the true exposure.
 * **Projected RFT is not FPY.** It counts parts at risk, not measured nonconformances; CMM
   results would replace it.
-* **TTD depends on onset quality.** Excursions with a rule-duration onset (marked "est.") show
-  the configured debounce, not the measured lag.
+* **TTD depends on onset quality.** Onset is the engine's clock when it first saw the
+  over-limit reading, so TTD is the rule's sustain time plus evaluation lag, not producer-to-app
+  latency. Excursions with a rule-duration onset (marked "est.") show the configured debounce.
 * **Window caps.** At most 500 excursions are read per request; TTD/TTA samples are capped at 200.
 * **No persistence of overrides.** Edited assumptions live in the browser session only.

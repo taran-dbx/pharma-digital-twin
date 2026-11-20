@@ -36,7 +36,6 @@ class FakeDb:
                 "alert_id": "a1",
                 "episode_opened_at": opened,
                 "onset_raw": (opened - timedelta(seconds=3)).isoformat(),
-                "onset_source": "first_reading",
                 "acknowledged_at": opened + timedelta(seconds=4),
                 "cleared_at": opened + timedelta(seconds=30),
                 "peak_value": 66.0,
@@ -101,7 +100,7 @@ class TestEnvelope:
         data = resp.json()["data"]
         assert data["time_to_detect"]["p50"] == 3
         assert data["ncrs_opened"] == 1
-        assert data["projected_rft"]["label"] == "projected RFT"
+        assert data["projected_rft"]["label"] == "Projected right-first-time"
         assert data["recent_events"][0]["caught_in_time"] is True
 
     @pytest.mark.asyncio

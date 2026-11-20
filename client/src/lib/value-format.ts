@@ -2,6 +2,7 @@
  * Formatting and tile view-models for the executive and operations views.
  * Pure functions so the copy and the numbers are unit-tested together.
  */
+import { PROJECTED_RFT_LABEL } from "@/lib/manufacturing-quality";
 import type { Actuals, OpsSummary, Projection, ValueSummary } from "@/lib/value-api";
 
 export const EMPTY = "—";
@@ -112,21 +113,21 @@ export function opsTiles(ops: OpsSummary): TileView[] {
   return [
     {
       id: "ttd",
-      label: "Time to detect (median)",
+      label: "Time to detect",
       value: formatDuration(ttd.p50),
-      foot: ttd.count ? `p90 ${formatDuration(ttd.p90)} · ${ttd.from_first_reading} of ${ttd.count} from the first reading` : "No excursions yet",
+      foot: ttd.count ? `median · p90 ${formatDuration(ttd.p90)} · ${ttd.from_first_reading} of ${ttd.count} from the first reading` : "No excursions yet",
     },
     {
       id: "tta",
-      label: "Time to acknowledge (median)",
+      label: "Time to acknowledge",
       value: formatDuration(ops.time_to_acknowledge.p50),
-      foot: ops.time_to_acknowledge.count ? `p90 ${formatDuration(ops.time_to_acknowledge.p90)}` : "Nothing acknowledged yet",
+      foot: ops.time_to_acknowledge.count ? `median · p90 ${formatDuration(ops.time_to_acknowledge.p90)}` : "Nothing acknowledged yet",
     },
     {
       id: "ttdisp",
-      label: "Time to disposition (median)",
+      label: "Time to disposition",
       value: formatDuration(ops.time_to_disposition.p50),
-      foot: `${ops.caught_in_time} of ${plural(ops.episodes, "excursion")} contained in time`,
+      foot: `median · ${ops.caught_in_time} of ${plural(ops.episodes, "excursion")} contained in time`,
     },
     {
       id: "inspections",
@@ -136,7 +137,7 @@ export function opsTiles(ops: OpsSummary): TileView[] {
     },
     {
       id: "rft",
-      label: "Projected RFT",
+      label: PROJECTED_RFT_LABEL,
       value: formatPct(rft.pct),
       foot: rft.parts_started ? `${rft.parts_started - rft.parts_at_risk} of ${rft.parts_started} parts started · no CMM results yet` : "No lots touched",
     },

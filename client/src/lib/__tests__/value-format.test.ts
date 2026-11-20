@@ -145,7 +145,7 @@ describe("operations tiles and bins", () => {
   it("labels RFT as projected and keeps detection provenance", () => {
     const tiles = opsTiles(ops());
     const byId = Object.fromEntries(tiles.map((t) => [t.id, t]));
-    expect(byId.rft.label).toBe("Projected RFT");
+    expect(byId.rft.label).toBe("Projected right-first-time");
     expect(byId.rft.value).toBe("80%");
     expect(byId.rft.foot).toBe("12 of 15 parts started · no CMM results yet");
     expect(byId.ttd.value).toBe("3 s");

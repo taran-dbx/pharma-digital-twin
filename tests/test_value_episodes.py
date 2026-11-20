@@ -14,7 +14,12 @@ from datetime import UTC, datetime, timedelta
 import pytest
 import pytest_asyncio
 
-from iot_twin.domain.lot_context import LOT_CYCLE_S, PARTS_PER_LOT
+from iot_twin.domain.lot_context import (
+    LOT_CYCLE_S,
+    PARTS_PER_LOT,
+    PROJECTED_RFT_LABEL,
+)
+from iot_twin.domain.lot_context import projected_rft as lot_projected_rft
 from iot_twin.models import app_schema
 from iot_twin.services.value.episodes import (
     Episode,
@@ -40,7 +45,6 @@ def _row(**kw):
         "alert_id": "a1",
         "episode_opened_at": LOT_START + timedelta(seconds=30),
         "onset_raw": None,
-        "onset_source": None,
         "rule_id": SPINDLE_RULE,
     }
     return {**base, **kw}
@@ -80,9 +84,7 @@ class TestDefinitions:
         """[C7924][smoke] Onset is the first over-limit reading when the opened event has it."""
         opened = LOT_START + timedelta(seconds=30)
         onset = opened - timedelta(seconds=4)
-        ep = episode_from_row(
-            _row(onset_raw=onset.isoformat(), onset_source="first_reading"), "manufacturing", opened
-        )
+        ep = episode_from_row(_row(onset_raw=onset.isoformat()), "manufacturing", opened)
         assert ep.onset_at == onset
         assert ep.onset_source == "first_reading"
         assert ep.time_to_detect_s == 4
@@ -151,15 +153,25 @@ class TestOpsMetrics:
         assert percentile([1, 2, 3, 4], 90) == pytest.approx(3.7)
 
     def test_projected_rft_c7932_smoke(self) -> None:
-        """[C7932][smoke] projected RFT = (parts started − parts at risk) / parts started."""
+        """[C7932][smoke] Window RFT sums the canonical per-excursion projected RFT."""
         onset = LOT_START + timedelta(seconds=1)
-        ep = Episode("a", onset, onset, "first_reading", cleared_at=onset + timedelta(seconds=30))
+        end = onset + timedelta(seconds=LOT_CYCLE_S)
+        ep = Episode(
+            "a",
+            onset,
+            onset,
+            "first_reading",
+            cleared_at=onset + timedelta(seconds=30),
+            window_end=end,
+        )
+        canonical = lot_projected_rft(onset, onset + timedelta(seconds=30), end)
         rft = projected_rft([ep])
-        assert rft["label"] == "projected RFT"
-        assert rft["parts_started"] == PARTS_PER_LOT
-        at_risk = rft["parts_at_risk"]
-        assert at_risk == len(ep.disposition["parts_at_risk"])
-        assert rft["pct"] == round((PARTS_PER_LOT - at_risk) / PARTS_PER_LOT * 100, 2)
+        assert rft["label"] == PROJECTED_RFT_LABEL
+        assert rft["parts_started"] == canonical["parts_started"] == PARTS_PER_LOT
+        assert rft["parts_at_risk"] == canonical["parts_at_risk"]
+        assert rft["pct"] == canonical["pct"]
+        doubled = projected_rft([ep, ep])
+        assert doubled["pct"] == rft["pct"]
         assert projected_rft([])["pct"] is None
 
     def test_ops_summary_counts_c7933_smoke(self) -> None:
@@ -273,7 +285,9 @@ async def _seed(conn, pipeline_id: str) -> dict[str, datetime]:
     t0 = LOT_START + timedelta(seconds=40)
     a = await _alert(conn, pipeline_id)
     # episode 1: onset known, contained (quarantine + CMM + NCR) inside the lot, cleared
-    await _event(conn, a, "opened", t0, t0, onset_at=(t0 - timedelta(seconds=5)).isoformat())
+    await _event(
+        conn, a, "opened", t0, t0, excursion_started_at=(t0 - timedelta(seconds=5)).isoformat()
+    )
     await _event(conn, a, "acknowledged", t0 + timedelta(seconds=15), t0)
     await _event(conn, a, "cleared", t0 + timedelta(seconds=90), t0, value=55.0)
     await _decision(conn, a, t0, "quarantine_lot", t0 + timedelta(seconds=20))
@@ -285,7 +299,7 @@ async def _seed(conn, pipeline_id: str) -> dict[str, datetime]:
         a,
         t0 + timedelta(seconds=25),
     )
-    # episode 2 on the same row, no onset_at (legacy) → rule-duration fallback, contained late
+    # episode 2 on the same row, no onset on the event (legacy) → rule-duration fallback, contained late
     t1 = t0 + timedelta(seconds=LOT_CYCLE_S * 3)
     await _event(conn, a, "opened", t1, t1)
     await _decision(conn, a, t1, "quarantine_lot", t1 + timedelta(seconds=LOT_CYCLE_S))
@@ -327,6 +341,27 @@ class TestActualsSql:
         assert out["ncrs_opened"] == 1
         assert out["cmm_inspections"] == 1
         assert out["lots_quarantined"] >= 2  # the open episode spans to the window end
+
+    @pytest.mark.asyncio
+    async def test_current_episode_onset_from_row_metadata_c7939_regression(self, pg) -> None:
+        """[C7939][regression] The live episode falls back to the alert row's stamped onset."""
+        pid = str(uuid.uuid4())
+        t0 = LOT_START + timedelta(seconds=60)
+        alert_id = await _alert(pg, pid)
+        await pg.execute(
+            "UPDATE alert SET opened_at = $2, metadata = jsonb_build_object("
+            "'excursion_started_at', $3::text) WHERE id = $1::uuid",
+            alert_id,
+            t0,
+            (t0 - timedelta(seconds=7)).isoformat(),
+        )
+        await _event(pg, alert_id, "opened", t0, t0)
+        window = await fetch_episode_window(
+            pg, (pid,), "manufacturing", t0 - timedelta(hours=1), t0 + timedelta(hours=1)
+        )
+        (episode,) = window.episodes
+        assert episode.onset_source == "first_reading"
+        assert episode.time_to_detect_s == 7
 
     @pytest.mark.asyncio
     async def test_window_and_pipeline_filters_c7936_regression(self, pg) -> None:

@@ -8,9 +8,10 @@ into SQL.
 
 Definitions (see docs/value-model.md):
 
-* **onset** — the event time of the first over-limit reading (``onset_at`` on
-  the ``opened`` event, written by the alert engine); when that is unknown,
-  ``opened_at - rule.duration_s``. Never later than ``opened_at``.
+* **onset** — the first over-limit reading the alert engine saw
+  (``excursion_started_at``: on the ``opened`` event, or on the alert row's
+  metadata for its current episode); when unknown, ``opened_at -
+  rule.duration_s``. Never later than ``opened_at``.
 * **containment window** — onset → ``cleared_at``, or the ``request_cmm_inspection``
   decision if earlier (it stops the mill, so no more parts are cut); the window end
   while still open.
@@ -84,7 +85,8 @@ def validate_pipeline_id(raw: str | None) -> str:
 
 _EPISODES_SQL = """
 WITH scoped AS (
-    SELECT id, rule_id, severity, fault_code, threshold
+    SELECT id, rule_id, severity, fault_code, threshold, opened_at,
+           metadata->>'excursion_started_at' AS row_onset
     FROM alert
     WHERE pipeline_id = ANY($1::text[]) AND industry = $2
 ),
@@ -97,8 +99,8 @@ events AS (
 ),
 episodes AS (
     SELECT alert_id, episode_opened_at,
-           MIN(payload->>'onset_at') FILTER (WHERE event_type = 'opened') AS onset_raw,
-           MIN(payload->>'onset_source') FILTER (WHERE event_type = 'opened') AS onset_source,
+           MIN(payload->>'excursion_started_at') FILTER (WHERE event_type = 'opened')
+               AS event_onset,
            MIN(created_at) FILTER (WHERE event_type = 'acknowledged') AS acknowledged_at,
            MIN(created_at) FILTER (WHERE event_type = 'cleared') AS cleared_at,
            MAX((payload->>'value')::double precision)
@@ -119,7 +121,11 @@ decisions AS (
     JOIN scoped s ON s.id = r.alert_id
     GROUP BY r.alert_id, r.episode_opened_at
 )
-SELECT ep.alert_id, ep.episode_opened_at, ep.onset_raw, ep.onset_source,
+SELECT ep.alert_id, ep.episode_opened_at,
+       COALESCE(
+           ep.event_onset,
+           CASE WHEN s.opened_at = ep.episode_opened_at THEN s.row_onset END
+       ) AS onset_raw,
        ep.acknowledged_at, ep.cleared_at, ep.peak_value,
        s.rule_id, s.severity, s.fault_code, s.threshold,
        d.first_decision_at, d.contained_at, d.quarantined_at, d.cmm_at, d.ncr_at,
@@ -226,7 +232,7 @@ class Episode:
 
     @property
     def disposition(self) -> dict[str, Any]:
-        return lot_disposition(self.onset_at, self.containment_end)
+        return lot_disposition(self.onset_at, self.containment_end, self.window_end)
 
     @property
     def time_to_detect_s(self) -> float:
@@ -250,7 +256,7 @@ def episode_from_row(row: Mapping[str, Any], industry: str, window_end: datetime
     """Build an episode, resolving onset as documented in the module docstring."""
     opened_at = _utc(row["episode_opened_at"])
     onset = _parse_iso(row.get("onset_raw"))
-    source = str(row.get("onset_source") or "first_reading")
+    source = "first_reading"
     if onset is None:
         onset = opened_at - timedelta(seconds=rule_duration_s(industry, row.get("rule_id")))
         source = "rule_duration"

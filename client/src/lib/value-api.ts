@@ -132,7 +132,7 @@ export interface OpsSummary {
   maintenance_requests: number;
   production_stops: number;
   caught_in_time: number;
-  projected_rft: { label: string; pct: number | null; parts_started: number; parts_at_risk: number };
+  projected_rft: { label: string; definition?: string; pct: number | null; parts_started: number; parts_at_risk: number };
   recent_events: RecentEvent[];
 }
 
