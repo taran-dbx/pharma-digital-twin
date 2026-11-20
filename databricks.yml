@@ -55,6 +55,12 @@ variables:
   genai_endpoint:
     description: "Foundation Model serving endpoint for the AI action plan (granted CAN_QUERY, injected as GENAI_ENDPOINT). Any READY chat endpoint works, e.g. databricks-claude-haiku-5-5 or databricks-meta-llama-3-3-70b-instruct."
     default: databricks-claude-sonnet-5-5
+  secret_scope:
+    description: "Secret scope holding app secrets. Create it and the pseudonym key before deploying (see docs/genai-action-plan.md#people-and-free-text-pii)."
+    default: pharma-twin-secrets
+  genai_pseudonym_salt_key:
+    description: "Key in secret_scope holding the AI action-plan pseudonym HMAC key (>= 16 chars, e.g. openssl rand -hex 32). Injected as GENAI_PSEUDONYM_SALT (READ)."
+    default: genai-pseudonym-salt
   usage_tracking_enabled:
     description: Usage tracking via dbdemos-tracker ("false" to opt out).
     default: "true"

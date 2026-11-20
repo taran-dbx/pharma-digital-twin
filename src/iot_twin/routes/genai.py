@@ -40,6 +40,7 @@ from iot_twin.services.genai.audit_store import AuditStoreUnavailable, audit_sto
 from iot_twin.services.genai.audit_sync import mark_audit_dirty
 from iot_twin.services.genai.grounding import GroundingSources
 from iot_twin.services.genai.limits import RateLimited, limiter_for
+from iot_twin.services.genai.status import status_payload
 from iot_twin.services.industry.industry_templates import MODES
 
 router = APIRouter()
@@ -159,6 +160,15 @@ async def list_action_plans(
     except AuditStoreUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"alert_id": alert_id, "plans": [plan.summary() for plan in plans]}
+
+
+@router.get("/api/genai/status")
+async def genai_status(
+    state: AppState = Depends(get_app_state),
+    _user: str = Depends(require_identity),
+):
+    """Pseudonym key source, append-only enforcement and call limits."""
+    return await status_payload(state, _backend_db(state))
 
 
 @router.get("/api/genai/audit/{plan_id}")

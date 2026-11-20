@@ -395,6 +395,16 @@ END
 $$
 """
 
+# App-generated GenAI settings, e.g. the pseudonym HMAC key used when no
+# GENAI_PSEUDONYM_SALT secret is bound (services/genai/redact.py).
+GENAI_SETTINGS_DDL = """
+CREATE TABLE IF NOT EXISTS genai_settings (
+    name TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)
+"""
+
 GENAI_ACTION_PLAN_AUDIT_INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_genai_audit_alert_requested "
     "ON genai_action_plan_audit (alert_id, requested_at DESC)",
@@ -557,3 +567,4 @@ async def ensure_app_schema(db: _Executor) -> None:
     await ensure_alert_response_table(db)
     await ensure_production_tables(db)
     await ensure_genai_action_plan_audit_table(db)
+    await db.execute(GENAI_SETTINGS_DDL)

@@ -46,6 +46,8 @@ resources:
             value_from: genie-space
           - name: GENAI_ENDPOINT
             value_from: genai-endpoint
+          - name: GENAI_PSEUDONYM_SALT
+            value_from: genai-pseudonym-salt
           - name: USAGE_TRACKING_ENABLED
             value: ${var.usage_tracking_enabled}
       resources:
@@ -62,6 +64,11 @@ resources:
           serving_endpoint:
             name: ${var.genai_endpoint}
             permission: CAN_QUERY
+        - name: genai-pseudonym-salt
+          secret:
+            scope: ${var.secret_scope}
+            key: ${var.genai_pseudonym_salt_key}
+            permission: READ
         - name: lakebase
           postgres:
             branch: projects/${var.lakebase_project}/branches/${var.lakebase_branch}

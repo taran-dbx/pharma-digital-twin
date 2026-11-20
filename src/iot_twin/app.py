@@ -28,6 +28,7 @@ from iot_twin.services.deployment.deployment_service import (
     sync_runtime_oauth_secret,
 )
 from iot_twin.services.genai.audit_sync import start_genai_audit_sync
+from iot_twin.services.genai.status import init_genai_privacy
 from iot_twin.services.simulator_service import run_simulator
 from iot_twin.services.usage_tracking import UsageTracker, UsageTrackingMiddleware
 
@@ -101,6 +102,7 @@ async def lifespan(application: FastAPI):
             await app_db.ensure_user_settings_table()
             await app_db.ensure_source_bindings_table()
             logger.info("App-backend schema ensured")
+            await init_genai_privacy(app_db)
         except Exception as exc:
             err_msg = f"{type(exc).__name__}: {exc}"
             logger.warning(
@@ -120,6 +122,7 @@ async def lifespan(application: FastAPI):
         state.db_error = "PGHOST not set"
         state.app_backend_available = False
         state.app_backend_error = "PGHOST not set"
+        await init_genai_privacy(None)
 
     secret_sync = asyncio.create_task(publish_runtime_oauth_secret())
     # Off the startup path: the workspace-id lookup must not delay boot.
