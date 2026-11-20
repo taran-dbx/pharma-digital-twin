@@ -343,3 +343,101 @@ class TestSignedRecordsOnStaleTable:
         with pytest.raises(asyncpg.RestrictViolationError):
             await conn.execute("DELETE FROM alert WHERE id = $1::uuid", alert_id)
         assert await conn.fetchval("SELECT count(*) FROM alert_response") == 3
+
+
+@pytest.mark.asyncio
+class TestReopenedEpisodeMetadata:
+    async def test_reopen_replaces_the_first_episodes_metadata_c7828_defect(self, pg) -> None:
+        """[C7828][defect] A reopened alert row carries the 2nd episode's start and lot, not the 1st."""
+        from dataclasses import replace
+        from datetime import UTC, datetime, timedelta
+
+        from iot_twin.domain import lot_context
+        from iot_twin.domain.catalog import list_alert_rules
+        from iot_twin.services.alerts.alert_engine import AlertEngine
+        from iot_twin.services.alerts.alert_responses import excursion_start
+
+        conn, _server, _db = pg
+        await app_schema.ensure_alert_table(conn)
+        await app_schema.ensure_alert_event_table(conn)
+        rule = replace(
+            next(
+                r
+                for r in list_alert_rules("manufacturing")
+                if r.rule_id == "mfg-alert-spindle-temp"
+            ),
+            duration_s=0.0,
+        )
+        clock = {"t": datetime(2026, 11, 18, 9, 0, 1, tzinfo=UTC)}
+        engine = AlertEngine(now_fn=lambda: clock["t"])
+
+        def reading(value: float) -> list[dict]:
+            return [
+                {
+                    "sensor_name": "cnc_1_spindle_temp",
+                    "value": value,
+                    "timestamp": clock["t"].timestamp(),
+                    "metadata": lot_context.lot_context_at(clock["t"]),
+                }
+            ]
+
+        (first,) = await engine.evaluate(reading(66.0), [rule], industry="manufacturing", db=conn)
+        clock["t"] += timedelta(seconds=40)
+        await engine.evaluate(reading(50.0), [rule], industry="manufacturing", db=conn)
+        clock["t"] = datetime(2026, 11, 20, 14, 33, 47, tzinfo=UTC)  # two days later
+        (second,) = await engine.evaluate(reading(65.0), [rule], industry="manufacturing", db=conn)
+        assert second.alert.id == first.alert.id
+
+        # A restarted replica: no cache, everything comes from Lakebase.
+        fresh = AlertEngine(now_fn=lambda: clock["t"])
+        loaded = await fresh.get_alert(first.alert.id, db=conn)
+        assert loaded is not None
+        assert loaded.opened_at == clock["t"]
+        assert loaded.metadata["excursion_started_at"] == clock["t"].isoformat()
+        assert loaded.metadata["lot_id"] == lot_context.lot_id_at(clock["t"])
+        assert (
+            loaded.metadata["part_serial"] == lot_context.lot_context_at(clock["t"])["part_serial"]
+        )
+        assert loaded.metadata["lot_id"] != first.alert.metadata["lot_id"]
+        assert loaded.fault_code == "VPP-SPINDLE3-TEMP"
+        assert excursion_start(loaded, clock["t"]) == clock["t"]
+
+    async def test_reopen_refreshes_a_pre_rename_fault_code_c7828_regression(self, pg) -> None:
+        """[C7828][regression] A row stored with the CNC-era fault code takes the new one on reopen."""
+        from dataclasses import replace
+        from datetime import UTC, datetime, timedelta
+
+        from iot_twin.domain.catalog import list_alert_rules
+        from iot_twin.services.alerts.alert_engine import AlertEngine
+
+        conn, _server, _db = pg
+        await app_schema.ensure_alert_table(conn)
+        await app_schema.ensure_alert_event_table(conn)
+        rule = replace(
+            next(
+                r
+                for r in list_alert_rules("manufacturing")
+                if r.rule_id == "mfg-alert-spindle-temp"
+            ),
+            duration_s=0.0,
+        )
+        clock = {"t": datetime(2026, 11, 20, 9, 0, 0, tzinfo=UTC)}
+        engine = AlertEngine(now_fn=lambda: clock["t"])
+        old = replace(rule, fault_code="M-SPINDLE-OVERTEMP")
+        read = [{"sensor_name": "cnc_1_spindle_temp", "value": 66.0}]
+        (first,) = await engine.evaluate(read, [old], industry="manufacturing", db=conn)
+        clock["t"] += timedelta(seconds=30)
+        await engine.evaluate(
+            [{"sensor_name": "cnc_1_spindle_temp", "value": 50.0}],
+            [old],
+            industry="manufacturing",
+            db=conn,
+        )
+        clock["t"] += timedelta(seconds=300)
+        await AlertEngine(now_fn=lambda: clock["t"]).evaluate(
+            read, [rule], industry="manufacturing", db=conn
+        )
+        code = await conn.fetchval(
+            "SELECT fault_code FROM alert WHERE id = $1::uuid", first.alert.id
+        )
+        assert code == "VPP-SPINDLE3-TEMP"

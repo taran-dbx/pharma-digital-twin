@@ -9,7 +9,7 @@ import logging
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from iot_twin.domain.catalog import (
@@ -44,6 +44,9 @@ logger = logging.getLogger("iot_digital_twin.services.alert_engine")
 
 ACTIVE_STATUSES = ("open", "acknowledged")
 EXCURSION_STARTED_KEY = "excursion_started_at"
+# A first-violation stamp further back than duration_s + this is not trusted
+# (mirrors DETECT_LOOKBACK_S in client/src/lib/manufacturing-quality.ts).
+DETECT_LOOKBACK_S = 120.0
 
 _DB_EVENT_TYPES = {
     EVENT_OPENED: "opened",
@@ -339,6 +342,52 @@ def _as_datetime(value: Any) -> datetime | None:
     return None
 
 
+def reading_time(reading: Mapping[str, Any] | None) -> datetime | None:
+    """Device time of a reading (``timestamp`` epoch s/ms or ``event_time``), if any."""
+    if not reading:
+        return None
+    for key in ("timestamp", "event_time"):
+        raw = reading.get(key)
+        if raw is None or raw == "":
+            continue
+        if isinstance(raw, int | float) and not isinstance(raw, bool):
+            seconds = float(raw)
+            if seconds > 1e14:  # epoch microseconds (Zerobus)
+                seconds /= 1_000_000
+            elif seconds > 1e11:  # epoch milliseconds
+                seconds /= 1000
+            try:
+                return datetime.fromtimestamp(seconds, UTC)
+            except (OverflowError, OSError, ValueError):
+                return None
+        parsed = _as_datetime(raw)
+        if parsed is not None:
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    return None
+
+
+def excursion_started_at(
+    first_reading_at: datetime | None,
+    first_seen_at: datetime,
+    opened_at: datetime,
+    duration_s: float,
+) -> datetime:
+    """When the excursion began, for ``metadata.excursion_started_at``.
+
+    Prefers the first violating reading's own device time; else the engine's
+    first-violation clock, never later than ``opened_at - duration_s`` (a lost
+    pending state would otherwise stamp the opening instant). Device times
+    outside ``[opened - duration - lookback, opened]`` are not trusted.
+    """
+    fallback = min(first_seen_at, opened_at - timedelta(seconds=duration_s))
+    if first_reading_at is None:
+        return fallback
+    earliest = opened_at - timedelta(seconds=duration_s + DETECT_LOOKBACK_S)
+    if earliest <= first_reading_at <= opened_at:
+        return first_reading_at
+    return fallback
+
+
 def _row_to_alert(row: Any) -> AlertRecord:
     data = dict(row)
     sensor_ids = data.get("sensor_ids") or []
@@ -381,6 +430,8 @@ class AlertEngine:
         self._by_fingerprint: dict[str, AlertRecord] = {}
         self._by_id: dict[str, AlertRecord] = {}
         self._pending: dict[str, datetime] = {}
+        # Device time of the first violating reading of a pending excursion.
+        self._pending_reading: dict[str, datetime] = {}
         self._lock = asyncio.Lock()
 
     def get_alert_sync(self, alert_id: str) -> AlertRecord | None:
@@ -635,9 +686,15 @@ class AlertEngine:
             if existing is None or existing.status == "cleared":
                 started = self._pending.get(fp, now)
                 self._pending[fp] = started
+                first_reading = self._pending_reading.get(fp)
+                if first_reading is None:
+                    first_reading = reading_time(index.get(rule.sensor_id))
+                    if first_reading is not None:
+                        self._pending_reading[fp] = first_reading
                 if (now - started).total_seconds() < duration:
                     return None
                 self._pending.pop(fp, None)
+                self._pending_reading.pop(fp, None)
                 alert = AlertRecord(
                     id=str(uuid.uuid4()),
                     fingerprint=fp,
@@ -660,7 +717,11 @@ class AlertEngine:
                         **(
                             {}
                             if rule.rule_id == MODEL_RULE_ID
-                            else {EXCURSION_STARTED_KEY: started.isoformat()}
+                            else {
+                                EXCURSION_STARTED_KEY: excursion_started_at(
+                                    first_reading, started, now, duration
+                                ).isoformat()
+                            }
                         ),
                         **live,
                     },
@@ -697,6 +758,7 @@ class AlertEngine:
         # for this sensor; only an in-limit reading restarts the duration timer.
         if value is not None:
             self._pending.pop(fp, None)
+            self._pending_reading.pop(fp, None)
         if existing is None or existing.status == "cleared":
             return None
         recovered, clear_value = _any_required_recovered(rule, index)
@@ -827,6 +889,20 @@ class AlertEngine:
                             WHEN alert.status = 'cleared' THEN EXCLUDED.opened_at
                             ELSE alert.opened_at
                         END,
+                        -- Per-episode: a reopen takes the new episode's lot context,
+                        -- excursion start and fault code; updates keep the open one's.
+                        -- The model alert (MODEL_RULE_ID) also refreshes its score
+                        -- fields (risk_score, model_version, top_features) on update.
+                        metadata = CASE
+                            WHEN alert.status = 'cleared' THEN EXCLUDED.metadata
+                            WHEN alert.rule_id = 'medtech-model-spindle-risk'
+                                THEN COALESCE(alert.metadata, '{}'::jsonb) || EXCLUDED.metadata
+                            ELSE alert.metadata
+                        END,
+                        fault_code = CASE
+                            WHEN alert.status = 'cleared' THEN EXCLUDED.fault_code
+                            ELSE alert.fault_code
+                        END,
                         status = EXCLUDED.status,
                         severity = EXCLUDED.severity,
                         value = EXCLUDED.value,
@@ -838,10 +914,6 @@ class AlertEngine:
                         cleared_at = EXCLUDED.cleared_at,
                         pipeline_id = EXCLUDED.pipeline_id,
                         industry = EXCLUDED.industry,
-                        metadata = CASE
-                            WHEN alert.status = 'cleared' THEN EXCLUDED.metadata
-                            ELSE COALESCE(alert.metadata, '{}'::jsonb) || EXCLUDED.metadata
-                        END,
                         version = alert.version + 1
                     WHERE
                         EXCLUDED.status = 'cleared'

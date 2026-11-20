@@ -194,5 +194,9 @@ async def test_upsert_sql_refreshes_metadata_and_resets_it_on_reopen() -> None:
     engine = AlertEngine(now_fn=Clock())
     await engine.ingest_model_scores([_score(0.8)], db=SqlSpy())
     upsert = next(sql for sql in captured if "ON CONFLICT (fingerprint) DO UPDATE" in sql)
+    assert upsert.count("metadata = CASE") == 1
     assert "WHEN alert.status = 'cleared' THEN EXCLUDED.metadata" in upsert
+    # Only the model alert merges new metadata on update; the literal must track
+    # MODEL_RULE_ID.
+    assert f"WHEN alert.rule_id = '{MODEL_RULE_ID}'" in upsert
     assert "COALESCE(alert.metadata, '{}'::jsonb) || EXCLUDED.metadata" in upsert
