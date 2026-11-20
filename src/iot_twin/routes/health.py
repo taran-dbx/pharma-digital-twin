@@ -13,6 +13,7 @@ from iot_twin.core.workspace_config import (
     get_pipelines_project,
     get_secret_scope,
     get_service_credential,
+    get_uc_schema,
 )
 
 router = APIRouter()
@@ -79,7 +80,7 @@ async def app_defaults():
         # One-schema layout (Task 3/4): pre-existing catalog + single schema for
         # all industry-prefixed managed tables (e.g. {industry}_zerobus, {industry}_metrics).
         "uc_catalog": os.getenv("UC_CATALOG", ""),
-        "uc_schema": os.getenv("UC_SCHEMA", ""),
+        "uc_schema": get_uc_schema(),
         # RESOURCE_PREFIX: the client builds topic / consumer-group / job names from it.
         "resource_prefix": get_resource_prefix(),
     }

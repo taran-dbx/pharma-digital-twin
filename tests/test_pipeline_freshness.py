@@ -13,7 +13,7 @@ import pytest
 from iot_twin.services.pipelines import pipeline_freshness as pf
 
 _UC_CATALOG = "example_eu_catalog"
-_UC_SCHEMA = "rtm_lakets_zb"
+_UC_SCHEMA = "pharma_twin_zb"
 
 
 @pytest.fixture(autouse=True)

@@ -17,7 +17,7 @@ from httpx import ASGITransport, AsyncClient
 from iot_twin.core.state import AppState
 
 _UC_CATALOG = "example_eu_catalog"
-_UC_SCHEMA = "rtm_lakets_zb"
+_UC_SCHEMA = "pharma_twin_zb"
 
 
 def _build_app(state: AppState) -> FastAPI:

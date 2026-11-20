@@ -415,7 +415,7 @@ class TestProvisionRouteForwardsTiering:
             {
                 "mode": "autoscale",
                 "table_name": "sensor_readings",
-                "project_id": "proj-1",
+                "project_id": "pharma-twin-proj-1",
                 "branch_id": "production",
                 "pipeline_id": "pipe-123",
             }
@@ -435,7 +435,7 @@ class TestProvisionRouteForwardsTiering:
         svc_mock.assert_awaited_once()
         lb_arg = svc_mock.await_args.args[0]
         assert lb_arg["mode"] == "autoscale"
-        assert lb_arg["project_id"] == "proj-1"
+        assert lb_arg["project_id"] == "pharma-twin-proj-1"
         assert lb_arg["branch_id"] == "production"
         assert lb_arg["tiering"] == {"hot": "1 hour", "drop": "7 days"}
         assert response["status"] == "created"

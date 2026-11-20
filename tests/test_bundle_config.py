@@ -88,3 +88,30 @@ def test_deployment_doc_lists_exactly_the_required_variables() -> None:
     assert documented == required, (
         f"missing from docs: {required - documented}; stale in docs: {documented - required}"
     )
+
+
+def test_resource_prefix_ident_is_tied_to_resource_prefix() -> None:
+    """``resource_prefix_ident`` must be the underscore form of ``resource_prefix``.
+
+    DABs has no string replace, so the pair is declared twice. A mismatch would give
+    ``uc_schema`` a name outside the prefix namespace, which the app rejects at startup.
+    """
+    from iot_twin.core.config import validate_resource_prefix
+
+    variables = _bundle_variables()
+    prefix = validate_resource_prefix(str(variables["resource_prefix"]["default"]))
+    assert variables["resource_prefix_ident"]["default"] == prefix.replace("-", "_")
+    overrides = _example_overrides()
+    if "resource_prefix" in overrides or "resource_prefix_ident" in overrides:
+        assert overrides.get("resource_prefix_ident") == str(
+            overrides.get("resource_prefix", prefix)
+        ).replace("-", "_"), "override resource_prefix and resource_prefix_ident together"
+
+
+def test_derived_uc_schema_passes_the_app_ownership_check(monkeypatch) -> None:
+    from iot_twin.core.config import is_owned_name
+
+    variables = _bundle_variables()
+    monkeypatch.setenv("RESOURCE_PREFIX", str(variables["resource_prefix"]["default"]))
+    assert variables["uc_schema"]["default"] == "${var.resource_prefix_ident}"
+    assert is_owned_name(str(variables["resource_prefix_ident"]["default"]))

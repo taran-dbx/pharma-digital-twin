@@ -13,7 +13,7 @@ from iot_twin.services.alerts import alert_snapshot_sync as snapshot_sync
 from iot_twin.services.alerts.alert_engine import AlertEngine, evaluate_and_emit
 
 CATALOG = "test_catalog"
-SCHEMA = "test_schema"
+SCHEMA = "pharma_twin_test"
 
 
 @pytest.fixture(autouse=True)

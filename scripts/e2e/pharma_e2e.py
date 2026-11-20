@@ -100,17 +100,19 @@ async def _assert_owned_setup(db, setup: dict | None, setup_id: str) -> dict:
     """Refuse to delete anything unless the setup row is this script's own.
 
     The row must exist, match the state-file id and industry, and every ledger
-    row that names a Lakebase project, catalog or secret scope must be owned.
+    row naming a Lakebase path, UC catalog/schema/table/volume, secret scope,
+    Kafka topic or service principal must be owned
+    (:func:`iot_twin.services.ownership.assert_owned_ledger_row`).
     """
+    from iot_twin.core.workspace_config import get_uc_catalog
     from iot_twin.services import resource_ledger
+    from iot_twin.services.ownership import assert_owned_ledger
 
     if not setup or str(setup.get("id")) != str(setup_id) or setup.get("industry") != INDUSTRY:
         raise SystemExit(f"setup {setup_id!r} is missing or not this script's {INDUSTRY} setup")
-    for res in await resource_ledger.list_resources(db, setup_id):
-        ident = str(res.get("identifier") or "")
-        rtype = res.get("resource_type")
-        if ident.startswith("projects/") or rtype in ("uc_catalog", "secret_scope"):
-            assert_owned_name(ident, what=f"ledger {rtype}")
+    assert_owned_ledger(
+        await resource_ledger.list_resources(db, setup_id), shared_catalog=get_uc_catalog()
+    )
     return setup
 
 

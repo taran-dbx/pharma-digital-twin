@@ -18,7 +18,7 @@ import pytest
 
 # Canonical new-workspace constants (config values baked into the app env).
 UC_CATALOG = "example_eu_catalog"
-UC_SCHEMA = "rtm_lakets_zb"
+UC_SCHEMA = "pharma_twin_zb"
 
 
 @pytest.fixture(autouse=True)

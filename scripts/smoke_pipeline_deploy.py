@@ -34,11 +34,12 @@ from httpx import ASGITransport, AsyncClient
 from scripts._profile import require_profile
 
 from iot_twin.core import resource_names
-from iot_twin.core.config import LAKEBASE_SYNC_DATABASE
+from iot_twin.core.config import LAKEBASE_SYNC_DATABASE, owned_env
 from iot_twin.core.state import AppState
 from iot_twin.routes.provisioning import router as provisioning_router
 
-PROJECT_ID = os.getenv("LAKETS_PROJECT_ID") or resource_names.lakets_demo_project()
+# Owned names only: an upstream project id (outside RESOURCE_PREFIX) is rejected here.
+PROJECT_ID = owned_env("LAKETS_PROJECT_ID") or resource_names.lakets_demo_project()
 BRANCH_ID = os.getenv("LAKETS_BRANCH_ID", "production")
 DATABASE = os.getenv("PGDATABASE", LAKEBASE_SYNC_DATABASE)
 TABLE = os.getenv("PG_TABLE", "sensor_readings")

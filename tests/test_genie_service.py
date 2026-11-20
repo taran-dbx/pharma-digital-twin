@@ -226,7 +226,7 @@ def test_allowlist_is_intelligence_tables_only_c7501_regression(
 ) -> None:
     """[C7501][regression] Genie context exposes dedicated intelligence tables only."""
     monkeypatch.setenv("UC_CATALOG", "cat")
-    monkeypatch.setenv("UC_SCHEMA", "sch")
+    monkeypatch.setenv("UC_SCHEMA", "pharma_twin_sch")
     tables = gs.allowed_uc_tables("manufacturing", "realtime")
     assert tables
     assert all("intelligence_" in name for name in tables)
@@ -239,7 +239,7 @@ def test_space_allowlist_manual_when_uninspectable_c7501_usability(
     """[C7501][usability] Uninspectable Genie spaces require a manual table allowlist."""
     monkeypatch.setenv("GENIE_SPACE_ID", "space-1")
     monkeypatch.setenv("UC_CATALOG", "cat")
-    monkeypatch.setenv("UC_SCHEMA", "sch")
+    monkeypatch.setenv("UC_SCHEMA", "pharma_twin_sch")
     monkeypatch.delenv("GENIE_ALLOWLIST_CONFIRMED", raising=False)
     status = gs.status_payload(client=MagicMock())
     assert status["enabled"] is False
@@ -253,7 +253,7 @@ def test_space_allowlist_manual_when_uninspectable_c7501_usability(
 def _matching_space_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     monkeypatch.setenv("GENIE_SPACE_ID", "space-1")
     monkeypatch.setenv("UC_CATALOG", "cat")
-    monkeypatch.setenv("UC_SCHEMA", "sch")
+    monkeypatch.setenv("UC_SCHEMA", "pharma_twin_sch")
     tables = gs.allowed_uc_tables("manufacturing", "realtime")
     space = SimpleNamespace(tables=tables)
     client = MagicMock()
@@ -300,7 +300,7 @@ def test_allowlist_mismatch_always_blocks_c7501_defect(
     """[C7501][defect] A mismatched Genie space allowlist always blocks, even with env confirm."""
     monkeypatch.setenv("GENIE_SPACE_ID", "space-1")
     monkeypatch.setenv("UC_CATALOG", "cat")
-    monkeypatch.setenv("UC_SCHEMA", "sch")
+    monkeypatch.setenv("UC_SCHEMA", "pharma_twin_sch")
     monkeypatch.setenv("GENIE_ALLOWLIST_CONFIRMED", "true")
     client = MagicMock()
     client.genie.get_space.return_value = SimpleNamespace(tables=["cat.sch.industry_telemetry"])
@@ -337,7 +337,7 @@ def test_allowlist_manual_requires_admin_env_c7501_defect(
     """[C7501][defect] Uninspectable spaces cannot start until GENIE_ALLOWLIST_CONFIRMED=true."""
     monkeypatch.setenv("GENIE_SPACE_ID", "space-1")
     monkeypatch.setenv("UC_CATALOG", "cat")
-    monkeypatch.setenv("UC_SCHEMA", "sch")
+    monkeypatch.setenv("UC_SCHEMA", "pharma_twin_sch")
     monkeypatch.delenv("GENIE_ALLOWLIST_CONFIRMED", raising=False)
     client = MagicMock()
     with pytest.raises(gs.GenieDisabledError, match="GENIE_ALLOWLIST_CONFIRMED"):
@@ -356,7 +356,7 @@ def test_allowlist_manual_confirmed_allows_conversations_c7501_regression(
     """[C7501][regression] Admin env confirmation is the only substitute for SDK inspection."""
     monkeypatch.setenv("GENIE_SPACE_ID", "space-1")
     monkeypatch.setenv("UC_CATALOG", "cat")
-    monkeypatch.setenv("UC_SCHEMA", "sch")
+    monkeypatch.setenv("UC_SCHEMA", "pharma_twin_sch")
     monkeypatch.setenv("GENIE_ALLOWLIST_CONFIRMED", "true")
     client = MagicMock()
     client.genie.start_conversation.return_value = _Wait(

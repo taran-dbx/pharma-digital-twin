@@ -24,7 +24,7 @@ ZEROBUS_SCOPE_NAME = "pharma-twin-zb-scope"
 
 _FULL_ENV: dict[str, str] = {
     "UC_CATALOG": "test_catalog",
-    "UC_SCHEMA": "test_schema",
+    "UC_SCHEMA": "pharma_twin_test",
     "LAKEBASE_PROJECT": "pharma-twin-backend",
     "LAKEBASE_ENDPOINT": "projects/pharma-twin-backend/branches/production/endpoints/primary",
     "DATABRICKS_SQL_WAREHOUSE_ID": "0123456789abcdef",
@@ -59,7 +59,7 @@ class TestGetConfigReadsEnvVars:
         from iot_twin.core.workspace_config import get_config
 
         cfg = get_config()
-        assert cfg.uc_schema == "test_schema"
+        assert cfg.uc_schema == "pharma_twin_test"
 
     def test_lakebase_project(self, full_env: None) -> None:
         from iot_twin.core.workspace_config import get_config

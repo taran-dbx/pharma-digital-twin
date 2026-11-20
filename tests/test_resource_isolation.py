@@ -275,6 +275,8 @@ ALLOWLIST: dict[str, str] = {
     "databricks.yml": "isolation guard comment lists the upstream names",
     # This file: the pattern itself and the known-legacy fixtures that prove it matches.
     "tests/test_resource_isolation.py": "guard pattern + legacy-form fixtures",
+    # Feeds upstream names to every entry point to prove each one rejects them.
+    "tests/test_ownership_guards.py": "foreign-name fixtures for the rejection tests",
     # Redacted LIVE-RUN snapshots captured from the upstream deployment before the
     # fork (immutable records, regenerated only by re-running the notebook here).
     "ops/notebooks/runs/README.md": "describes the upstream live-run snapshots",

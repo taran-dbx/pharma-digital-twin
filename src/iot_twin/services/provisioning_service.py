@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 
 from iot_twin.core import resource_names
+from iot_twin.core.config import assert_owned_name
 from iot_twin.models.sql_ddl import (
     LAKEBASE_ROLE_ID,
     MATVIEW_1M_DDL,
@@ -430,8 +431,14 @@ async def provision_uc_catalog(uc: dict) -> list[dict]:
 
 
 async def provision_lakebase_table(lb: dict) -> dict:
-    """Create the sensor_readings table in Lakebase (idempotent)."""
+    """Create the sensor_readings table in Lakebase (idempotent).
+
+    Raises :class:`~iot_twin.core.config.NotOwnedError` when an autoscale
+    ``project_id`` is outside this deployment's prefix namespace.
+    """
     mode = lb.get("mode", "autoscale")
+    if mode == "autoscale" and lb.get("project_id"):
+        lb = {**lb, "project_id": assert_owned_name(lb["project_id"], what="Lakebase project_id")}
     table_name = lb.get("pg_table", "sensor_readings")
     database = lb.get("database", "databricks_postgres")
 
@@ -617,7 +624,11 @@ async def provision_lakebase_table(lb: dict) -> dict:
 
 
 async def provision_lakebase_project_and_branch(project_id: str, branch_id: str) -> list[dict]:
-    """Create Lakebase autoscale project and branch if they don't exist."""
+    """Create Lakebase autoscale project and branch if they don't exist.
+
+    Raises :class:`~iot_twin.core.config.NotOwnedError` for a non-owned project.
+    """
+    project_id = assert_owned_name(project_id, what="Lakebase project_id")
     results: list[dict] = []
 
     from databricks.sdk import WorkspaceClient
@@ -856,6 +867,12 @@ async def provision_lakebase_role(
 
     if kwargs:
         logger.warning("provision_lakebase_role received unknown kwargs: %s", list(kwargs.keys()))
+
+    # Ownership guard: never register roles / grant DML on a foreign project.
+    if project_id:
+        project_id = assert_owned_name(project_id, what="Lakebase project_id")
+    if endpoint_name:
+        endpoint_name = assert_owned_name(endpoint_name, what="Lakebase endpoint")
 
     # Normalise sink_tables (tests pass tuples, production uses list).
     sink_tables_list: list[str] = [t for t in sink_tables] if sink_tables else ["sensor_readings"]

@@ -48,7 +48,7 @@ from typing import Any
 from databricks.sdk.service.jobs import Continuous, JobSettings, PauseStatus
 
 from iot_twin.core import resource_names
-from iot_twin.core.workspace_config import APP_SP_OAUTH_SECRET_KEY
+from iot_twin.core.workspace_config import APP_SP_OAUTH_SECRET_KEY, get_uc_schema
 from iot_twin.services import cdf_reconciliation_service, uc_secrets
 from iot_twin.services.databricks_sdk import detect_cloud
 from iot_twin.services.db.app_repo_common import DBExecutor
@@ -171,7 +171,7 @@ async def sync_runtime_oauth_secret(w: Any | None = None) -> dict:
         "DATABRICKS_CLIENT_ID": os.getenv("DATABRICKS_CLIENT_ID", ""),
         "DATABRICKS_CLIENT_SECRET": os.getenv("DATABRICKS_CLIENT_SECRET", ""),
         "UC_CATALOG": os.getenv("UC_CATALOG", ""),
-        "UC_SCHEMA": os.getenv("UC_SCHEMA", ""),
+        "UC_SCHEMA": get_uc_schema(),
     }
     missing = [name for name, value in values.items() if not value]
     if missing:
@@ -218,7 +218,7 @@ def _normalize_consumer_credentials(source: str) -> str:
     runtime_config = {
         "DATABRICKS_CLIENT_ID": os.getenv("DATABRICKS_CLIENT_ID", ""),
         "UC_CATALOG": os.getenv("UC_CATALOG", ""),
-        "UC_SCHEMA": os.getenv("UC_SCHEMA", ""),
+        "UC_SCHEMA": get_uc_schema(),
     }
     required = (
         runtime_config

@@ -90,42 +90,60 @@ def _owned_leaf(name: str) -> str:
     return name
 
 
+class NotOwnedError(ValueError):
+    """Raised when a name is outside this deployment's prefix namespace."""
+
+
+# Owned names are plain lower-case identifiers / Lakebase paths: no spaces,
+# quotes, shell or SQL metacharacters, and no path traversal.
+_OWNED_CHARS_RE = re.compile(r"^[a-z0-9_./-]+$")
+
+
 def is_owned_name(name: str) -> bool:
-    """Return True when ``name`` belongs to this deployment's prefix namespace."""
-    leaf = _owned_leaf((name or "").strip())
-    if not leaf or _LEGACY_NAMESPACE_RE.match(leaf.lower()):
+    """Return True when ``name`` belongs to this deployment's prefix namespace.
+
+    ``name`` must already be stripped (padding is rejected), use only
+    ``[a-z0-9_./-]`` and contain no ``..`` path segment. The owned part (the
+    project of a ``projects/<p>/...`` path, else the whole name) must equal the
+    prefix or its identifier form, or start with ``<prefix>-``, ``<prefix>.``,
+    ``<prefix>_`` or ``<prefix_ident>_``, and must not be in the ``iot`` namespace.
+    """
+    if not name or name != name.strip() or not _OWNED_CHARS_RE.match(name):
+        return False
+    if ".." in name:  # traversal ("../x", "a/../b") and empty dotted segments
+        return False
+    leaf = _owned_leaf(name)
+    if not leaf or _LEGACY_NAMESPACE_RE.match(leaf):
         return False
     prefix = get_resource_prefix()
     ident = get_resource_prefix_ident()
-    return leaf == prefix or any(
+    return leaf in (prefix, ident) or any(
         leaf.startswith(head) for head in (f"{prefix}-", f"{prefix}.", f"{prefix}_", f"{ident}_")
     )
 
 
 def assert_owned_name(name: str, *, what: str = "resource name") -> str:
-    """Return ``name`` unchanged, or raise ``ValueError`` if this app does not own it.
+    """Return ``name`` stripped, or raise :class:`NotOwnedError` if this app does not own it.
 
-    A name is owned when it (or, for ``projects/<p>/...`` Lakebase paths, its
-    project segment) starts with the resource prefix in its hyphen, dot or
-    underscore form and is not in the upstream ``iot`` namespace. Call this on
-    every externally supplied name (env overrides, script inputs, rows read
-    back from a database) before creating, updating or deleting anything.
+    Surrounding whitespace is stripped first; the stripped value must pass
+    :func:`is_owned_name`. Call this on every externally supplied name (env
+    overrides, request bodies, script inputs, rows read back from a database)
+    before creating, updating, connecting to or deleting anything.
     """
-    if not is_owned_name(name):
-        raise ValueError(
+    value = (name or "").strip()
+    if not is_owned_name(value):
+        raise NotOwnedError(
             f"{what} {name!r} is not owned by this deployment: it must start with "
-            f"{get_resource_prefix()!r} (or {get_resource_prefix_ident()!r}) and must not be "
-            "in the upstream 'iot' namespace"
+            f"{get_resource_prefix()!r} (or {get_resource_prefix_ident()!r}), use only "
+            "[a-z0-9_./-] and must not be in the upstream 'iot' namespace"
         )
-    return name
+    return value
 
 
 def owned_env(var: str, *, what: str | None = None) -> str:
     """Read env ``var``; when set, require it to be an owned name. Blank returns ``""``."""
     value = os.getenv(var, "").strip()
-    if value:
-        assert_owned_name(value, what=what or var)
-    return value
+    return assert_owned_name(value, what=what or var) if value else ""
 
 
 def get_uc_service_credential() -> str:

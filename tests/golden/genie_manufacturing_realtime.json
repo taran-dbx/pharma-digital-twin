@@ -78,19 +78,19 @@
  "data_sources": {
   "tables": [
    {
-    "identifier": "cat.sch.intelligence_alert_rules"
+    "identifier": "cat.pharma_twin_sch.intelligence_alert_rules"
    },
    {
-    "identifier": "cat.sch.intelligence_alert_snapshot"
+    "identifier": "cat.pharma_twin_sch.intelligence_alert_snapshot"
    },
    {
-    "identifier": "cat.sch.intelligence_assets"
+    "identifier": "cat.pharma_twin_sch.intelligence_assets"
    },
    {
-    "identifier": "cat.sch.intelligence_maintenance_records"
+    "identifier": "cat.pharma_twin_sch.intelligence_maintenance_records"
    },
    {
-    "identifier": "cat.sch.intelligence_sensor_bindings"
+    "identifier": "cat.pharma_twin_sch.intelligence_sensor_bindings"
    },
    {
     "column_configs": [
@@ -202,10 +202,10 @@
       ]
      }
     ],
-    "identifier": "cat.sch.lb__shadow_manufacturing_sensor_readings_history"
+    "identifier": "cat.pharma_twin_sch.lb__shadow_manufacturing_sensor_readings_history"
    },
    {
-    "identifier": "cat.sch.manufacturing_metrics"
+    "identifier": "cat.pharma_twin_sch.manufacturing_metrics"
    }
   ]
  },
@@ -217,7 +217,7 @@
      "Which lots were machined while Spindle 3 was outside its validated limit?"
     ],
     "sql": [
-     "SELECT t.metadata:lot_id::string AS lot_id, MAX(t.metadata:work_order::string) AS work_order, MAX(t.metadata:dhr_ref::string) AS dhr_ref, COUNT(DISTINCT t.metadata:part_serial::string) AS parts_at_risk, MIN(t.event_time) AS first_excursion, MAX(t.event_time) AS last_excursion, ROUND(MAX(t.value), 1) AS peak_temp_c, MAX(r.threshold) AS validated_limit_c FROM cat.sch.lb__shadow_manufacturing_sensor_readings_history t JOIN cat.sch.intelligence_alert_rules r ON r.rule_id = 'mfg-alert-spindle-temp' AND r.industry = 'manufacturing' WHERE t._pg_change_type IN ('insert', 'update_postimage') AND t.industry = 'manufacturing' AND t.sensor_name = 'cnc_1_spindle_temp' AND t.value > r.threshold AND t.event_time >= current_timestamp() - INTERVAL 24 HOURS AND t.metadata:lot_id::string IS NOT NULL GROUP BY 1 ORDER BY first_excursion DESC"
+     "SELECT t.metadata:lot_id::string AS lot_id, MAX(t.metadata:work_order::string) AS work_order, MAX(t.metadata:dhr_ref::string) AS dhr_ref, COUNT(DISTINCT t.metadata:part_serial::string) AS parts_at_risk, MIN(t.event_time) AS first_excursion, MAX(t.event_time) AS last_excursion, ROUND(MAX(t.value), 1) AS peak_temp_c, MAX(r.threshold) AS validated_limit_c FROM cat.pharma_twin_sch.lb__shadow_manufacturing_sensor_readings_history t JOIN cat.pharma_twin_sch.intelligence_alert_rules r ON r.rule_id = 'mfg-alert-spindle-temp' AND r.industry = 'manufacturing' WHERE t._pg_change_type IN ('insert', 'update_postimage') AND t.industry = 'manufacturing' AND t.sensor_name = 'cnc_1_spindle_temp' AND t.value > r.threshold AND t.event_time >= current_timestamp() - INTERVAL 24 HOURS AND t.metadata:lot_id::string IS NOT NULL GROUP BY 1 ORDER BY first_excursion DESC"
     ]
    },
    {
@@ -226,7 +226,7 @@
      "What is the projected right-first-time of each lot touched by a Spindle 3 excursion today?"
     ],
     "sql": [
-     "WITH started AS (SELECT t.metadata:lot_id::string AS lot_id, COUNT(DISTINCT t.metadata:part_serial::string) AS parts_started FROM cat.sch.lb__shadow_manufacturing_sensor_readings_history t WHERE t._pg_change_type IN ('insert', 'update_postimage') AND t.industry = 'manufacturing' AND t.sensor_name LIKE 'cnc_1_%' AND t.event_time >= current_timestamp() - INTERVAL 24 HOURS AND t.metadata:lot_id::string IS NOT NULL GROUP BY 1), at_risk AS (SELECT t.metadata:lot_id::string AS lot_id, COUNT(DISTINCT t.metadata:part_serial::string) AS parts_at_risk FROM cat.sch.lb__shadow_manufacturing_sensor_readings_history t JOIN cat.sch.intelligence_alert_rules r ON r.rule_id = 'mfg-alert-spindle-temp' AND r.industry = 'manufacturing' WHERE t._pg_change_type IN ('insert', 'update_postimage') AND t.industry = 'manufacturing' AND t.sensor_name = 'cnc_1_spindle_temp' AND t.value > r.threshold AND t.event_time >= current_timestamp() - INTERVAL 24 HOURS AND t.metadata:lot_id::string IS NOT NULL GROUP BY 1) SELECT s.lot_id, s.parts_started, a.parts_at_risk, ROUND(100 * (s.parts_started - a.parts_at_risk) / s.parts_started, 1) AS projected_rft_pct FROM started s JOIN at_risk a ON a.lot_id = s.lot_id ORDER BY s.lot_id DESC"
+     "WITH started AS (SELECT t.metadata:lot_id::string AS lot_id, COUNT(DISTINCT t.metadata:part_serial::string) AS parts_started FROM cat.pharma_twin_sch.lb__shadow_manufacturing_sensor_readings_history t WHERE t._pg_change_type IN ('insert', 'update_postimage') AND t.industry = 'manufacturing' AND t.sensor_name LIKE 'cnc_1_%' AND t.event_time >= current_timestamp() - INTERVAL 24 HOURS AND t.metadata:lot_id::string IS NOT NULL GROUP BY 1), at_risk AS (SELECT t.metadata:lot_id::string AS lot_id, COUNT(DISTINCT t.metadata:part_serial::string) AS parts_at_risk FROM cat.pharma_twin_sch.lb__shadow_manufacturing_sensor_readings_history t JOIN cat.pharma_twin_sch.intelligence_alert_rules r ON r.rule_id = 'mfg-alert-spindle-temp' AND r.industry = 'manufacturing' WHERE t._pg_change_type IN ('insert', 'update_postimage') AND t.industry = 'manufacturing' AND t.sensor_name = 'cnc_1_spindle_temp' AND t.value > r.threshold AND t.event_time >= current_timestamp() - INTERVAL 24 HOURS AND t.metadata:lot_id::string IS NOT NULL GROUP BY 1) SELECT s.lot_id, s.parts_started, a.parts_at_risk, ROUND(100 * (s.parts_started - a.parts_at_risk) / s.parts_started, 1) AS projected_rft_pct FROM started s JOIN at_risk a ON a.lot_id = s.lot_id ORDER BY s.lot_id DESC"
     ]
    },
    {
@@ -235,7 +235,7 @@
      "Which sensors had the most anomalies in the last hour?"
     ],
     "sql": [
-     "SELECT sensor_name, COUNT(*) AS anomalies, MIN(value) AS min_seen, MAX(value) AS max_seen FROM cat.sch.lb__shadow_manufacturing_sensor_readings_history WHERE _pg_change_type IN ('insert', 'update_postimage') AND industry = 'manufacturing' AND (value < min_value OR value > max_value) AND event_time >= current_timestamp() - INTERVAL 1 HOUR GROUP BY sensor_name ORDER BY anomalies DESC"
+     "SELECT sensor_name, COUNT(*) AS anomalies, MIN(value) AS min_seen, MAX(value) AS max_seen FROM cat.pharma_twin_sch.lb__shadow_manufacturing_sensor_readings_history WHERE _pg_change_type IN ('insert', 'update_postimage') AND industry = 'manufacturing' AND (value < min_value OR value > max_value) AND event_time >= current_timestamp() - INTERVAL 1 HOUR GROUP BY sensor_name ORDER BY anomalies DESC"
     ]
    },
    {
@@ -244,7 +244,7 @@
      "How many minutes of downtime did each sensor have in the last 24 hours?"
     ],
     "sql": [
-     "SELECT sensor_name, COUNT(DISTINCT date_trunc('minute', event_time)) AS downtime_minutes FROM cat.sch.lb__shadow_manufacturing_sensor_readings_history WHERE _pg_change_type IN ('insert', 'update_postimage') AND industry = 'manufacturing' AND fault_active AND event_time >= current_timestamp() - INTERVAL 24 HOURS GROUP BY sensor_name ORDER BY downtime_minutes DESC"
+     "SELECT sensor_name, COUNT(DISTINCT date_trunc('minute', event_time)) AS downtime_minutes FROM cat.pharma_twin_sch.lb__shadow_manufacturing_sensor_readings_history WHERE _pg_change_type IN ('insert', 'update_postimage') AND industry = 'manufacturing' AND fault_active AND event_time >= current_timestamp() - INTERVAL 24 HOURS GROUP BY sensor_name ORDER BY downtime_minutes DESC"
     ]
    },
    {
@@ -253,7 +253,7 @@
      "What is the approximate process health index (telemetry approximation) per sensor over the last 24 hours?"
     ],
     "sql": [
-     "WITH m AS (SELECT sensor_name, COUNT(DISTINCT date_trunc('minute', event_time)) AS observed_min, COUNT(DISTINCT CASE WHEN fault_active THEN date_trunc('minute', event_time) END) AS fault_min, AVG(CASE WHEN nominal_value > 0 THEN LEAST(value / nominal_value, 1) END) AS performance, AVG(CASE WHEN min_value IS NULL OR max_value IS NULL THEN NULL WHEN value BETWEEN min_value AND max_value THEN 1.0 ELSE 0.0 END) AS quality FROM cat.sch.lb__shadow_manufacturing_sensor_readings_history WHERE _pg_change_type IN ('insert', 'update_postimage') AND industry = 'manufacturing' AND event_time >= current_timestamp() - INTERVAL 24 HOURS GROUP BY sensor_name) SELECT sensor_name, ROUND(100 * (1 - fault_min / observed_min), 2) AS availability_pct, ROUND(100 * performance, 2) AS performance_pct, ROUND(100 * quality, 2) AS quality_pct, ROUND(100 * (1 - fault_min / observed_min) * COALESCE(performance, 1) * COALESCE(quality, 1), 2) AS process_health_pct FROM m ORDER BY process_health_pct ASC"
+     "WITH m AS (SELECT sensor_name, COUNT(DISTINCT date_trunc('minute', event_time)) AS observed_min, COUNT(DISTINCT CASE WHEN fault_active THEN date_trunc('minute', event_time) END) AS fault_min, AVG(CASE WHEN nominal_value > 0 THEN LEAST(value / nominal_value, 1) END) AS performance, AVG(CASE WHEN min_value IS NULL OR max_value IS NULL THEN NULL WHEN value BETWEEN min_value AND max_value THEN 1.0 ELSE 0.0 END) AS quality FROM cat.pharma_twin_sch.lb__shadow_manufacturing_sensor_readings_history WHERE _pg_change_type IN ('insert', 'update_postimage') AND industry = 'manufacturing' AND event_time >= current_timestamp() - INTERVAL 24 HOURS GROUP BY sensor_name) SELECT sensor_name, ROUND(100 * (1 - fault_min / observed_min), 2) AS availability_pct, ROUND(100 * performance, 2) AS performance_pct, ROUND(100 * quality, 2) AS quality_pct, ROUND(100 * (1 - fault_min / observed_min) * COALESCE(performance, 1) * COALESCE(quality, 1), 2) AS process_health_pct FROM m ORDER BY process_health_pct ASC"
     ]
    },
    {
@@ -262,7 +262,7 @@
      "What is the streaming throughput and p99 latency over the last hour?"
     ],
     "sql": [
-     "SELECT date_trunc('minute', timestamp) AS minute, AVG(processed_rps) AS processed_rps, MAX(e2e_p99) AS e2e_p99_ms FROM cat.sch.manufacturing_metrics WHERE mode = 'realtime' AND timestamp >= current_timestamp() - INTERVAL 1 HOUR GROUP BY 1 ORDER BY 1"
+     "SELECT date_trunc('minute', timestamp) AS minute, AVG(processed_rps) AS processed_rps, MAX(e2e_p99) AS e2e_p99_ms FROM cat.pharma_twin_sch.manufacturing_metrics WHERE mode = 'realtime' AND timestamp >= current_timestamp() - INTERVAL 1 HOUR GROUP BY 1 ORDER BY 1"
     ]
    },
    {
@@ -271,7 +271,7 @@
      "Which assets had the most faults this week and when were they last maintained?"
     ],
     "sql": [
-     "WITH faults AS (SELECT sensor_name, COUNT(*) AS fault_readings FROM cat.sch.lb__shadow_manufacturing_sensor_readings_history WHERE _pg_change_type IN ('insert', 'update_postimage') AND industry = 'manufacturing' AND fault_active AND event_time >= current_timestamp() - INTERVAL 7 DAYS GROUP BY sensor_name) SELECT b.asset_id, SUM(f.fault_readings) AS fault_readings, MAX(r.completed_at) AS last_maintenance FROM faults f JOIN cat.sch.intelligence_sensor_bindings b ON b.sensor_name = f.sensor_name AND b.industry = 'manufacturing' LEFT JOIN cat.sch.intelligence_maintenance_records r ON r.asset_id = b.asset_id AND r.industry = 'manufacturing' GROUP BY b.asset_id ORDER BY fault_readings DESC"
+     "WITH faults AS (SELECT sensor_name, COUNT(*) AS fault_readings FROM cat.pharma_twin_sch.lb__shadow_manufacturing_sensor_readings_history WHERE _pg_change_type IN ('insert', 'update_postimage') AND industry = 'manufacturing' AND fault_active AND event_time >= current_timestamp() - INTERVAL 7 DAYS GROUP BY sensor_name) SELECT b.asset_id, SUM(f.fault_readings) AS fault_readings, MAX(r.completed_at) AS last_maintenance FROM faults f JOIN cat.pharma_twin_sch.intelligence_sensor_bindings b ON b.sensor_name = f.sensor_name AND b.industry = 'manufacturing' LEFT JOIN cat.pharma_twin_sch.intelligence_maintenance_records r ON r.asset_id = b.asset_id AND r.industry = 'manufacturing' GROUP BY b.asset_id ORDER BY fault_readings DESC"
     ]
    }
   ],
@@ -367,7 +367,7 @@
   "text_instructions": [
    {
     "content": [
-     "This space covers ONE medical devices real-time (sub-second RTM) pipeline. Sensor telemetry is in cat.sch.lb__shadow_manufacturing_sensor_readings_history (one row per reading). Streaming throughput/latency metrics are in cat.sch.manufacturing_metrics. Asset, sensor-binding, maintenance, alert-rule and alert-snapshot reference data is in the intelligence_* tables.\n",
+     "This space covers ONE medical devices real-time (sub-second RTM) pipeline. Sensor telemetry is in cat.pharma_twin_sch.lb__shadow_manufacturing_sensor_readings_history (one row per reading). Streaming throughput/latency metrics are in cat.pharma_twin_sch.manufacturing_metrics. Asset, sensor-binding, maintenance, alert-rule and alert-snapshot reference data is in the intelligence_* tables.\n",
      "Context: Trinity Medical orthopaedic implants plant (Warsaw, IN), regulated under 21 CFR 820 (QMSR) and ISO 13485. Spindle 3 on CNC-1 (5-axis mill) machines Ti-6Al-4V femoral hip stems (part_number HS-TI64-12) and acetabular cups. Line: MILL -> CMM INSPECT -> CLEAN / PASSIVATE -> STERILE PACK.\n",
      "Spindle 3 temperature (lb__shadow_manufacturing_sensor_readings_history.sensor_name = 'cnc_1_spindle_temp') has a VALIDATED process-parameter limit (OQ-TM-CNC1-014, PQ-TM-HS12-022, process spec PS-TM-MILL-HS-003 rev C): take the threshold from intelligence_alert_rules where rule_id = 'mfg-alert-spindle-temp' (fault code VPP-SPINDLE3-TEMP). A reading above it is an excursion outside the validated state and a dimensional nonconformance risk.\n",
      "Lot context: lb__shadow_manufacturing_sensor_readings_history.metadata:lot_id::string is the lot, lb__shadow_manufacturing_sensor_readings_history.metadata:part_serial::string the part serial; work_order, part_number, udi_di (UDI device identifier) and dhr_ref (device history record) are in the same lb__shadow_manufacturing_sensor_readings_history.metadata column. Parts at risk for an excursion = distinct part_serial values on 'cnc_1_spindle_temp' readings above the validated limit; the rest of the lot is a release candidate pending QA review. The app's QA hold is slightly wider (it runs from the first over-limit reading until the alert clears below the hysteresis band), so it can name one more part than this query; the app's list is authoritative.\n",
@@ -386,8 +386,8 @@
      "Faults: report fault_active readings and use the bridge above for fault codes and severity.\n",
      "Maintenance: use intelligence_maintenance_records joined to intelligence_sensor_bindings on asset_id to relate faults to assets and their last maintenance.\n",
      "Default time window when unspecified: the last 24 hours, using lb__shadow_manufacturing_sensor_readings_history.event_time >= current_timestamp() - INTERVAL 24 HOURS.\n",
-     "Filter cat.sch.manufacturing_metrics with mode = 'realtime' for this pipeline's streaming metrics.\n",
-     "cat.sch.lb__shadow_manufacturing_sensor_readings_history is the Lakehouse Sync mirror of the real-time Lakebase stream (all industries): ALWAYS filter lb__shadow_manufacturing_sensor_readings_history._pg_change_type IN ('insert', 'update_postimage') AND lb__shadow_manufacturing_sensor_readings_history.industry = 'manufacturing' (current reading rows for this industry) and ignore the _pg_* / _timestamp / _sort_by bookkeeping columns.\n",
+     "Filter cat.pharma_twin_sch.manufacturing_metrics with mode = 'realtime' for this pipeline's streaming metrics.\n",
+     "cat.pharma_twin_sch.lb__shadow_manufacturing_sensor_readings_history is the Lakehouse Sync mirror of the real-time Lakebase stream (all industries): ALWAYS filter lb__shadow_manufacturing_sensor_readings_history._pg_change_type IN ('insert', 'update_postimage') AND lb__shadow_manufacturing_sensor_readings_history.industry = 'manufacturing' (current reading rows for this industry) and ignore the _pg_* / _timestamp / _sort_by bookkeeping columns.\n",
      "Never modify data. Answer read-only with SELECT queries.\n"
     ],
     "id": "e60267f7c2284abdd56a3d2b77b5e741"

@@ -41,7 +41,7 @@ _EXPECTED_ENV_NAMES = (
 
 _MINIMAL_PROFILE = {
     "UC_CATALOG": "test-catalog",
-    "UC_SCHEMA": "test_schema",
+    "UC_SCHEMA": "pharma_twin_test",
     "PGHOST": "",
     "LAKEBASE_PROJECT": "pharma-twin-backend",
     "LAKEBASE_ENDPOINT": "projects/pharma-twin-backend/branches/production/endpoints/primary",
@@ -306,7 +306,9 @@ def test_real_profile_lookup_ignores_example_templates(renderer, tmp_path: Path)
     (tmp_path / "only.profile.example").write_text(json.dumps(_MINIMAL_PROFILE), encoding="utf-8")
     with pytest.raises(renderer.ProfileError, match="profile.example"):
         renderer.load_profile("only", tmp_path)
-    assert renderer.load_profile("only", tmp_path, use_example=True)["UC_SCHEMA"] == "test_schema"
+    assert (
+        renderer.load_profile("only", tmp_path, use_example=True)["UC_SCHEMA"] == "pharma_twin_test"
+    )
 
 
 def _bundle_env_names() -> set[str]:

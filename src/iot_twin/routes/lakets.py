@@ -13,7 +13,9 @@ from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
+from iot_twin.core.config import NotOwnedError, assert_owned_name
 from iot_twin.core.state import AppState, get_app_state
+from iot_twin.routes._ownership import reject_foreign_project
 from iot_twin.services import cdf_reconciliation_service
 from iot_twin.services.industry.industry_templates import CURATED_INDUSTRIES
 from iot_twin.services.lakets import lakets_service
@@ -78,6 +80,8 @@ async def _open_lakebase_conn(lb: dict) -> Any:
         branch_id = lb.get("branch_id", "production")
         if not project_id:
             raise ValueError("project_id is required in autoscale mode")
+        # Single choke point for every LakeTS connection: owned projects only.
+        project_id = assert_owned_name(project_id, what="Lakebase project_id")
 
         w = WorkspaceClient()
         parent = f"projects/{project_id}/branches/{branch_id}"
@@ -150,6 +154,8 @@ async def check_sync(request: Request):
     lb = body.get("lakebase") or body.get("lb") or body
     try:
         conn = await _open_lakebase_conn(lb)
+    except NotOwnedError as exc:
+        return JSONResponse(status_code=403, content={"error": str(exc)})
     except Exception as exc:
         logger.warning("Sync check could not connect: %s", exc)
         return {
@@ -432,6 +438,8 @@ async def deploy_retention(request: Request):
             status_code=400,
             content={"error": "lakebase.project_id is required"},
         )
+    if rejected := reject_foreign_project(project_id):
+        return rejected
 
     try:
         return deploy_retention_job(

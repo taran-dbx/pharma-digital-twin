@@ -138,7 +138,7 @@ def get_uc_catalog() -> str:
 
 def get_uc_schema() -> str:
     """Return the configured shared Unity Catalog schema name."""
-    return os.getenv("UC_SCHEMA", "")
+    return owned_env("UC_SCHEMA")
 
 
 def get_app_sp_client_id() -> str:
@@ -154,6 +154,26 @@ def get_genie_space_id() -> str:
     Permission contract: the app SP needs **CAN_VIEW** on the space.
     """
     return os.getenv("GENIE_SPACE_ID", "").strip()
+
+
+def validate_isolation_config() -> dict[str, str]:
+    """Resolve the resource prefix and every owned-name env override now.
+
+    Called at app start so a bad ``RESOURCE_PREFIX`` or a foreign override (an
+    upstream project, schema or scope) stops the app before it serves a request.
+    That includes a ``UC_SCHEMA`` built from a ``resource_prefix_ident`` that does
+    not match ``resource_prefix``. Raises ``ValueError``; returns the resolved values.
+    """
+    from iot_twin.core.config import get_resource_prefix
+
+    return {
+        "RESOURCE_PREFIX": get_resource_prefix(),
+        "UC_SCHEMA": get_uc_schema(),
+        "LAKEBASE_PROJECT": get_lakebase_project(),
+        "LAKEBASE_ENDPOINT": get_lakebase_endpoint(),
+        "PIPELINES_LAKEBASE_PROJECT": get_pipelines_project(),
+        "SECRET_SCOPE": get_secret_scope(),
+    }
 
 
 def get_config() -> WorkspaceConfig:
@@ -175,7 +195,7 @@ def get_config() -> WorkspaceConfig:
 
     return WorkspaceConfig(
         uc_catalog=os.environ["UC_CATALOG"],
-        uc_schema=os.environ["UC_SCHEMA"],
+        uc_schema=get_uc_schema(),
         lakebase_project=get_lakebase_project(),
         lakebase_endpoint=get_lakebase_endpoint(),
         pg_host=os.getenv("PGHOST", ""),

@@ -101,12 +101,28 @@ def build_notebook(model: dict[str, Any], source: Path, label: str) -> nbformat.
             cell.outputs = _outputs(command)
             cell.execution_count = None
     banner = nbformat.v4.new_markdown_cell(f"**{label}**", id="live-run-label")
+    notebook.cells = [c for c in notebook.cells if c.get("id") != SNAPSHOT_GUARD_ID]
     if notebook.cells and notebook.cells[0].get("id") == banner.id:
         notebook.cells[0] = banner  # source is itself a stored snapshot: replace its label
     else:
         notebook.cells.insert(0, banner)
+    # A snapshot is a record, not a runnable notebook: "Run all" stops here.
+    notebook.cells.insert(1, snapshot_guard_cell())
     nbformat.validate(notebook)
     return notebook
+
+
+SNAPSHOT_GUARD_ID = "snapshot-guard"
+SNAPSHOT_GUARD_SOURCE = (
+    "# Snapshot only: this is a stored record of a past run, not a runnable notebook.\n"
+    "# Re-run ops/notebooks/pipeline_health_check.ipynb instead.\n"
+    'raise SystemExit("snapshot only: do not execute stored run notebooks")'
+)
+
+
+def snapshot_guard_cell():
+    """Return the first code cell of every snapshot; it aborts any execution."""
+    return nbformat.v4.new_code_cell(SNAPSHOT_GUARD_SOURCE, id=SNAPSHOT_GUARD_ID)
 
 
 def main(argv: list[str] | None = None) -> int:

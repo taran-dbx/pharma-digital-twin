@@ -21,6 +21,7 @@ from iot_twin.models.sql_ddl import (
     MATVIEW_INDEX_DDL,
     SENSOR_READINGS_DDL,
 )
+from iot_twin.routes._ownership import reject_foreign_project
 from iot_twin.services import provisioning_service
 from iot_twin.services.pipelines.pipeline_service import track_resource
 
@@ -713,6 +714,8 @@ async def provision_lakebase_table(
                         "error": "project_id is required (and could not be derived from LAKEBASE_ENDPOINT)"
                     },
                 )
+            if rejected := reject_foreign_project(project_id):
+                return rejected
             lb["project_id"] = project_id
             lb["branch_id"] = branch_id
         else:
@@ -765,7 +768,6 @@ async def provision_lakebase_table(
         if mode == "autoscale":
             from databricks.sdk import WorkspaceClient
 
-            w = WorkspaceClient()
             project_id = body.get("project_id", "")
             branch_id = body.get("branch_id", "")
 
@@ -783,8 +785,12 @@ async def provision_lakebase_table(
                         "error": "project_id is required (and could not be derived from LAKEBASE_ENDPOINT)"
                     },
                 )
+            if rejected := reject_foreign_project(project_id):
+                return rejected
             branch_id = branch_id or "production"
             parent = f"projects/{project_id}/branches/{branch_id}"
+
+            w = WorkspaceClient()  # only after the ownership check
 
             endpoints = list(w.postgres.list_endpoints(parent=parent))
             if not endpoints:

@@ -387,7 +387,8 @@ def test_exporter_replaces_an_existing_label(tmp_path):
         model, _write(tmp_path, source), "LIVE RUN, redacted, 2026-02-02"
     )
     assert [c.source for c in notebook.cells][0] == "**LIVE RUN, redacted, 2026-02-02**"
-    assert len(notebook.cells) == 2
+    # label + the non-runnable snapshot guard + the source cell
+    assert [c.id for c in notebook.cells] == ["live-run-label", exporter.SNAPSHOT_GUARD_ID, "code"]
 
 
 def _write(tmp_path: Path, notebook) -> Path:

@@ -37,7 +37,7 @@ import re
 from typing import Any
 
 from iot_twin.core import resource_names
-from iot_twin.core.workspace_config import APP_SP_OAUTH_SECRET_KEY, get_secret_scope
+from iot_twin.core.workspace_config import APP_SP_OAUTH_SECRET_KEY, get_secret_scope, get_uc_schema
 from iot_twin.models.metrics_schema import metrics_managed_table_ddl
 from iot_twin.models.sensor_schema import delta_table_ddl
 from iot_twin.services.dbsql_service import execute_dbsql
@@ -139,7 +139,7 @@ def _uc_catalog() -> str:
 
 def _uc_schema() -> str:
     """Return the single UC schema all industry tables live in (``UC_SCHEMA``)."""
-    schema = os.getenv("UC_SCHEMA", "")
+    schema = get_uc_schema()
     if not schema:
         raise RuntimeError("UC_SCHEMA must be set — it names the single schema to provision.")
     return schema

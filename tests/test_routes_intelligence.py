@@ -47,7 +47,7 @@ class TestIntelligenceRoutes:
     ) -> None:
         """[C7504][regression] Admin sync provisions and loads reference tables."""
         monkeypatch.setenv("UC_CATALOG", "test_catalog")
-        monkeypatch.setenv("UC_SCHEMA", "test_schema")
+        monkeypatch.setenv("UC_SCHEMA", "pharma_twin_test")
         client, _ = intel_client
         with (
             patch("iot_twin.routes.intelligence.app_permissions.is_admin", return_value=True),
@@ -76,7 +76,7 @@ class TestIntelligenceRoutes:
     ) -> None:
         """[C7505][usability] Status reports snapshot freshness without requiring a full sync."""
         monkeypatch.setenv("UC_CATALOG", "test_catalog")
-        monkeypatch.setenv("UC_SCHEMA", "test_schema")
+        monkeypatch.setenv("UC_SCHEMA", "pharma_twin_test")
         client, _ = intel_client
         with patch("iot_twin.routes.intelligence.app_permissions.is_admin", return_value=True):
             resp = await client.get("/api/admin/intelligence/status")
