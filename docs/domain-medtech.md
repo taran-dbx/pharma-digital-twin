@@ -179,6 +179,18 @@ databases in place, without data loss:
   equivalent, so it is refused with `503 alert_response table not upgraded` until the owner runs
   the upgrade. With the app backend configured, a decision is never kept only in memory; any
   database error is a `503`. The in-memory store is used only when no app backend is configured.
+- A legacy-named row already recorded for the episode counts as that decision. If `quarantine_lot`
+  was stored as `hold_batch` before the upgrade, recording it again afterwards returns the existing
+  row (`created: false`) instead of writing a second QA hold. A genuine `hold_batch` from an older
+  client is returned the same way, so its `action` reads `hold_batch`. `legacy-unsigned` records
+  print no signature line.
+- The `alert` row is reused for every excursion. On reopen, the upsert replaces the per-episode
+  columns (`opened_at`, `metadata` with its lot context and `excursion_started_at`, and
+  `fault_code`), so a restarted or second replica never reads an earlier episode's lot. As a
+  second guard, a stored `excursion_started_at` is trusted only within
+  `[opened_at − (duration_s + 120 s), opened_at]`; anything else falls back to
+  `opened_at − duration_s`. The stamp is the first violating reading's own device time when it
+  has one, else the engine's first-violation time, and never later than `opened_at − duration_s`.
 
 See [architecture.md](architecture.md#alerts) for the alert flow and
 [genie.md](genie.md) for the quality-aware Genie questions.

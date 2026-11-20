@@ -47,14 +47,28 @@ export interface ExcursionWindow {
  * alert engine saw, else the first one in the live readings, else
  * `opened_at - duration_s`. Containment errs inclusive (never after opening).
  */
+/**
+ * The engine's first-violation stamp, if it belongs to this episode: inside
+ * `[opened - (durationS + DETECT_LOOKBACK_S), opened]` (mirrors
+ * `excursion_start` in `alert_responses.py`). A stamp left over from an earlier
+ * episode of the reused alert row is ignored.
+ */
+export function trustedExcursionStamp(alert: AlertRecord, durationS = 0): number | undefined {
+  const opened = toEpochSeconds(alert.opened_at);
+  const stamped = toEpochSeconds(alert.metadata?.[EXCURSION_STARTED_KEY]);
+  const duration = Number.isFinite(durationS) ? durationS : 0;
+  if (!Number.isFinite(opened) || !Number.isFinite(stamped)) return undefined;
+  return stamped >= opened - (duration + DETECT_LOOKBACK_S) && stamped <= opened ? stamped : undefined;
+}
+
 export function excursionStart(
   alert: AlertRecord,
   options: { history?: SensorHistoryPoint[]; threshold?: number; durationS?: number } = {},
 ): number {
   const opened = toEpochSeconds(alert.opened_at);
-  const stamped = toEpochSeconds(alert.metadata?.[EXCURSION_STARTED_KEY]);
-  if (Number.isFinite(stamped)) return Math.min(opened, stamped);
   const { history = [], threshold, durationS = 0 } = options;
+  const stamped = trustedExcursionStamp(alert, durationS);
+  if (stamped !== undefined) return stamped;
   if (threshold !== undefined) {
     const first = history.find((p) => {
       const t = p.t / 1000;
@@ -116,8 +130,8 @@ export function timeToDetectSeconds(
 ): number | undefined {
   if (!alert?.opened_at) return undefined;
   const opened = toEpochSeconds(alert.opened_at);
-  const stamped = toEpochSeconds(alert.metadata?.[EXCURSION_STARTED_KEY]);
-  if (Number.isFinite(stamped)) return Math.max(0, opened - stamped);
+  const stamped = trustedExcursionStamp(alert);
+  if (stamped !== undefined) return Math.max(0, opened - stamped);
   if (threshold === undefined) return undefined;
   const start = excursionStart(alert, { history, threshold, durationS: Number.NaN });
   return Number.isFinite(start) ? Math.max(0, opened - start) : undefined;
