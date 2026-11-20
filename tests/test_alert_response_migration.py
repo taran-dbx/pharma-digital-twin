@@ -79,14 +79,15 @@ class TestMigrationContract:
         assert check.index("DROP CONSTRAINT IF EXISTS") < check.index("ADD CONSTRAINT")
 
     @pytest.mark.asyncio
-    async def test_ensure_runs_create_then_both_upgrades_c7821_smoke(self) -> None:
-        """[C7821][smoke] The creator issues the DDL then the two guarded upgrades."""
+    async def test_ensure_runs_create_then_the_guarded_upgrades_c7821_smoke(self) -> None:
+        """[C7821][smoke] The creator issues the DDL then the three guarded upgrades."""
         db = RecordingDb()
         await app_schema.ensure_alert_response_table(db)
         assert db.statements == [
             app_schema.ALERT_RESPONSE_DDL,
             app_schema.ALERT_RESPONSE_AUDIT_MIGRATION,
             app_schema.ALERT_RESPONSE_ACTION_MIGRATION,
+            app_schema.ALERT_RESPONSE_FK_MIGRATION,
         ]
 
     @pytest.mark.asyncio
@@ -238,3 +239,107 @@ class TestMigrationLive:
             assert await _check_oid(conn) == before
         finally:
             await app.close()
+
+
+def _alert_record(alert_id: str):
+    from datetime import UTC, datetime
+
+    from iot_twin.services.alerts.alert_engine import AlertRecord
+
+    opened = datetime(2026, 11, 20, 10, 3, 45, tzinfo=UTC)
+    return AlertRecord(
+        id=alert_id,
+        fingerprint="fp",
+        industry="manufacturing",
+        pipeline_id=None,
+        rule_id="mfg-alert-spindle-temp",
+        sensor_id="mfg-sns-cnc_1_spindle_temp",
+        sensor_ids=["mfg-sns-cnc_1_spindle_temp"],
+        severity="crit",
+        status="open",
+        fault_code="VPP-SPINDLE3-TEMP",
+        value=66.0,
+        threshold=60.0,
+        opened_at=opened,
+        updated_at=opened,
+        metadata={"oq_ref": "OQ-TM-CNC1-014"},
+    )
+
+
+@pytest.mark.asyncio
+class TestSignedRecordsOnStaleTable:
+    async def test_non_owner_records_signed_decisions_durably_c7826_defect(self, pg) -> None:
+        """[C7826][defect] On an un-upgraded table, signed decisions persist or are refused."""
+        import asyncpg
+
+        from iot_twin.services.alerts.alert_responses import (
+            AlertResponseStore,
+            ResponseAudit,
+            ResponseStoreUnavailable,
+        )
+
+        conn, server, database = pg
+        alert_id = await _legacy_cell(conn)
+        await conn.execute("DELETE FROM alert_response")
+        role = f"app_{database}"
+        await conn.execute(f"CREATE ROLE {role} LOGIN")
+        await conn.execute(f"GRANT USAGE, CREATE ON SCHEMA public TO {role}")
+        await conn.execute(f"GRANT ALL ON alert, alert_response TO {role}")
+        app = await asyncpg.connect(
+            host=server.socket_dir, port=server.port, user=role, database=database
+        )
+        try:
+            await app_schema.ensure_alert_response_table(app)  # warns; cannot upgrade
+            store = AlertResponseStore()
+            alert = _alert_record(alert_id)
+            audit = ResponseAudit(reason="excursion", signature_meaning="responsible")
+
+            held, created = await store.record(alert, "quarantine_lot", "qa@x", db=app, audit=audit)
+            assert created is True
+            assert held.action == "quarantine_lot"
+            assert held.signature_meaning == "responsible"
+            row = await conn.fetchrow("SELECT action, reference FROM alert_response")
+            assert row["action"] == "hold_batch"  # stored under its legacy name
+            assert '"action": "quarantine_lot"' in row["reference"]
+
+            again, created_again = await store.record(
+                alert, "quarantine_lot", "other@x", db=app, audit=audit
+            )
+            assert (created_again, again.id) == (False, held.id)
+
+            cmm, _ = await store.record(
+                alert, "request_cmm_inspection", "qa@x", db=app, audit=audit
+            )
+            assert cmm.action == "request_cmm_inspection"
+            maint, _ = await store.record(alert, "request_maintenance", "qa@x", db=app, audit=audit)
+            assert maint.reason == "excursion"
+
+            with pytest.raises(ResponseStoreUnavailable, match="not upgraded"):
+                await store.record(alert, "open_ncr", "qa@x", db=app, audit=audit)
+            assert store._memory == {}
+
+            listed = await store.list_for(alert, db=app)
+            assert sorted(r.action for r in listed) == [
+                "quarantine_lot",
+                "request_cmm_inspection",
+                "request_maintenance",
+            ]
+            assert all(r.signature_meaning == "responsible" for r in listed)
+        finally:
+            await app.close()
+
+    async def test_signed_records_block_alert_deletes_c7827_regression(self, pg) -> None:
+        """[C7827][regression] The upgrade turns the cascading FK into RESTRICT."""
+        import asyncpg
+
+        conn, _server, _db = pg
+        alert_id = await _legacy_cell(conn)
+        await app_schema.ensure_alert_response_table(conn)
+        rule = await conn.fetchval(
+            "SELECT confdeltype::text FROM pg_constraint WHERE conrelid = 'alert_response'::regclass "
+            "AND contype = 'f'"
+        )
+        assert rule == "r"
+        with pytest.raises(asyncpg.RestrictViolationError):
+            await conn.execute("DELETE FROM alert WHERE id = $1::uuid", alert_id)
+        assert await conn.fetchval("SELECT count(*) FROM alert_response") == 3
