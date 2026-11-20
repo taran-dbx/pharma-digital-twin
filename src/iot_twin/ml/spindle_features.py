@@ -34,6 +34,10 @@ MIN_POINTS = 3
 # Default label horizon: an excursion within the next N seconds counts as positive.
 DEFAULT_HORIZON_S = 120.0
 
+# hours_since_maintenance is clipped to the range the model was trained on, at
+# train and at serve time (the catalog fixture keeps ageing in a long demo).
+MAX_MAINTENANCE_AGE_H = 3000.0
+
 _TORQUE_FACTOR = 9549.0
 # Below this speed the spindle is idle and torque is undefined.
 MIN_SPEED_RPM = 100.0
@@ -109,7 +113,7 @@ FEATURE_SPEC: tuple[FeatureSpec, ...] = (
         "maintenance",
         "maintenance",
         "h",
-        "Hours since the last Spindle 3 maintenance completed",
+        "Hours since the last Spindle 3 maintenance completed, clipped to 0-3000 h",
     ),
 )
 FEATURE_NAMES: tuple[str, ...] = tuple(spec.name for spec in FEATURE_SPEC)
@@ -310,7 +314,7 @@ def features_at(
             row[spec.name] = limit_c - windows["temp"][1][-1]
         elif spec.stat == "maintenance":
             age = 0.0 if last_maintenance_at is None else (at - last_maintenance_at) / 3600.0
-            row[spec.name] = max(0.0, age)
+            row[spec.name] = min(MAX_MAINTENANCE_AGE_H, max(0.0, age))
     return {name: round(row[name], 6) for name in FEATURE_NAMES}
 
 

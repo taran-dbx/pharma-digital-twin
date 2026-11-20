@@ -75,8 +75,8 @@ variables:
     description: "auto (real telemetry when it has enough excursions, else synthetic), synthetic or real."
     default: auto
   risk_alert_threshold:
-    description: Risk score at or above which the app opens a predicted alert (the job logs the chosen cut-off).
-    default: "0.22"
+    description: "Predicted-alert cut-off. \"model\" uses the decision_threshold the served model version ships; a number overrides it."
+    default: model
 
 # Ships the built SPA (static/dist is tracked), the package, app.yaml, the
 # vendored wheels (simulator, dbdemos-tracker) and requirements. Replaces .databricksignore.

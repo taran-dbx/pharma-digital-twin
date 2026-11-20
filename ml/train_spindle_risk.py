@@ -34,6 +34,8 @@ MIN_REAL_ROWS = 2000
 MIN_REAL_EXCURSIONS = 20
 REAL_MAX_ROWS = 2_000_000
 VALIDATION_FRACTION = 0.2
+ENDPOINT_WAIT_S = 1200
+ENDPOINT_POLL_S = 30
 PIP_PINNED = ("mlflow", "lightgbm", "pandas", "numpy")
 
 
@@ -49,7 +51,15 @@ def _args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--horizon-s", type=float, default=120.0)
     parser.add_argument("--step-s", type=float, default=5.0)
     parser.add_argument("--test-fraction", type=float, default=0.25)
-    parser.add_argument("--min-precision", type=float, default=0.8)
+    # 0.9: at 0.8 the cut-off (~0.26) sat inside the calm-score range of a worn
+    # spindle (0.20-0.27 at >= 1950 h), so calm running could open alerts.
+    parser.add_argument("--min-precision", type=float, default=0.9)
+    parser.add_argument(
+        "--clear-hysteresis",
+        type=float,
+        default=0.05,
+        help="predicted alerts clear at cut-off minus this",
+    )
     parser.add_argument("--synthetic-runs", type=int, default=24)
     parser.add_argument("--synthetic-run-s", type=int, default=7200)
     parser.add_argument("--seed", type=int, default=7)
@@ -167,8 +177,15 @@ def train_and_evaluate(training_set: Any, args: argparse.Namespace) -> dict[str,
     import lightgbm as lgb
     from sklearn.metrics import average_precision_score, roc_auc_score
 
-    from iot_twin.ml.evaluation import choose_threshold, precision_recall_at
+    from iot_twin.ml.evaluation import (
+        choose_threshold,
+        clear_threshold_for,
+        precision_recall_at,
+        quantile,
+        two_classes,
+    )
     from iot_twin.ml.spindle_features import (
+        WINDOW_S,
         lead_time_report,
         threshold_rule_delay_s,
         threshold_rule_hysteresis_c,
@@ -176,11 +193,17 @@ def train_and_evaluate(training_set: Any, args: argparse.Namespace) -> dict[str,
     )
     from iot_twin.ml.training_set import onsets_in_period, time_split
 
-    train_rows, test_rows = time_split(list(training_set.rows), args.test_fraction)
-    fit_rows, val_rows = time_split(train_rows, VALIDATION_FRACTION)
+    # Rows whose window or horizon straddles a boundary would leak across it.
+    embargo = WINDOW_S + args.horizon_s
+    train_rows, test_rows = time_split(list(training_set.rows), args.test_fraction, embargo)
+    fit_rows, val_rows = time_split(train_rows, VALIDATION_FRACTION, embargo)
     x_fit, y_fit = _frame(fit_rows)
     x_val, y_val = _frame(val_rows)
     x_test, y_test = _frame(test_rows)
+    if not two_classes(list(y_fit)) or not two_classes(list(y_val)):
+        raise ValueError(
+            "training or validation split has a single class; use more data or another split"
+        )
 
     model = lgb.LGBMClassifier(**LGBM_PARAMS)
     model.fit(
@@ -194,6 +217,15 @@ def train_and_evaluate(training_set: Any, args: argparse.Namespace) -> dict[str,
     threshold, rule = choose_threshold(
         list(y_val), list(val_scores), min_precision=args.min_precision
     )
+    clear = clear_threshold_for(threshold, args.clear_hysteresis)
+    calm = [float(s) for s, y in zip(val_scores, y_val, strict=True) if y == 0]
+    calm_p90 = quantile(calm, 0.9)
+    if clear < calm_p90:
+        logger.warning(
+            "clear level %.3f is under the calm-score p90 %.3f: alerts may not clear",
+            clear,
+            calm_p90,
+        )
     test_scores = model.predict_proba(x_test)[:, 1]
     at_cut = precision_recall_at(list(y_test), list(test_scores), threshold)
 
@@ -209,13 +241,24 @@ def train_and_evaluate(training_set: Any, args: argparse.Namespace) -> dict[str,
         horizon_s=args.horizon_s,
         rule_delay_s=threshold_rule_delay_s(),
     )
+    ranking: dict[str, float] = {}
+    if two_classes(list(y_test)):
+        ranking = {
+            "test_roc_auc": float(roc_auc_score(y_test, test_scores)),
+            "test_pr_auc": float(average_precision_score(y_test, test_scores)),
+        }
+    else:
+        logger.warning("test split has a single class; ROC-AUC / PR-AUC not logged")
     metrics = {
-        "test_roc_auc": float(roc_auc_score(y_test, test_scores)),
-        "test_pr_auc": float(average_precision_score(y_test, test_scores)),
+        **ranking,
         "test_precision_at_threshold": at_cut["precision"],
         "test_recall_at_threshold": at_cut["recall"],
         "test_f1_at_threshold": at_cut["f1"],
         "decision_threshold": float(threshold),
+        "clear_threshold": float(clear),
+        "val_calm_score_p50": quantile(calm, 0.5),
+        "val_calm_score_p90": calm_p90,
+        "embargo_s": float(embargo),
         "val_pr_auc": float(average_precision_score(y_val, val_scores)),
         "best_iteration": float(model.best_iteration_ or LGBM_PARAMS["n_estimators"]),
         "rows_train": float(len(fit_rows)),
@@ -277,6 +320,16 @@ def log_and_register(
     ):
         booster_path = os.path.join(tmp, "booster.txt")
         model.booster_.save_model(booster_path, num_iteration=model.best_iteration_ or None)
+        decision_path = os.path.join(tmp, "decision.json")
+        with open(decision_path, "w", encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "decision_threshold": metrics["decision_threshold"],
+                    "clear_threshold": metrics["clear_threshold"],
+                    "threshold_rule": result["threshold_rule"],
+                },
+                handle,
+            )
         mlflow.log_params(
             {
                 **{f"lgbm_{key}": value for key, value in LGBM_PARAMS.items()},
@@ -285,7 +338,11 @@ def log_and_register(
                 "window_s": WINDOW_S,
                 "step_s": args.step_s,
                 "validated_limit_c": validated_limit_c(),
-                "split": f"time-ordered train/val/test, test_fraction={args.test_fraction}",
+                "split": (
+                    f"time-ordered train/val/test, test_fraction={args.test_fraction}, "
+                    f"embargo_s={metrics['embargo_s']}"
+                ),
+                "clear_hysteresis": args.clear_hysteresis,
                 "threshold_rule": result["threshold_rule"],
                 "min_precision": args.min_precision,
                 "feature_names": ",".join(FEATURE_NAMES),
@@ -294,12 +351,17 @@ def log_and_register(
         mlflow.log_metrics(metrics)
         mlflow.set_tags({"data_origin": training_set.data_origin, "project": "pharma-twin"})
         output = pd.DataFrame(
-            {"risk_score": [0.5] * len(example), "top_features": ["[]"] * len(example)}
+            {
+                "risk_score": [0.5] * len(example),
+                "top_features": ["[]"] * len(example),
+                "decision_threshold": [metrics["decision_threshold"]] * len(example),
+                "clear_threshold": [metrics["clear_threshold"]] * len(example),
+            }
         )
         info = mlflow.pyfunc.log_model(
             name="model",
             python_model=model_code,
-            artifacts={"booster": booster_path},
+            artifacts={"booster": booster_path, "decision": decision_path},
             signature=infer_signature(example, output),
             input_example=example,
             pip_requirements=_pip_requirements(),
@@ -312,6 +374,7 @@ def log_and_register(
     for key, value in {
         "data_origin": training_set.data_origin,
         "decision_threshold": f"{metrics['decision_threshold']:.2f}",
+        "clear_threshold": f"{metrics['clear_threshold']:.2f}",
         "horizon_s": str(args.horizon_s),
         "run_id": run_id,
     }.items():
@@ -319,8 +382,39 @@ def log_and_register(
     return {"model_name": full_name, "model_version": version, "run_id": run_id}
 
 
-def deploy_champion(workspace: Any, args: argparse.Namespace, model_name: str, version: str) -> str:
-    """Point the serving endpoint at the new champion version (no wait)."""
+def ensure_schema(catalog: str, schema: str) -> None:
+    """Create the model schema if it is missing (needs CREATE SCHEMA on the catalog)."""
+    from pyspark.sql import SparkSession
+
+    spark = SparkSession.builder.getOrCreate()
+    spark.sql(f"CREATE SCHEMA IF NOT EXISTS {_quoted(f'{catalog}.{schema}')}")
+
+
+def _wait_until_idle(workspace: Any, name: str, sleep: Any = None) -> bool:
+    """Wait while a config update is in progress; False if it never settles."""
+    import time
+
+    pause = sleep or time.sleep
+    waited = 0
+    while waited <= ENDPOINT_WAIT_S:
+        state = workspace.serving_endpoints.get(name).state
+        update = getattr(getattr(state, "config_update", None), "value", None)
+        if update != "IN_PROGRESS":
+            return True
+        logger.info("endpoint %s is updating; waiting %ss", name, ENDPOINT_POLL_S)
+        pause(ENDPOINT_POLL_S)
+        waited += ENDPOINT_POLL_S
+    return False
+
+
+def deploy_champion(
+    workspace: Any, args: argparse.Namespace, model_name: str, version: str, sleep: Any = None
+) -> str:
+    """Point the serving endpoint at the new champion version (no wait for READY).
+
+    A ``bundle deploy`` resets the endpoint to ``var.risk_model_version``; the
+    job logs the override that keeps it on the champion.
+    """
     if not args.endpoint_name:
         return "skipped"
     from databricks.sdk.errors import NotFound
@@ -342,7 +436,17 @@ def deploy_champion(workspace: Any, args: argparse.Namespace, model_name: str, v
             config=EndpointCoreConfigInput(name=args.endpoint_name, served_entities=[entity]),
         )
         return "creating"
+    if not _wait_until_idle(workspace, args.endpoint_name, sleep):
+        logger.warning("endpoint %s still updating; not repointed", args.endpoint_name)
+        return "busy"
     workspace.serving_endpoints.update_config(name=args.endpoint_name, served_entities=[entity])
+    logger.warning(
+        "endpoint %s now serves version %s. A later `bundle deploy` resets it to "
+        "var.risk_model_version: deploy with --var risk_model_version=%s",
+        args.endpoint_name,
+        version,
+        version,
+    )
     return "updating"
 
 
@@ -353,6 +457,7 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
     from databricks.sdk import WorkspaceClient
 
     workspace = WorkspaceClient()
+    ensure_schema(args.catalog, args.schema)
     training_set = load_training_set(args)
     logger.info(
         "training set: %d rows, %d positive, origin=%s",
@@ -371,6 +476,7 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
         "data_origin": training_set.data_origin,
         "endpoint": args.endpoint_name or None,
         "endpoint_action": endpoint,
+        "bundle_override": f"--var risk_model_version={registered['model_version']}",
         "metrics": result["metrics"],
     }
     print(json.dumps(summary, indent=2, sort_keys=True))

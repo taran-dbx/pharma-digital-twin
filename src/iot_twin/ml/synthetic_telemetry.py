@@ -26,7 +26,7 @@ import random
 from dataclasses import dataclass
 from typing import Any
 
-from iot_twin.ml.spindle_features import INDUSTRY, SPINDLE_SIGNALS
+from iot_twin.ml.spindle_features import INDUSTRY, MAX_MAINTENANCE_AGE_H, SPINDLE_SIGNALS
 from iot_twin.scenario_engine.engine import ScenarioEngine
 
 DATA_ORIGIN = "synthetic"
@@ -44,7 +44,6 @@ _EVENT_PROBABILITY = 0.5
 _PEAK_RANGE = (0.3, 1.1)
 _PRECURSOR_PROBABILITY = 0.65
 _PRECURSOR_LEAD_S = (45.0, 150.0)
-_MAX_MAINTENANCE_AGE_H = 3000.0
 _DEFAULT_START_EPOCH = 1_790_000_000.0
 # ScenarioEngine phases (normal → degraded → failed → recovering) on a share of
 # runs, each phase this long, so degradation builds for minutes before failure.
@@ -220,7 +219,7 @@ def generate_runs(
     for index in range(n_runs):
         run_id = f"synthetic-{seed}-{index:03d}"
         start = start_epoch + index * (duration_s + HEAT_CYCLE_S)
-        hours = rng.uniform(0.0, _MAX_MAINTENANCE_AGE_H)
+        hours = rng.uniform(0.0, MAX_MAINTENANCE_AGE_H)
         phases = rng.random() < _PHASE_RUN_PROBABILITY
         engine = (
             ScenarioEngine(
@@ -235,7 +234,7 @@ def generate_runs(
             profiles,
             start=start,
             duration_s=duration_s,
-            wear=hours / _MAX_MAINTENANCE_AGE_H,
+            wear=hours / MAX_MAINTENANCE_AGE_H,
             engine=engine,
         )
         runs.append(

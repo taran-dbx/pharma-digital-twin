@@ -101,9 +101,14 @@ def build_training_set(
 
 
 def time_split(
-    rows: Sequence[LabelledRow], test_fraction: float
+    rows: Sequence[LabelledRow], test_fraction: float, embargo_s: float = 0.0
 ) -> tuple[list[LabelledRow], list[LabelledRow]]:
-    """Split on time: every test row is later than every training row."""
+    """Split on time: every test row is later than every training row.
+
+    Training rows within ``embargo_s`` before the boundary are dropped: their
+    feature window or label horizon overlaps the test period. Use
+    ``window_s + horizon_s``.
+    """
     if not 0.0 < test_fraction < 1.0:
         raise ValueError("test_fraction must be in (0, 1)")
     ordered = sorted(rows, key=lambda row: row.at)
@@ -111,8 +116,10 @@ def time_split(
     if cut <= 0 or cut >= len(ordered):
         raise ValueError("not enough rows for a time-based split")
     boundary = ordered[cut].at
-    train = [row for row in ordered if row.at < boundary]
+    train = [row for row in ordered if row.at < boundary - max(0.0, embargo_s)]
     test = [row for row in ordered if row.at >= boundary]
+    if not train:
+        raise ValueError("embargo leaves no training rows")
     return train, test
 
 

@@ -23,6 +23,27 @@ def precision_recall_at(
     return {"precision": precision, "recall": recall, "f1": f1}
 
 
+def quantile(values: Sequence[float], q: float) -> float:
+    """Linear-interpolated quantile (``q`` in [0, 1]); 0.0 for no values."""
+    ordered = sorted(values)
+    if not ordered:
+        return 0.0
+    pos = (len(ordered) - 1) * min(1.0, max(0.0, q))
+    lo = int(pos)
+    hi = min(lo + 1, len(ordered) - 1)
+    return ordered[lo] + (ordered[hi] - ordered[lo]) * (pos - lo)
+
+
+def clear_threshold_for(cutoff: float, hysteresis: float, floor: float = 0.01) -> float:
+    """Clear level for a predicted alert: ``hysteresis`` below the cut-off, >= ``floor``."""
+    return round(max(floor, cutoff - hysteresis), 4)
+
+
+def two_classes(labels: Sequence[int]) -> bool:
+    """ROC-AUC / PR-AUC are undefined on a single-class split."""
+    return len(set(labels)) == 2
+
+
 def choose_threshold(
     labels: Sequence[int],
     scores: Sequence[float],

@@ -292,3 +292,39 @@ class TestSynthetic:
         assert profiles["cnc_1_spindle_temp"].nominal == 45.0
         assert profiles["cnc_1_spindle_temp"].high == 75.0
         assert set(profiles) == set(sf.SPINDLE_SENSOR_NAMES)
+
+
+class TestReviewFixes:
+    def test_maintenance_age_is_clipped_to_the_training_range(self) -> None:
+        readings = _series_readings(20)
+        old = sf.build_features(readings, limit_c=LIMIT, last_maintenance_at=T0 - 3260 * 3600)
+        assert old is not None
+        assert old["hours_since_maintenance"] == sf.MAX_MAINTENANCE_AGE_H
+        future = sf.build_features(readings, limit_c=LIMIT, last_maintenance_at=T0 + 3600)
+        assert future is not None and future["hours_since_maintenance"] == 0.0
+
+    def test_synthetic_runs_stay_inside_the_clip_range(self) -> None:
+        from iot_twin.ml.synthetic_telemetry import generate_runs
+
+        for run in generate_runs(n_runs=6, duration_s=120, seed=11):
+            start = min(r["timestamp"] for r in run.readings)
+            assert 0 <= (start - run.last_maintenance_at) / 3600 <= sf.MAX_MAINTENANCE_AGE_H
+
+    def test_time_split_embargo_drops_rows_next_to_the_boundary(self) -> None:
+        rows = [LabelledRow("r", float(t), {}, t % 2) for t in range(0, 1000, 5)]
+        train, test = time_split(rows, 0.25, embargo_s=180.0)
+        boundary = min(r.at for r in test)
+        assert max(r.at for r in train) < boundary - 180.0
+        assert len(train) + len(test) < len(rows)
+        with pytest.raises(ValueError):
+            time_split(rows[:10], 0.5, embargo_s=1e6)
+
+    def test_quantile_clear_level_and_class_guard(self) -> None:
+        from iot_twin.ml.evaluation import clear_threshold_for, quantile, two_classes
+
+        assert quantile([0.0, 1.0], 0.5) == 0.5
+        assert quantile([3.0, 1.0, 2.0], 0.9) == pytest.approx(2.8)
+        assert quantile([], 0.5) == 0.0
+        assert clear_threshold_for(0.22, 0.05) == 0.17
+        assert clear_threshold_for(0.03, 0.05) == 0.01
+        assert two_classes([0, 1, 1]) and not two_classes([0, 0])
