@@ -20,7 +20,7 @@ from iot_twin.services.lakets import lakets_service
 from iot_twin.services.lakets.lakets_deploy_service import deploy_retention_job
 from iot_twin.services.pipelines.pipeline_db import get_industry_lakebase, get_pipeline_lakebase
 
-logger = logging.getLogger("iot_digital_twin.routes.lakets")
+logger = logging.getLogger("pharma_twin.routes.lakets")
 
 router = APIRouter()
 _INDUSTRY_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -172,7 +172,7 @@ async def get_cdf_status(
     pipeline_id: str,
     industry: str | None = Query(
         None,
-        description="Industry id — resolves the deterministic iot-pipelines "
+        description="Industry id — resolves the deterministic <prefix>-pipelines "
         "branch directly (industry-first dashboards have no legacy pipelines row).",
     ),
     state: AppState = Depends(get_app_state),
@@ -229,7 +229,7 @@ async def get_cdf_status(
             )
 
     try:
-        # Industry-first pipelines resolve the deterministic iot-pipelines branch
+        # Industry-first pipelines resolve the deterministic <prefix>-pipelines branch
         # by industry (no legacy pipelines/sink_config row); legacy pipelines fall
         # back to the per-pipeline lookup. Hard-bound so a hung pool never
         # stalls the dashboard proxy.

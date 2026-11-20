@@ -7,7 +7,7 @@ import logging
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-logger = logging.getLogger("iot_digital_twin.routes.jobs")
+logger = logging.getLogger("pharma_twin.routes.jobs")
 
 router = APIRouter(tags=["jobs"])
 

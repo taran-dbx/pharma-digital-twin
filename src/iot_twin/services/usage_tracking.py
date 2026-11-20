@@ -25,14 +25,17 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qs
 
+from iot_twin.core import resource_names
+
 logger = logging.getLogger(__name__)
 
 ENV_ENABLED = "USAGE_TRACKING_ENABLED"
 ENV_APP_NAME = "USAGE_TRACKING_APP_NAME"
 ENV_DEMO_CATALOG_ID = "USAGE_TRACKING_DEMO_CATALOG_ID"
 
-# The package asks for the repository name as the app name.
-DEFAULT_APP_NAME = "iot-digital-twin"
+# The package asks for an app name; it follows the resource prefix so usage of
+# this deployment is never attributed to the upstream app.
+DEFAULT_APP_NAME = resource_names.app_name()
 APP_START_PATH = "/_app/start"
 DEFAULT_STARTUP_TIMEOUT_S = 10.0
 
@@ -96,7 +99,7 @@ class UsageTrackingConfig:
     def from_env(cls, env: Mapping[str, str] | None = None) -> UsageTrackingConfig:
         source = os.environ if env is None else env
         enabled = source.get(ENV_ENABLED, "").strip().lower() not in _FALSY
-        app_name = source.get(ENV_APP_NAME, "").strip() or DEFAULT_APP_NAME
+        app_name = source.get(ENV_APP_NAME, "").strip() or resource_names.app_name()
         catalog_id = source.get(ENV_DEMO_CATALOG_ID, "").strip() or None
         return cls(enabled=enabled, app_name=app_name, demo_catalog_id=catalog_id)
 

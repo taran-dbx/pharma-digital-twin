@@ -35,12 +35,13 @@ import { LakebaseSettingsTab } from "./settings/lakebase-settings-tab";
 import { SecretsSettingsTab } from "./settings/secrets-settings-tab";
 import { ClusterSettingsTab } from "./settings/cluster-settings-tab";
 import { WarehouseSettingsTab } from "./settings/warehouse-settings-tab";
+import { catalogPattern, DEFAULT_RESOURCE_PREFIX, sharedSecretScope } from "@/lib/resource-names";
 
 // ---------------------------------------------------------------------------
 // Default values
 // ---------------------------------------------------------------------------
 const DEFAULT_UC: UcSettings = {
-  catalog_pattern: "iot_{name}",
+  catalog_pattern: catalogPattern(DEFAULT_RESOURCE_PREFIX),
   schemas: ["raw", "metrics", "checkpoints"],
   checkpoint_volume: "stream_checkpoints",
   storage_root: "",
@@ -49,7 +50,7 @@ const DEFAULT_UC: UcSettings = {
 
 const DEFAULT_LAKEBASE: LakebaseSettings = {
   mode: "autoscale",
-  project_id: "iot-digital-twin",
+  project_id: `${DEFAULT_RESOURCE_PREFIX}-backend`,
   branch_id: "production",
   database: "databricks_postgres",
   pg_schema: "raw",
@@ -63,7 +64,7 @@ const LB_LOGIN_ENTRY_NAME = "lb-password";
 const ZB_OAUTH_ENTRY_NAME = "zerobus-client-secret";
 
 const DEFAULT_SECRETS: SecretsSettings = {
-  scope: "iot-secrets",
+  scope: sharedSecretScope(DEFAULT_RESOURCE_PREFIX),
   lb_user_key: "lb-user",
   lb_password_key: LB_LOGIN_ENTRY_NAME,
   zb_client_id_key: "zerobus-client-id",

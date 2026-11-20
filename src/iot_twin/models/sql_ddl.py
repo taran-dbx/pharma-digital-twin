@@ -9,6 +9,7 @@ sites keep working (the generated DDL contains no other braces).
 
 from __future__ import annotations
 
+from iot_twin.core import resource_names
 from iot_twin.models.sensor_schema import pg_chronotable_ddl
 
 # LakeTS — probe installed version.  Returns NULL/empty if the toolkit is absent.
@@ -72,5 +73,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_active_source
 """
 
 # Lakebase role constants
-LAKEBASE_ROLE_NAME = "iot_app_user"
-LAKEBASE_ROLE_ID = "iot-app-user"
+# Resolved once at import from RESOURCE_PREFIX (set before the process starts).
+LAKEBASE_ROLE_NAME = resource_names.prefixed_ident("app_user")
+LAKEBASE_ROLE_ID = resource_names.app_lakebase_role_id()

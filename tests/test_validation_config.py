@@ -94,8 +94,8 @@ def test_cluster_spec_auto_terminate_floor():
 
 # --- Kafka topic + MSK helpers --------------------------------------------
 def test_topic_name_dotted():
-    assert vc.topic_name("pharmaceutical", "realtime") == "iot.pharmaceutical.realtime"
-    assert vc.topic_name("Oil & Gas", "microbatch") == "iot.oil_gas.microbatch"
+    assert vc.topic_name("pharmaceutical", "realtime") == "pharma-twin.pharmaceutical.realtime"
+    assert vc.topic_name("Oil & Gas", "microbatch") == "pharma-twin.oil_gas.microbatch"
 
 
 def test_topic_name_rejects_non_kafka_mode():

@@ -120,7 +120,7 @@ class TestProvisionSecretsAppGrant:
         w.service_principals.list.assert_called_once()
         _, kwargs = w.service_principals.list.call_args
         filt = kwargs.get("filter", "")
-        assert "iot-sss-iot_scope" in filt
+        assert "pharma-twin-sss-iot_scope" in filt
 
         out["grant"].assert_called_once()
         args = out["grant"].call_args.args

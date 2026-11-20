@@ -27,7 +27,7 @@ from iot_twin.services.dbsql_service import execute_dbsql
 from iot_twin.services.industry.industry_catalog_service import resolve_warehouse_id
 from iot_twin.services.uc_ident import sql_fqn
 
-logger = logging.getLogger("iot_digital_twin.services.intelligence_catalog")
+logger = logging.getLogger("pharma_twin.services.intelligence_catalog")
 
 TABLE_NAMES: tuple[str, ...] = (
     "intelligence_assets",

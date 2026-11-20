@@ -12,6 +12,7 @@ from typing import Any
 
 import httpx
 
+from iot_twin.core import resource_names
 from iot_twin.models.sql_ddl import (
     LAKEBASE_ROLE_ID,
     MATVIEW_1M_DDL,
@@ -23,7 +24,7 @@ from iot_twin.services.app_permissions import _app_name, grant_app_can_use
 from iot_twin.services.lakets import lakets_service
 from iot_twin.services.zerobus_validation import ZEROBUS_OAUTH_ENTRY_NAME
 
-logger = logging.getLogger("iot_digital_twin.services.provisioning")
+logger = logging.getLogger("pharma_twin.services.provisioning")
 
 
 def _is_missing_metastore_storage(exc: Exception) -> bool:
@@ -134,7 +135,7 @@ async def ensure_streaming_sp(
     """Ensure the streaming service principal + OAuth secret exist (idempotent).
 
     Creates the secret scope, mints a service principal named
-    ``iot-sss-<scope_name>`` with an OAuth secret, stores its client id /
+    ``<prefix>-sss-<scope_name>`` with an OAuth secret, stores its client id /
     secret in the scope, and grants the SP ``CAN_USE`` on the app.  Both the
     fresh-create and already-exists paths (re-)apply the app grant.
 
@@ -175,7 +176,7 @@ async def ensure_streaming_sp(
 
     zb_id_key = "zerobus-client-id"
     zb_secret_key = ZEROBUS_OAUTH_ENTRY_NAME
-    sp_name = f"iot-sss-{scope_name}"
+    sp_name = resource_names.streaming_sp_name(scope_name)
     client_id: str | None = None
 
     def _grant_app_access(application_id: str | None) -> None:
@@ -289,7 +290,7 @@ async def ensure_streaming_sp(
 # Shared streaming service principal (one SP for all industry pipelines)
 # ---------------------------------------------------------------------------
 
-SHARED_STREAMING_SP_DISPLAY_NAME = "iot-sss-industries"
+SHARED_STREAMING_SP_DISPLAY_NAME = resource_names.shared_streaming_sp_name()
 # DEPRECATED constant kept for import compatibility; use get_secret_scope() at
 # call time instead.  Set to "" so import-time reads never inject a workspace
 # literal — the real value is resolved per-call via workspace_config.
@@ -300,9 +301,9 @@ SHARED_STREAMING_SP_ID_KEY = "sss-industries-client-id"
 SHARED_STREAMING_SP_OAUTH_ENTRY_NAME = "sss-industries-client-secret"
 SHARED_STREAMING_SP_SECRET_KEY = SHARED_STREAMING_SP_OAUTH_ENTRY_NAME
 # Distinct Lakebase role_id for the shared streaming SP so it can be registered
-# on the SAME branch as the app-backend role (LAKEBASE_ROLE_ID="iot-app-user")
+# on the SAME branch as the app-backend role (LAKEBASE_ROLE_ID, ``<prefix>-app-user``)
 # without a role_id collision.
-SHARED_STREAMING_LAKEBASE_ROLE_ID = "iot-sss-industries"
+SHARED_STREAMING_LAKEBASE_ROLE_ID = resource_names.shared_streaming_sp_name()
 
 
 # NOTE (Task 3): ``ensure_shared_streaming_sp`` and the separate zerobus SP
@@ -315,11 +316,11 @@ SHARED_STREAMING_LAKEBASE_ROLE_ID = "iot-sss-industries"
 async def provision_uc_catalog(uc: dict) -> list[dict]:
     """Create UC catalog, schemas, and checkpoint volume (idempotent)."""
     results: list[dict] = []
-    pattern = uc.get("catalog_pattern", "iot_{name}")
+    pattern = uc.get("catalog_pattern", resource_names.catalog_pattern())
     if "{name}" in pattern:
         catalog_name = pattern.replace("{name}", "default")
     else:
-        catalog_name = pattern or "iot_default"
+        catalog_name = pattern or resource_names.default_catalog_name()
 
     schemas = uc.get("schemas", ["raw", "metrics", "checkpoints"])
     volume_name = uc.get("checkpoint_volume", "stream_checkpoints")

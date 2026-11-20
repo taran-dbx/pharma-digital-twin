@@ -6,6 +6,7 @@ import { Separator } from "@/components/ui/separator";
 import { InputField, NumberField, SelectField } from "./settings-shared";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
+import { DEFAULT_RESOURCE_PREFIX } from "@/lib/resource-names";
 import { toast } from "sonner";
 import type { WarehouseSettings, WarehouseInfo } from "@/lib/types";
 
@@ -42,7 +43,7 @@ export function WarehouseSettingsTab({
   onWarehouseCreated,
 }: WarehouseSettingsTabProps) {
   const [creating, setCreating] = useState(false);
-  const [newName, setNewName] = useState("iot-digital-twin");
+  const [newName, setNewName] = useState(DEFAULT_RESOURCE_PREFIX);
   const [newSize, setNewSize] = useState("2X-Small");
   const [newAutoStop, setNewAutoStop] = useState(10);
 
@@ -159,7 +160,7 @@ export function WarehouseSettingsTab({
         <div className="grid gap-4 sm:grid-cols-3">
           <InputField
             label="Name"
-            placeholder="iot-digital-twin"
+            placeholder={DEFAULT_RESOURCE_PREFIX}
             value={newName}
             onChange={setNewName}
           />

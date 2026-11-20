@@ -30,7 +30,7 @@ refuses to create any job until every required validation step for the mode is
 ``gate_override=True``).
 
 Additive only — this module does not touch ``app.yaml`` / ``core/lakebase.py`` /
-``iot-lakets-demo``.
+``<prefix>-lakets-demo``.
 """
 
 from __future__ import annotations
@@ -47,6 +47,7 @@ from typing import Any
 
 from databricks.sdk.service.jobs import Continuous, JobSettings, PauseStatus
 
+from iot_twin.core import resource_names
 from iot_twin.core.workspace_config import APP_SP_OAUTH_SECRET_KEY
 from iot_twin.services import cdf_reconciliation_service, uc_secrets
 from iot_twin.services.databricks_sdk import detect_cloud
@@ -69,7 +70,7 @@ from iot_twin.services.pipelines import pipeline_setup_repo
 from iot_twin.services.production_control import PRODUCTION_CONTROL_PLACEHOLDER, control_file_path
 from iot_twin.services.resource_ledger import record_resource
 
-logger = logging.getLogger("iot_digital_twin.services.deployment")
+logger = logging.getLogger("pharma_twin.services.deployment")
 
 
 class RuntimeOAuthCredentialError(RuntimeError):
@@ -124,8 +125,6 @@ MICROBATCH_PROCESSING_TIME = "10 seconds"
 # dependency order); jobs must be deleted before their Lakebase/UC sinks
 # (branch=20, replica=30 in pipeline_project_service), so jobs sit above them.
 TEARDOWN_ORDER_JOB = 40
-
-_WS_SUBDIR = ".iot-digital-twin"
 
 
 # --- Worker sizing (M1) ------------------------------------------------------
@@ -201,7 +200,7 @@ def _current_user(w: Any) -> str:
 
 def _notebook_path(username: str, industry: str, mode: str, kind: str) -> str:
     ts = int(time.time())
-    return f"/Workspace/Users/{username}/{_WS_SUBDIR}/{industry}_{mode}_{kind}_{ts}"
+    return f"{resource_names.user_workspace_dir(username)}/{industry}_{mode}_{kind}_{ts}"
 
 
 def _normalize_consumer_credentials(source: str) -> str:
@@ -470,7 +469,7 @@ def build_zerobus_task(
 
 def job_display_name(industry: str, mode: str) -> str:
     """Canonical per-mode job name (spec §2.6)."""
-    return f"iot-{industry}-{mode}"
+    return resource_names.pipeline_name(industry, mode)
 
 
 # --- Job create/reset (idempotent by name) -----------------------------------
@@ -491,7 +490,7 @@ def _job_url(w: Any, job_id: Any) -> str | None:
 def _create_or_reset_continuous_job(w: Any, job_name: str, tasks: list) -> tuple[int, str]:
     """Create/reset an **unpaused Continuous** job with the given tasks."""
     continuous = Continuous(pause_status=PauseStatus.UNPAUSED)
-    tags = {"app": "iot-digital-twin", "component": "pipeline", "job": job_name}
+    tags = resource_names.resource_tags("pipeline", job=job_name)
     existing = _find_job_id(w, job_name)
     if existing is not None:
         try:
@@ -520,7 +519,7 @@ def _create_or_reset_serverless_job(
     """Create/reset a serverless (producer-only) job — run-triggered, no schedule."""
     from databricks.sdk.service.jobs import JobSettings
 
-    tags = {"app": "iot-digital-twin", "component": "zerobus", "job": job_name}
+    tags = resource_names.resource_tags("zerobus", job=job_name)
     existing = _find_job_id(w, job_name)
     if existing is not None:
         w.jobs.reset(

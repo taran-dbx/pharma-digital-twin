@@ -6,6 +6,7 @@ import os
 
 from fastapi import APIRouter, Depends
 
+from iot_twin.core.config import get_resource_prefix
 from iot_twin.core.state import AppState, get_app_state
 from iot_twin.core.workspace_config import (
     get_pipelines_project,
@@ -78,6 +79,8 @@ async def app_defaults():
         # all industry-prefixed managed tables (e.g. {industry}_zerobus, {industry}_metrics).
         "uc_catalog": os.getenv("UC_CATALOG", ""),
         "uc_schema": os.getenv("UC_SCHEMA", ""),
+        # RESOURCE_PREFIX: the client builds topic / consumer-group / job names from it.
+        "resource_prefix": get_resource_prefix(),
     }
 
 

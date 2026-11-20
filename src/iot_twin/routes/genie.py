@@ -14,7 +14,7 @@ from iot_twin.domain.catalog import to_record_industry
 from iot_twin.services import genie_service
 from iot_twin.services.alerts.alert_engine import engine_for
 
-logger = logging.getLogger("iot_digital_twin.routes.genie")
+logger = logging.getLogger("pharma_twin.routes.genie")
 
 router = APIRouter()
 

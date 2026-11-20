@@ -51,7 +51,7 @@ from iot_twin.services.pipelines.pipeline_project_service import (
     endpoint_resource_name,
 )
 
-logger = logging.getLogger("iot_digital_twin.services.pipeline_db")
+logger = logging.getLogger("pharma_twin.services.pipeline_db")
 
 # Bound pool init so a hung Lakebase host cannot pin request workers.
 _LAKEBASE_CONNECT_TIMEOUT_SECONDS = float(os.getenv("LAKEBASE_CONNECT_TIMEOUT_SECONDS", "10"))

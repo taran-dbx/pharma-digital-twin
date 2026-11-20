@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import logging
 
-logger = logging.getLogger("iot_digital_twin.services.settings")
+from iot_twin.core import resource_names
+
+logger = logging.getLogger("pharma_twin.services.settings")
 
 # Deliberately bogus login for the Lakebase reachability probe: the connect only
 # has to reach the host, an auth rejection still proves it is connectable.
@@ -299,7 +301,7 @@ async def status_uc(settings: dict) -> dict:
         from databricks.sdk import WorkspaceClient
 
         w = WorkspaceClient()
-        pattern = settings.get("uc", {}).get("catalog_pattern", "iot_{name}")
+        pattern = settings.get("uc", {}).get("catalog_pattern", resource_names.catalog_pattern())
         prefix = pattern.split("{")[0] if "{" in pattern else pattern
         for cat in w.catalogs.list():
             if cat.name and cat.name.startswith(prefix):

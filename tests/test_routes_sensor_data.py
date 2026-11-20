@@ -1494,7 +1494,7 @@ class TestDbsqlTimeseries:
 
         patches, exec_mock = _patch_dbsql_timeseries_deps()
         exec_mock.side_effect = [chart_result, Exception("latest warehouse timeout")]
-        with caplog.at_level("WARNING", logger="iot_digital_twin.routes.sensor_data"):
+        with caplog.at_level("WARNING", logger="pharma_twin.routes.sensor_data"):
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
                 async with AsyncClient(transport=transport, base_url="http://test") as client:
                     resp = await client.get(

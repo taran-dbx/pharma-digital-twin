@@ -8,6 +8,7 @@
  */
 import { useEffect, useState } from "react";
 import type { PipelineMode } from "@/lib/industries-api";
+import { topicName, useResourcePrefix } from "@/lib/resource-names";
 
 export interface SampleModalContentProps {
   industryId: string;
@@ -35,6 +36,7 @@ export function SampleModalContent({
   hz,
   mode,
 }: SampleModalContentProps) {
+  const resourcePrefix = useResourcePrefix();
   const [records, setRecords] = useState<SampleRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -68,7 +70,7 @@ export function SampleModalContent({
           <> and writes directly to the {industryName} Delta target.</>
         ) : (
           <>
-            , published to <code>iot.{industryId}.{mode}</code> and mapped to the{" "}
+            , published to <code>{topicName(resourcePrefix, industryId, mode)}</code> and mapped to the{" "}
             {industryName} schema.
           </>
         )}

@@ -16,7 +16,7 @@ from iot_twin.services.producer_service import (
     stop_data_producer,
 )
 
-logger = logging.getLogger("iot_digital_twin.routes.producers")
+logger = logging.getLogger("pharma_twin.routes.producers")
 
 router = APIRouter()
 

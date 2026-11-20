@@ -45,7 +45,7 @@ from iot_twin.services.industry.industry_catalog_service import (
 from iot_twin.services.pipelines import pipeline_project_service as pps
 from iot_twin.services.resource_ledger import record_resource
 
-logger = logging.getLogger("iot_digital_twin.services.industry_provisioning")
+logger = logging.getLogger("pharma_twin.services.industry_provisioning")
 
 
 class _CdfProvisioningError(RuntimeError):

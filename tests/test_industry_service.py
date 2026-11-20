@@ -28,14 +28,14 @@ def _event_loop() -> None:
 
 
 def test_naming_helpers():
-    assert isvc.pipeline_name("energy", "microbatch") == "iot-energy-microbatch"
-    assert isvc.catalog_name("energy") == "iot_energy"
-    assert isvc.topic_name("energy", "microbatch") == "iot.energy.microbatch"
+    assert isvc.pipeline_name("energy", "microbatch") == "pharma-twin-energy-microbatch"
+    assert isvc.catalog_name("energy") == "pharma_twin_energy"
+    assert isvc.topic_name("energy", "microbatch") == "pharma-twin.energy.microbatch"
 
 
 def test_get_catalog_marks_running(monkeypatch):
     async def fake_list(_state):
-        return [{"name": "iot-pharmaceutical-realtime", "status": "running"}]
+        return [{"name": "pharma-twin-pharmaceutical-realtime", "status": "running"}]
 
     monkeypatch.setattr(isvc, "_list_pipelines", fake_list)
     cat = asyncio.get_event_loop().run_until_complete(isvc.get_catalog(None))
@@ -136,7 +136,7 @@ def test_get_catalog_draft_row_does_not_reconcile(monkeypatch):
 
 def test_get_catalog_exact_name_match_still_wins(monkeypatch):
     async def fake_list(_state):
-        return [{"name": "iot-energy-microbatch", "status": "running"}]
+        return [{"name": "pharma-twin-energy-microbatch", "status": "running"}]
 
     monkeypatch.setattr(isvc, "_list_pipelines", fake_list)
     cat = asyncio.get_event_loop().run_until_complete(isvc.get_catalog(None))
@@ -181,7 +181,7 @@ def test_get_catalog_resolves_industry_first_deployment_id(monkeypatch):
 # ---------------------------------------------------------------------------
 def test_resolve_pipeline_for_mode_exact_name_match(monkeypatch):
     async def fake_list(_state):
-        return [{"id": "pid-1", "name": "iot-energy-microbatch", "status": "running"}]
+        return [{"id": "pid-1", "name": "pharma-twin-energy-microbatch", "status": "running"}]
 
     monkeypatch.setattr(isvc, "_list_pipelines", fake_list)
     row = asyncio.get_event_loop().run_until_complete(

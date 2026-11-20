@@ -58,7 +58,7 @@ from iot_twin.services.industry.industry_catalog_service import industry_table
 from iot_twin.services.intelligence_catalog_service import reference_tables
 from iot_twin.services.pipelines import pipeline_setup_repo
 
-logger = logging.getLogger("iot_digital_twin.services.genie_space")
+logger = logging.getLogger("pharma_twin.services.genie_space")
 
 RESOURCE_TYPE = "genie_space"
 # Higher teardown_order is deleted first: the space references the tables

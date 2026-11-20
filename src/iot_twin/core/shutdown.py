@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from iot_twin.core.state import AppState
 
-logger = logging.getLogger("iot_digital_twin.shutdown")
+logger = logging.getLogger("pharma_twin.shutdown")
 
 
 def install_sigterm_handler(state: AppState) -> None:

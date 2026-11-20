@@ -1,7 +1,7 @@
 """Bootstrap a fresh Lakebase project for LakeTS smoke testing.
 
 Creates:
-- Lakebase project  ``iot-lakets-demo``
+- Lakebase project  ``<prefix>-lakets-demo`` (``resource_names.lakets_demo_project``)
 - Branch             ``production``
 - Postgres role      (``databricks_superuser`` via ``provision_lakebase_role``)
 
@@ -31,15 +31,17 @@ for _path in (_ROOT / "src", _ROOT):
 
 from scripts._profile import require_profile
 
+from iot_twin.core import resource_names
+from iot_twin.core.config import LAKEBASE_SYNC_DATABASE
 from iot_twin.services.provisioning_service import (
     provision_lakebase_project_and_branch,
     provision_lakebase_role,
     provision_lakebase_table,
 )
 
-PROJECT_ID = os.getenv("LAKETS_PROJECT_ID", "iot-lakets-demo")
+PROJECT_ID = os.getenv("LAKETS_PROJECT_ID") or resource_names.lakets_demo_project()
 BRANCH_ID = os.getenv("LAKETS_BRANCH_ID", "production")
-DATABASE = os.getenv("PGDATABASE", "databricks_postgres")
+DATABASE = os.getenv("PGDATABASE", LAKEBASE_SYNC_DATABASE)
 DEFAULT_LAKETS_SQL = str(_ROOT / "src" / "iot_twin" / "assets" / "lakets.sql")
 
 

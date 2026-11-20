@@ -22,6 +22,8 @@ import os
 import re
 from typing import Any
 
+from iot_twin.core import resource_names
+
 __all__ = [
     "VALIDATION_DBR",
     "SERVICE_CREDENTIAL",
@@ -174,7 +176,7 @@ def build_validation_cluster_spec(
         auto_terminate_min = MIN_AUTO_TERMINATE_MIN  # floor — admin may raise only
 
     spec: dict[str, Any] = {
-        "cluster_name": cluster_name or "iot-validation-harness",
+        "cluster_name": cluster_name or resource_names.cluster_name("validation-harness"),
         "spark_version": spark_version,
         "node_type_id": node_type_id,
         "driver_node_type_id": node_type_id,  # driver == worker (§1.3)
@@ -205,7 +207,7 @@ def build_validation_cluster_spec(
 
 # --- Kafka topic + MSK helpers ---------------------------------------------
 def topic_name(industry: str, mode: str) -> str:
-    """Return the dotted topic name ``iot.<industry>.<mode>`` (spec §1.14).
+    """Return the dotted topic name ``<prefix>.<industry>.<mode>`` (spec §1.14).
 
     Only ``realtime`` and ``microbatch`` have topics; ``zerobus`` is non-Kafka.
     """
@@ -214,7 +216,7 @@ def topic_name(industry: str, mode: str) -> str:
     safe = _TOPIC_SAFE_RE.sub("_", (industry or "").strip().lower()).strip("_")
     if not safe:
         raise ValueError(f"industry {industry!r} has no valid characters for a topic")
-    return f"iot.{safe}.{mode}"
+    return resource_names.topic_name(safe, mode)
 
 
 def replication_factor(broker_count: int) -> int:

@@ -34,13 +34,22 @@ sys.path.insert(0, str(ROOT))
 
 from scripts._profile import require_profile  # noqa: E402
 
+from iot_twin.core import resource_names  # noqa: E402
+from iot_twin.core.config import get_resource_prefix, get_uc_service_credential  # noqa: E402
+
 require_profile()  # --profile <name> or $DATABRICKS_CONFIG_PROFILE; no default workspace
 
 STATE_FILE = Path(os.getenv("E2E_STATE_FILE", "/tmp/pharma_e2e_state.json"))
 
 INDUSTRY = "pharmaceutical"
-# UC service credential *name* (an identifier, not a secret).
-UC_SC_NAME = "iot-rtm-sc"
+# Every name below derives from RESOURCE_PREFIX so this script can never touch
+# the upstream deployment's catalog, branch or jobs.
+CATALOG = resource_names.catalog_name(INDUSTRY)
+PIPELINES_PROJECT = os.getenv("PIPELINES_LAKEBASE_PROJECT") or resource_names.pipelines_project()
+BRANCH = f"projects/{PIPELINES_PROJECT}/branches/{INDUSTRY}"
+JOB_NAMES = tuple(resource_names.pipeline_name(INDUSTRY, m) for m in ("microbatch", "realtime"))
+# UC service credential *name* (an identifier, not a secret); shared, overridable.
+UC_SC_NAME = get_uc_service_credential()
 WAREHOUSE_ID = os.getenv("E2E_WAREHOUSE_ID", "0123456789abcdef")  # lakets-demo-wh (RUNNING)
 BOOTSTRAP_PUBLIC = (
     "b-2-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198,"
@@ -164,31 +173,29 @@ async def stage_verify_provision():
 
     # Catalog + schemas + volume + metrics table via DBSQL.
     try:
-        cat = await execute_dbsql("SHOW SCHEMAS IN iot_pharmaceutical", WAREHOUSE_ID)
+        cat = await execute_dbsql(f"SHOW SCHEMAS IN {CATALOG}", WAREHOUSE_ID)
         out["schemas"] = [r for r in cat["data"]]
     except Exception as e:
         out["schemas_error"] = str(e)[:300]
     try:
-        vol = await execute_dbsql("SHOW VOLUMES IN iot_pharmaceutical.checkpoints", WAREHOUSE_ID)
+        vol = await execute_dbsql(f"SHOW VOLUMES IN {CATALOG}.checkpoints", WAREHOUSE_ID)
         out["volumes"] = vol["data"]
     except Exception as e:
         out["volumes_error"] = str(e)[:300]
     try:
-        m = await execute_dbsql(
-            "DESCRIBE TABLE iot_pharmaceutical.metrics.streaming_metrics", WAREHOUSE_ID
-        )
+        m = await execute_dbsql(f"DESCRIBE TABLE {CATALOG}.metrics.streaming_metrics", WAREHOUSE_ID)
         out["metrics_cols"] = m["row_count"]
     except Exception as e:
         out["metrics_error"] = str(e)[:300]
     try:
-        g = await execute_dbsql("SHOW GRANTS ON CATALOG iot_pharmaceutical", WAREHOUSE_ID)
+        g = await execute_dbsql(f"SHOW GRANTS ON CATALOG {CATALOG}", WAREHOUSE_ID)
         out["catalog_grants"] = g["data"]
     except Exception as e:
         out["grants_error"] = str(e)[:300]
 
     # Lakebase branch + chronotable + partitions.
     try:
-        w.postgres.get_branch(name="projects/iot-pipelines/branches/pharmaceutical")
+        w.postgres.get_branch(name=BRANCH)
         out["branch"] = "exists"
     except Exception as e:
         out["branch_error"] = str(e)[:200]
@@ -415,7 +422,7 @@ REGION = "us-east-1"
 BOOTSTRAP = {BOOTSTRAP_PUBLIC!r}
 TOPIC = {topic!r}
 
-_sess = dbutils.credentials.getServiceCredentialsProvider("iot-rtm-sc")
+_sess = dbutils.credentials.getServiceCredentialsProvider({UC_SC_NAME!r})
 class _TP(AbstractTokenProvider):
     def token(self):
         try:
@@ -479,7 +486,7 @@ raw = (spark.readStream.format("kafka")
        .option("kafka.bootstrap.servers", BOOTSTRAP)
        .option("subscribe", TOPIC)
        .option("startingOffsets", "latest")
-       .option("databricks.serviceCredential", "iot-rtm-sc")
+       .option("databricks.serviceCredential", {UC_SC_NAME!r})
        .load())
 
 parsed = (raw.select(F.from_json(F.col("value").cast("string"), schema).alias("d"))
@@ -518,7 +525,7 @@ async def stage_deploy_mb():
     db = await _db()
     try:
         catalog = cat.catalog_name(INDUSTRY)
-        topic = "iot.pharmaceutical.microbatch"
+        topic = resource_names.topic_name(INDUSTRY, "microbatch")
         delta = f"{catalog}.microbatch.sensor_data_deploy"
         checkpoint = f"/Volumes/{catalog}/checkpoints/stream_checkpoints/deploy/microbatch"
 
@@ -655,20 +662,20 @@ async def stage_cleanup_cloud():
 
     # 1. Drop UC catalog CASCADE (removes schemas/tables/volume + external table).
     try:
-        await execute_dbsql("DROP CATALOG IF EXISTS iot_pharmaceutical CASCADE", WAREHOUSE_ID)
+        await execute_dbsql(f"DROP CATALOG IF EXISTS {CATALOG} CASCADE", WAREHOUSE_ID)
         out["catalog_drop"] = "ok"
     except Exception as e:
         out["catalog_drop_error"] = str(e)[:300]
 
     # 2. Delete Lakebase replica endpoint then the branch.
-    for name in ("projects/iot-pipelines/branches/pharmaceutical/endpoints/replica",):
+    for name in (f"{BRANCH}/endpoints/replica",):
         try:
             w.postgres.delete_endpoint(name=name)
             out[f"delete_{name.split('/')[-1]}"] = "ok"
         except Exception as e:
             out[f"delete_{name.split('/')[-1]}_error"] = str(e)[:200]
     try:
-        w.postgres.delete_branch(name="projects/iot-pipelines/branches/pharmaceutical")
+        w.postgres.delete_branch(name=BRANCH)
         out["delete_branch"] = "ok"
     except Exception as e:
         out["delete_branch_error"] = str(e)[:200]
@@ -694,24 +701,30 @@ async def stage_verify_gone():
         await db.close()
 
     try:
-        w.catalogs.get("iot_pharmaceutical")
+        w.catalogs.get(CATALOG)
         out["catalog"] = "STILL EXISTS"
     except Exception:
         out["catalog"] = "gone"
     try:
-        w.postgres.get_branch(name="projects/iot-pipelines/branches/pharmaceutical")
+        w.postgres.get_branch(name=BRANCH)
         out["branch"] = "STILL EXISTS"
     except Exception:
         out["branch"] = "gone"
     # Jobs
-    for jn in ("iot-pharmaceutical-microbatch", "iot-pharmaceutical-realtime"):
+    for jn in JOB_NAMES:
         jobs = [j.job_id for j in w.jobs.list(name=jn)]
         out[f"job:{jn}"] = jobs or "gone"
     # LakeTS ops jobs (named by branch)
     lakets_jobs = [
         j.settings.name
         for j in w.jobs.list()
-        if j.settings and j.settings.name and "pharmaceutical" in j.settings.name.lower()
+        if j.settings
+        and j.settings.name
+        and "pharmaceutical" in j.settings.name.lower()
+        and (
+            j.settings.name.startswith(f"{get_resource_prefix()}-")
+            or PIPELINES_PROJECT in j.settings.name
+        )
     ]
     out["any_pharma_jobs"] = lakets_jobs or "none"
     _pp("VERIFY nothing remains", out)

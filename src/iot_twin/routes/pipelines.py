@@ -71,7 +71,7 @@ except ImportError:  # pragma: no cover — transitional fallback
         )
 
 
-logger = logging.getLogger("iot_digital_twin.routes.pipelines")
+logger = logging.getLogger("pharma_twin.routes.pipelines")
 router = APIRouter()
 
 
@@ -570,7 +570,7 @@ async def _heal_industry_lakebase(industry: str) -> dict[str, Any] | JSONRespons
     """Re-apply role + LakeTS provisioning to an industry-first branch.
 
     Mirrors the legacy ``heal_lakebase`` role/LakeTS steps against the
-    deterministic ``iot-pipelines`` project/branch (no legacy ``pipelines``
+    deterministic ``<prefix>-pipelines`` project/branch (no legacy ``pipelines``
     row, so no ``job_id`` to restart — the "restart_job" step is reported as
     skipped). Never raises: every step is wrapped in its own try/except and
     reported in the response, matching the legacy endpoint's shape.
@@ -656,7 +656,7 @@ async def heal_lakebase(
         None,
         description="Industry id — for industry-first pipelines with no legacy "
         "`pipelines` row, re-applies role + LakeTS provisioning to the "
-        "deterministic iot-pipelines branch instead (no job to restart).",
+        "deterministic <prefix>-pipelines branch instead (no job to restart).",
     ),
     state: AppState = Depends(get_app_state),
     user_email: str = Depends(get_current_user),
@@ -670,7 +670,7 @@ async def heal_lakebase(
 
     Industry-first pipelines have no row in the legacy ``pipelines`` table, so
     when ``industry`` is passed and no legacy row is found, this instead heals
-    the deterministic ``iot-pipelines`` branch directly (role + LakeTS install
+    the deterministic ``<prefix>-pipelines`` branch directly (role + LakeTS install
     only — there is no legacy ``job_id`` to restart).
     """
     if not state.db_available or not state.db:
@@ -927,7 +927,7 @@ async def get_lakebase_health(
     pipeline_id: str,
     industry: str | None = Query(
         None,
-        description="Industry id — resolves the deterministic iot-pipelines "
+        description="Industry id — resolves the deterministic <prefix>-pipelines "
         "branch directly (for industry-first dashboards with no legacy "
         "`pipelines` row).",
     ),

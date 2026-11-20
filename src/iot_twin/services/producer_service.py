@@ -7,9 +7,10 @@ import time
 import traceback
 from typing import Any
 
+from iot_twin.core import resource_names
 from iot_twin.models.producer_state import new_producer_state, source_label
 
-logger = logging.getLogger("iot_digital_twin.services.producer")
+logger = logging.getLogger("pharma_twin.services.producer")
 
 
 async def start_data_producer(
@@ -44,7 +45,7 @@ async def start_data_producer(
         ts = int(time.time())
         short_id = pipeline_id[:8]
         notebook_path = (
-            f"/Workspace/Users/{username}/.iot-digital-twin/data_producer_{short_id}_{ts}"
+            f"{resource_names.user_workspace_dir(username)}/data_producer_{short_id}_{ts}"
         )
         parent_folder = notebook_path.rsplit("/", 1)[0]
 
@@ -63,7 +64,7 @@ async def start_data_producer(
         logger.info("Uploaded data producer notebook to %s", notebook_path)
 
         waiter = w.jobs.submit(
-            run_name=f"iot-producer-{source_type}-{short_id}-{ts}",
+            run_name=resource_names.run_name("producer", source_type, short_id, str(ts)),
             tasks=[
                 SubmitTask(
                     task_key="data_producer",

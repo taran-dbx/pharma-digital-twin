@@ -30,22 +30,26 @@ import logging
 import os
 from typing import Any
 
-logger = logging.getLogger("iot_digital_twin.services.app_permissions")
+from iot_twin.core import resource_names
 
-DEFAULT_APP_NAME = "iot-digital-twin"
-DEFAULT_ADMIN_GROUP = "iot-admins"
+logger = logging.getLogger("pharma_twin.services.app_permissions")
+
+# Import-time snapshots of the prefix-derived defaults (kept for callers that
+# import them); the getters below resolve the prefix on every call.
+DEFAULT_APP_NAME = resource_names.app_name()
+DEFAULT_ADMIN_GROUP = resource_names.admin_group()
 
 
 def _app_name() -> str:
     """Return the Databricks App name from env, falling back to the constant."""
     name = (os.getenv("DATABRICKS_APP_NAME") or "").strip()
-    return name or DEFAULT_APP_NAME
+    return name or resource_names.app_name()
 
 
 def _admin_group() -> str:
     """Return the admin group display name from env, falling back to the default."""
     name = (os.getenv("ADMIN_GROUP") or "").strip()
-    return name or DEFAULT_ADMIN_GROUP
+    return name or resource_names.admin_group()
 
 
 def _forwarded_token(request: Any) -> str | None:
@@ -150,7 +154,7 @@ def is_admin(request: Any) -> bool:
 
     Resolution order (any one grants admin): the caller's email is listed in
     ``ADMIN_EMAILS`` (CSV); membership in ``ADMIN_GROUP`` (default
-    ``"iot-admins"``) via ``_user_groups``; or the app-owner fallback.
+    ``"<prefix>-admins"``) via ``_user_groups``; or the app-owner fallback.
     Defensive throughout: any failure denies rather than raises.
     """
     try:

@@ -1,8 +1,8 @@
 resources:
   apps:
-    iot_twin:
+    pharma_twin:
       name: ${var.app_name}
-      description: IoT Digital Twin
+      description: Pharma Digital Twin
       source_code_path: ..
       config:
         command:
@@ -10,6 +10,8 @@ resources:
           - -c
           - uvicorn --app-dir src iot_twin.app:app --host 0.0.0.0 --port ${DATABRICKS_APP_PORT:-8000}
         env:
+          - name: RESOURCE_PREFIX
+            value: ${var.resource_prefix}
           - name: UC_CATALOG
             value: ${var.uc_catalog}
           - name: UC_SCHEMA
@@ -53,7 +55,7 @@ resources:
             permission: CAN_USE
         - name: genie-space
           genie_space:
-            name: iot-genie
+            name: pharma-twin-genie
             space_id: ${var.genie_space_id}
             permission: CAN_VIEW
         - name: lakebase

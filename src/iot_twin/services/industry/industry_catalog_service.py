@@ -1,13 +1,13 @@
 """Canonical per-industry UC provisioning + grants + secrets (spec §2.5–2.7, §1.11).
 
-Creates the canonical ``iot_<industry>`` Unity Catalog structure and the shared
+Creates the canonical ``<prefix_ident>_<industry>`` Unity Catalog structure and the shared
 identity/secret plumbing for one industry pipeline, recording every resource in
 the ``provisioned_resource`` ledger with a sensible ``teardown_order`` +
 ``parent_ref`` so delete can walk them in reverse-dependency order.
 
 Layout (spec §2.5)::
 
-    iot_<industry>/
+    <prefix_ident>_<industry>/
     ├── realtime/     sensor_readings              Delta   (CDF-synced historical mirror)
     ├── microbatch/   sensor_data                  Delta   (micro-batch bronze)
     ├── zerobus/      iot_sensor_data              Delta   (zerobus ingest target)
@@ -26,7 +26,7 @@ Provisioning notes (spike-verified 2026-07-05):
   ``EXTERNAL USE SCHEMA`` + ``MODIFY`` on the metrics schema.
 
 This module is **additive** — it does not touch ``app.yaml``, ``core/lakebase.py`` live
-wiring, or the legacy ``iot-lakets-demo`` project.
+wiring, or the legacy ``<prefix>-lakets-demo`` project.
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ import os
 import re
 from typing import Any
 
+from iot_twin.core import resource_names
 from iot_twin.core.workspace_config import APP_SP_OAUTH_SECRET_KEY, get_secret_scope
 from iot_twin.models.metrics_schema import metrics_managed_table_ddl
 from iot_twin.models.sensor_schema import delta_table_ddl
@@ -43,7 +44,7 @@ from iot_twin.services.dbsql_service import execute_dbsql
 from iot_twin.services.resource_ledger import record_resource
 from iot_twin.services.uc_ident import sql_fqn, sql_ident
 
-logger = logging.getLogger("iot_digital_twin.services.industry_catalog")
+logger = logging.getLogger("pharma_twin.services.industry_catalog")
 
 # --- Constants -------------------------------------------------------------
 # Canonical schema set + checkpoint volume (spec §2.5).
@@ -91,7 +92,7 @@ _CATALOG_SAFE_RE = re.compile(r"[^a-z0-9_]+")
 
 # --- Name helpers ----------------------------------------------------------
 def catalog_name(industry: str) -> str:
-    """Return the canonical catalog name ``iot_<industry>`` for ``industry``.
+    """Return the canonical catalog name ``<prefix_ident>_<industry>`` for ``industry``.
 
     Lower-cases and collapses any non ``[a-z0-9_]`` run to a single underscore
     so an arbitrary industry label produces a valid UC identifier.
@@ -99,7 +100,7 @@ def catalog_name(industry: str) -> str:
     safe = _CATALOG_SAFE_RE.sub("_", (industry or "").strip().lower()).strip("_")
     if not safe:
         raise ValueError(f"industry {industry!r} has no valid characters for a catalog name")
-    return f"iot_{safe}"
+    return resource_names.catalog_name(safe)
 
 
 def catalog_managed_location(catalog: str) -> str:

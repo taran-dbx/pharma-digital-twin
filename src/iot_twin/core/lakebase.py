@@ -20,7 +20,7 @@ import asyncpg
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.core import Config
 
-logger = logging.getLogger("iot_digital_twin.backend")
+logger = logging.getLogger("pharma_twin.backend")
 
 # Bounded pool waits so a hung Lakebase endpoint cannot pin app workers forever
 # (proxy upstream timeouts were ~10m with no asyncpg command/connect limits).

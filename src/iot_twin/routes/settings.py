@@ -9,6 +9,7 @@ import logging
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
+from iot_twin.core import resource_names
 from iot_twin.core.auth import get_current_user
 from iot_twin.core.state import AppState, get_app_state
 from iot_twin.models.sql_ddl import LAKEBASE_ROLE_NAME
@@ -34,7 +35,7 @@ from iot_twin.services.settings_service import (
     validate_uc,
 )
 
-logger = logging.getLogger("iot_digital_twin.routes.settings")
+logger = logging.getLogger("pharma_twin.routes.settings")
 
 router = APIRouter(tags=["settings"])
 
@@ -166,9 +167,11 @@ async def provision_uc_settings(request: Request, user_email: str = Depends(get_
     provisioned = await provision_uc_catalog(uc)
 
     # After creating schemas, provision the streaming_metrics table in the metrics schema
-    pattern = uc.get("catalog_pattern", "iot_{name}")
+    pattern = uc.get("catalog_pattern", resource_names.catalog_pattern())
     catalog_name = (
-        pattern.replace("{name}", "default") if "{name}" in pattern else (pattern or "iot_default")
+        pattern.replace("{name}", "default")
+        if "{name}" in pattern
+        else (pattern or resource_names.default_catalog_name())
     )
     if "metrics" in uc.get("schemas", ["raw", "metrics", "checkpoints"]):
         import os
@@ -262,7 +265,7 @@ async def provision_lakebase_settings(
             return {"provisioned": provisioned, "validation": validation}
 
         # Step 2: Register the current SP as an OAuth-auth Postgres role.
-        # The old flow created a password-authenticated ``iot_app_user`` role;
+        # The old flow created a password-authenticated app role;
         # the new flow grants the SP itself DML on the sink tables and uses
         # short-lived OAuth credentials per connection.
         import secrets as secrets_mod

@@ -32,7 +32,7 @@ from iot_twin.services.pipelines.pipeline_db import (
 from iot_twin.services.simulator_service import broadcast
 from iot_twin.services.uc_ident import sql_fqn
 
-logger = logging.getLogger("iot_digital_twin.routes.sensor_data")
+logger = logging.getLogger("pharma_twin.routes.sensor_data")
 router = APIRouter()
 
 # Bound Lakebase dashboard probes so hung industry branches fail closed
@@ -116,7 +116,7 @@ async def _resolve_lakebase(
     state: AppState, pipeline_id: str, industry: str | None
 ) -> PipelineLakebaseHandle | None:
     """Resolve the Lakebase handle to query: industry-first when ``industry`` is
-    passed (deterministic ``iot-pipelines`` branch, no legacy ``pipelines`` row
+    passed (deterministic ``<prefix>-pipelines`` branch, no legacy ``pipelines`` row
     required), else the legacy per-pipeline ``sink_config`` lookup."""
     if industry:
         industry = industry.strip().lower()
@@ -796,7 +796,7 @@ async def get_lakebase_perf(
     minutes: int = Query(5, ge=1, le=60, description="Lookback window in minutes"),
     industry: str | None = Query(
         None,
-        description="Industry id — resolves the deterministic iot-pipelines "
+        description="Industry id — resolves the deterministic <prefix>-pipelines "
         "branch directly (for industry-first dashboards with no legacy "
         "`pipelines` row).",
     ),
@@ -981,7 +981,7 @@ async def get_lakets_gapfill(
     minutes: int = Query(30, ge=1, le=1440, description="Lookback window in minutes"),
     industry: str | None = Query(
         None,
-        description="Industry id — resolves the deterministic iot-pipelines "
+        description="Industry id — resolves the deterministic <prefix>-pipelines "
         "branch directly (for industry-first dashboards with no legacy "
         "`pipelines` row).",
     ),
@@ -1105,7 +1105,7 @@ async def get_lakets_rate(
     minutes: int = Query(30, ge=1, le=1440, description="Lookback window in minutes"),
     industry: str | None = Query(
         None,
-        description="Industry id — resolves the deterministic iot-pipelines "
+        description="Industry id — resolves the deterministic <prefix>-pipelines "
         "branch directly (for industry-first dashboards with no legacy "
         "`pipelines` row).",
     ),
@@ -1203,7 +1203,7 @@ async def get_lakets_histogram(
     buckets: int = Query(20, ge=2, le=200, description="Number of histogram buckets"),
     industry: str | None = Query(
         None,
-        description="Industry id — resolves the deterministic iot-pipelines "
+        description="Industry id — resolves the deterministic <prefix>-pipelines "
         "branch directly (for industry-first dashboards with no legacy "
         "`pipelines` row).",
     ),
@@ -1980,7 +1980,7 @@ async def get_dbsql_timeseries(
       the one-schema direct-write table via ``industry_table(industry, mode)``
       (``{UC_CATALOG}.{UC_SCHEMA}.{industry}_{mode}``).
     - When ``industry`` is absent: falls back to the legacy per-pipeline catalog
-      lookup (``{iot_<industry>}.{schema}.{table}`` from ``_LEGACY_MODE_TABLES``),
+      lookup (``{<prefix_ident>_<industry>}.{schema}.{table}`` from ``_LEGACY_MODE_TABLES``),
       kept for non-industry-first pipelines that still have a ``pipelines`` row.
 
     ``minutes`` bounds only the chart rows. For industry-first realtime, chart

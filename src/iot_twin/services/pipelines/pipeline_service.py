@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from iot_twin.core.lakebase import LakebaseConnectionManager
 
-logger = logging.getLogger("iot_digital_twin.services.pipeline")
+logger = logging.getLogger("pharma_twin.services.pipeline")
 
 
 def pipeline_row_to_dict(row) -> dict:

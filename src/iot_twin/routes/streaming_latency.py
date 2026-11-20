@@ -46,7 +46,7 @@ from iot_twin.services.industry import industry_catalog_service as _icat
 from iot_twin.services.industry.industry_templates import CURATED_INDUSTRIES
 from iot_twin.services.uc_ident import sql_fqn
 
-logger = logging.getLogger("iot_digital_twin.routes.streaming_latency")
+logger = logging.getLogger("pharma_twin.routes.streaming_latency")
 router = APIRouter()
 
 
@@ -167,7 +167,7 @@ def _empty_streaming_payload(
 
 @router.get("/api/latency/streaming")
 async def get_streaming_latency(
-    industry: str = Query(..., description="Industry id — resolves iot_<industry>"),
+    industry: str = Query(..., description="Industry id — resolves <prefix_ident>_<industry>"),
     mode: str = Query(..., description="Streaming mode: realtime or microbatch"),
     pipeline_id: str = Query(..., description="Bound pipeline deployment id"),
     minutes: int = Query(
@@ -322,7 +322,7 @@ def _empty_zerobus_payload(table_name: str, reason: str) -> dict[str, Any]:
 
 @router.get("/api/latency/zerobus")
 async def get_zerobus_latency(
-    industry: str = Query(..., description="Industry id — resolves iot_<industry>"),
+    industry: str = Query(..., description="Industry id — resolves <prefix_ident>_<industry>"),
     pipeline_id: str = Query(..., description="Bound pipeline deployment id"),
     minutes: int = Query(60, ge=1, le=10080, description="Lookback window in minutes"),
     user_email: str = Depends(get_current_user),

@@ -101,7 +101,7 @@ export function LakebaseSettingsTab({
           <div className="grid gap-4 sm:grid-cols-2">
             <InputField
               label="Project ID"
-              placeholder="iot-digital-twin"
+              placeholder="pharma-twin-backend"
               value={settings.project_id}
               onChange={(v) => onUpdate({ project_id: v })}
             />

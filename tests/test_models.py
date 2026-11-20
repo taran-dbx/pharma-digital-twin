@@ -118,7 +118,7 @@ class TestSqlDdlConstants:
         assert "sensor_5m_pk" in joined
 
     def test_lakebase_role_name_constant(self) -> None:
-        assert sql_ddl.LAKEBASE_ROLE_NAME == "iot_app_user"
+        assert sql_ddl.LAKEBASE_ROLE_NAME == "pharma_twin_app_user"
 
     def test_lakebase_role_id_constant(self) -> None:
-        assert sql_ddl.LAKEBASE_ROLE_ID == "iot-app-user"
+        assert sql_ddl.LAKEBASE_ROLE_ID == "pharma-twin-app-user"
