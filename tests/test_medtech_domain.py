@@ -263,3 +263,62 @@ class TestReviewFixes:
         clock["t"] = datetime(2026, 11, 20, 10, 4, 0, 500000, tzinfo=UTC)
         (opened,) = await engine.evaluate(reading, [rule], industry="manufacturing")
         assert opened.alert.metadata["excursion_started_at"] == "2026-11-20T10:03:58+00:00"
+
+
+class TestExcursionStampBounds:
+    def _alert(self, metadata: dict):
+        from iot_twin.services.alerts.alert_engine import AlertRecord
+
+        opened = datetime(2026, 11, 20, 10, 4, 1, tzinfo=UTC)
+        return AlertRecord(
+            id="a",
+            fingerprint="f",
+            industry="manufacturing",
+            pipeline_id=None,
+            rule_id="mfg-alert-spindle-temp",
+            sensor_id="mfg-sns-cnc_1_spindle_temp",
+            sensor_ids=[],
+            severity="crit",
+            status="open",
+            fault_code=None,
+            value=None,
+            threshold=60.0,
+            opened_at=opened,
+            updated_at=opened,
+            metadata=metadata,
+        )
+
+    @pytest.mark.parametrize(
+        "stamp",
+        ["2026-11-18T09:00:00+00:00", "2026-11-20T10:04:05+00:00", "2026-11-20T10:01:00+00:00"],
+    )
+    def test_stamps_outside_the_episode_are_ignored_c7829_defect(self, stamp: str) -> None:
+        """[C7829][defect] A stale (or future) stamp falls back to opened_at - duration_s."""
+        from iot_twin.services.alerts.alert_responses import excursion_start
+
+        alert = self._alert({"excursion_started_at": stamp})
+        assert excursion_start(alert, alert.opened_at).isoformat() == "2026-11-20T10:03:59+00:00"
+
+    def test_stamp_inside_the_lookback_is_kept_c7829_regression(self) -> None:
+        """[C7829][regression] Up to duration_s + 120 s before opening is trusted."""
+        from iot_twin.services.alerts.alert_responses import excursion_start
+
+        alert = self._alert({"excursion_started_at": "2026-11-20T10:02:00+00:00"})
+        assert excursion_start(alert, alert.opened_at).isoformat() == "2026-11-20T10:02:00+00:00"
+
+    def test_stamp_prefers_the_readings_device_time_c7829_smoke(self) -> None:
+        """[C7829][smoke] Device time of the first violating reading, else min(seen, opened - duration)."""
+        from iot_twin.services.alerts.alert_engine import excursion_started_at, reading_time
+
+        opened = datetime(2026, 11, 20, 10, 4, 1, tzinfo=UTC)
+        first = reading_time({"timestamp": opened.timestamp() - 2.4})
+        assert first is not None
+        assert excursion_started_at(first, opened, opened, 2.0) == first
+        # Lost pending state (first seen == opened): never stamp the opening instant.
+        assert (opened - excursion_started_at(None, opened, opened, 2.0)).total_seconds() == 2.0
+        # Skewed device clock: not trusted.
+        skewed = reading_time({"timestamp": opened.timestamp() + 3600})
+        assert (opened - excursion_started_at(skewed, opened, opened, 2.0)).total_seconds() == 2.0
+        assert reading_time({"event_time": int(opened.timestamp() * 1_000_000)}) == opened
+        assert reading_time({"timestamp": opened.timestamp() * 1000}) == opened
+        assert reading_time({}) is None

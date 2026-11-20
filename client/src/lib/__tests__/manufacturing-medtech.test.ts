@@ -125,6 +125,13 @@ describe("quality KPIs", () => {
     const history = [{ t: (BASE + 238.5) * 1000, v: 60.2 }];
     expect(excursionWindow(alert(BASE + 241), BASE + 250, { history, threshold: 60 })?.start).toBe(BASE + 238.5);
     expect(excursionWindow(alert(BASE + 241), BASE + 250, { durationS: 2 })?.start).toBe(BASE + 239);
+    // A stamp from an earlier episode of the reused alert row (days ago) is ignored.
+    const stale = { ...alert(BASE + 241), metadata: { [EXCURSION_STARTED_KEY]: iso(BASE - 3 * 86_400) } } as AlertRecord;
+    expect(excursionWindow(stale, BASE + 250, { durationS: 2 })?.start).toBe(BASE + 239);
+    expect(episodeDisposition(excursionWindow(stale, BASE + 250, { durationS: 2 }))?.partsAtRisk.length).toBe(2);
+    expect(timeToDetectSeconds(stale, [], undefined)).toBeUndefined();
+    const future = { ...alert(BASE + 241), metadata: { [EXCURSION_STARTED_KEY]: iso(BASE + 245) } } as AlertRecord;
+    expect(excursionWindow(future, BASE + 250, { durationS: 2 })?.start).toBe(BASE + 239);
     // Inclusive: the part cut from 220 s to 240 s is at risk even though the alert opened at 241 s.
     const d = episodeDisposition(excursionWindow(alert(BASE + 241), BASE + 250, { durationS: 2 }));
     expect(d?.partsAtRisk.map((p) => p.index)).toEqual([12, 13]);
