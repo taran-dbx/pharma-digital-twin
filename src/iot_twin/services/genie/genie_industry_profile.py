@@ -5,7 +5,9 @@ health-index term, example sensors/units) is resolved here from the curated
 industry template and the domain catalog, so one content generator serves every
 industry the app offers.  Manufacturing (internal id kept stable) is presented
 as medical-device manufacturing — Trinity Medical's orthopaedic implant cell —
-so its health term is a first-pass-yield / right-first-time proxy, not OEE.
+so its A x P x Q health term is a "process health index (telemetry
+approximation)", not OEE and not first-pass yield; first-pass yield is the
+parts-based projected right-first-time (``lot_context.PROJECTED_RFT_DEFINITION``).
 """
 
 from __future__ import annotations
@@ -17,10 +19,11 @@ from iot_twin.services.industry.industry_templates import get_template, mode_con
 
 _MAX_EXAMPLES = 3
 
-# Manufacturing is the medical-device (orthopaedic implant) story: the health
-# term is a first-pass-yield proxy from in-range readings, never OEE.
+# Manufacturing is the medical-device (orthopaedic implant) story. The A x P x Q
+# telemetry index is a process health index, never first-pass yield or OEE; the
+# only first-pass-yield proxy is the parts-based projected right-first-time.
 _HEALTH_TERM_OVERRIDES: dict[str, tuple[str, str]] = {
-    "manufacturing": ("first-pass yield (right-first-time) proxy", "fpy_proxy_pct"),
+    "manufacturing": ("process health index (telemetry approximation)", "process_health_pct"),
 }
 # Industries whose Genie space carries medical-device quality grounding.
 MEDTECH_INDUSTRIES: frozenset[str] = frozenset({"manufacturing"})
@@ -45,7 +48,7 @@ class UnknownIndustry(ValueError):
 class IndustryProfile:
     industry: str  # record industry id as stored in readings / intelligence tables
     name: str  # display name, e.g. "Pharmaceutical"
-    health_term: str  # first-pass-yield proxy (medtech) or "operating health index"
+    health_term: str  # "process health index (...)" (medtech) or "operating health index"
     health_alias: str  # SQL alias for the health metric
     type_examples: str  # sensor_type column examples
     sensor_examples: tuple[str, ...]

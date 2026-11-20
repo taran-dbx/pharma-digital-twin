@@ -7,7 +7,7 @@ by the [pipeline health check](../ops/notebooks/pipeline_health_check.ipynb), no
 
 | Notebook | Industry | What it shows |
 |---|---|---|
-| [`manufacturing/manufacturing_kpis.ipynb`](manufacturing/manufacturing_kpis.ipynb) | Medical Devices (id `manufacturing`) | Right-first-time process health, downtime and alarms (validated-limit excursions), sensor health trends, throughput versus target |
+| [`manufacturing/manufacturing_kpis.ipynb`](manufacturing/manufacturing_kpis.ipynb) | Medical Devices (id `manufacturing`) | Process health index (telemetry approximation), downtime and alarms (validated-limit excursions), sensor health trends, rate versus target |
 
 ## Medical-device KPIs
 
@@ -20,10 +20,10 @@ dimensional nonconformance. The notebook serves the two KPI owners:
 | Owner | KPIs |
 |---|---|
 | Alex Morgan, VP Quality & Site Head | cost of poor quality, lots scrapped / quarantined, lot-release lead time |
-| Shreya, Head of Manufacturing Operations | time-to-detect, NCRs opened, right-first-time / first-pass yield, MTTR |
+| Shreya, Head of Manufacturing Operations | time-to-detect, NCRs opened, projected right-first-time (first-pass yield proxy), MTTR |
 
 It reports what the telemetry and the app's alert log support: process health per asset (a
-first-pass-yield proxy), excursion counts and timing, drift toward validated limits and rates.
+telemetry index, not first-pass yield), excursion counts and timing, drift toward validated limits and rates.
 CMM pass/fail results, NCR dispositions and lot release are not in the pipeline; lots, parts at
 risk and signed decisions are in the app's decision log (see
 [docs/domain-medtech.md](../docs/domain-medtech.md)). The notebook keeps the internal industry
@@ -89,9 +89,10 @@ example `KPI_SAMPLE=true KPI_MODE=zerobus`.
 
 ### KPI definitions
 
-The process-health index uses the app's own definition (`services/genie/genie_space_content.py`):
-availability x performance x quality, the classic OEE product, used here as a right-first-time
-proxy rather than a headline KPI. The notebook and the app's Genie space answer the same numbers. The plant model (assets, components, alert rules)
+The process health index uses the app's own definition (`services/genie/genie_space_content.py`):
+availability x performance x quality, the classic OEE product, labelled a *process health index
+(telemetry approximation)*. It is not first-pass yield. The only first-pass-yield proxy is the
+parts-based one the app and Genie share: **Projected right-first-time** = (parts started − parts at risk) / parts started, over the lots an excursion touched. Parts at risk are the parts whose cut overlapped the time Spindle 3 was outside its validated limit. *Projected*, because no CMM results exist yet. The notebook and the app's Genie space answer the same numbers. The plant model (assets, components, alert rules)
 mirrors `src/iot_twin/domain/catalog.py`.
 
 | KPI | Formula | Source tier and table |
@@ -99,7 +100,7 @@ mirrors `src/iot_twin/domain/catalog.py`.
 | Availability | 1 - fault minutes / observed minutes (distinct minutes; at asset level a minute is a fault minute when any of the asset's sensors reports `fault_active`) | Delta cold tier, telemetry table |
 | Performance | `AVG(LEAST(value / nominal_value, 1))` over readings with `nominal_value > 0` | Delta cold tier |
 | Quality | share of readings with `min_value <= value <= max_value` | Delta cold tier |
-| Process health (right-first-time proxy) | Availability x Performance x Quality (a missing factor counts as 1), per sensor, per asset (line/cell) and plant-wide; facility (HVAC) and CMM lab environment sensors excluded | Delta cold tier |
+| Process health index (telemetry approximation) | Availability x Performance x Quality (a missing factor counts as 1), per sensor, per asset (line/cell) and plant-wide; facility (HVAC) and CMM lab environment sensors excluded | Delta cold tier |
 | Alerts | count of `opened` events (one per alert episode) by fault code, asset and severity | Control-plane Lakebase `alert`, `alert_event` |
 | Mean time between alerts | (last opening - first opening) / (alerts - 1) = mean gap between openings | Control-plane Lakebase |
 | Fault downtime | distinct minutes with `fault_active` per asset | Delta cold tier |

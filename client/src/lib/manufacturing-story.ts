@@ -208,11 +208,15 @@ export function cmmRequest(decisions: CellDecisions): AlertResponseRecord | unde
 
 /**
  * What a recorded decision means now. Resuming the cell lifts the PACK gate,
- * but a QA hold is a quality record: the quarantined parts stay on hold.
+ * but a QA hold is a quality record: the quarantined parts stay on hold until
+ * QA dispositions them.
  */
-export function decisionLabel(step: ResponseStep, flowHeld: boolean): string {
-  if (step.action === "quarantine_lot" && !flowHeld) return "QA hold · flow resumed";
-  return step.done;
+export function decisionLabel(step: ResponseStep, flowHeld: boolean, record?: AlertResponseRecord): string {
+  if (step.action !== "quarantine_lot" || flowHeld) return step.done;
+  const parts = record?.reference.parts_at_risk?.length;
+  return parts === undefined
+    ? "QA hold active · line resumed"
+    : `QA hold active on ${parts} part${parts === 1 ? "" : "s"} · line resumed`;
 }
 
 export function decisionsFor(alert: AlertRecord | null, records: AlertResponseRecord[] | undefined): CellDecisions {

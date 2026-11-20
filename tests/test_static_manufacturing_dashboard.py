@@ -58,7 +58,7 @@ def test_manufacturing_view_has_no_invented_metrics_c7230():
     for label in (
         "Spindle 3 temperature",
         "Parts at risk",
-        "First-pass yield",
+        "Projected RFT",
         "Time to detect",
         "NCRs opened",
         "Last device event",

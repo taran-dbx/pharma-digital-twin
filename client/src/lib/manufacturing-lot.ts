@@ -2,7 +2,8 @@
  * Lot / device-history context for Trinity Medical's hip-stem cell.
  *
  * Mirrors `src/iot_twin/domain/lot_context.py`: one lot per 300 s heat-event
- * cycle, one part every 20 s. The producer stamps these values on every
+ * cycle, numbered within its UTC day (`TM-HS12-261120-142`, so ids never
+ * wrap), one part every 20 s. The producer stamps these values on every
  * `cnc_1_*` reading, the alert engine copies them onto the alert, and the cell
  * page uses the same clock to name the parts cut during an excursion. All
  * values are labelled reference fixtures (no MES is connected).
@@ -10,6 +11,7 @@
 
 /** One lot per heat-event cycle; equals `SPINDLE_HEAT_SCENARIO.cycleSeconds` (tested). */
 export const LOT_CYCLE_S = 300;
+const DAY_S = 86_400;
 export const PART_CYCLE_S = 20;
 export const PARTS_PER_LOT = LOT_CYCLE_S / PART_CYCLE_S;
 
@@ -54,9 +56,16 @@ export interface LotDisposition {
 
 const mod = (n: number, m: number) => ((n % m) + m) % m;
 
+/** Lot being machined at `epochSeconds`: `<prefix>-<YYMMDD>-<cycle of the UTC day>`. */
 export function lotIdAt(epochSeconds: number): string {
-  const seq = mod(Math.floor(epochSeconds / LOT_CYCLE_S), 10000);
-  return `${LOT_REFERENCE.lotPrefix}-${String(seq).padStart(4, "0")}`;
+  const day = new Date(Math.floor(epochSeconds) * 1000).toISOString().slice(2, 10).replace(/-/g, "");
+  const seq = Math.floor(mod(epochSeconds, DAY_S) / LOT_CYCLE_S);
+  return `${LOT_REFERENCE.lotPrefix}-${day}-${String(seq).padStart(3, "0")}`;
+}
+
+/** Epoch second at which the lot being machined at `epochSeconds` started. */
+export function lotStartAt(epochSeconds: number): number {
+  return epochSeconds - mod(epochSeconds, LOT_CYCLE_S);
 }
 
 export function partIndexAt(epochSeconds: number): number {
@@ -126,7 +135,8 @@ LOT_SENSOR_PREFIX = "${LOT_SENSOR_PREFIX}"
 
 
 def _lot_context(now):
-    lot_id = f"{LOT_PREFIX}-{int(now // LOT_CYCLE_S) % 10000:04d}"
+    day = time.strftime("%y%m%d", time.gmtime(now))
+    lot_id = f"{LOT_PREFIX}-{day}-{int((now % 86400) // LOT_CYCLE_S):03d}"
     part = int((now % LOT_CYCLE_S) // PART_CYCLE_S) + 1
     return {
         "lot_id": lot_id,

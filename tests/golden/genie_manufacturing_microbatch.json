@@ -4,7 +4,7 @@
    {
     "id": "141758b80d4badd43892c2bb03893582",
     "question": [
-     "Which Spindle 3 validated-limit excursions this shift need an NCR, and what is each alert's status?"
+     "What is the projected right-first-time of each lot touched by a Spindle 3 excursion today?"
     ]
    },
    {
@@ -46,19 +46,25 @@
    {
     "id": "5eb7b4918d765086574a99418b70f9a5",
     "question": [
-     "What is the approximate first-pass yield (right-first-time) proxy per sensor over the last 24 hours?"
+     "What is the approximate process health index (telemetry approximation) per sensor over the last 24 hours?"
     ]
    },
    {
-    "id": "b9f3edf5f4efa2f253c5122542d5c849",
+    "id": "9cc30f254a524168af191c28446a02ff",
     "question": [
      "What is the average micro-batch trigger duration and throughput over the last hour?"
     ]
    },
    {
-    "id": "d3668ebc361f0124c2cc798043ace3a8",
+    "id": "b9f3edf5f4efa2f253c5122542d5c849",
     "question": [
      "How has the anomaly rate trended per hour over the last day?"
+    ]
+   },
+   {
+    "id": "d3668ebc361f0124c2cc798043ace3a8",
+    "question": [
+     "Which Spindle 3 validated-limit excursions this shift need an NCR, and what is each alert's status?"
     ]
    },
    {
@@ -138,7 +144,7 @@
      {
       "column_name": "nominal_value",
       "description": [
-       "Design/target value. Used for the first-pass yield (right-first-time) proxy performance factor."
+       "Design/target value. Used for the process health index (telemetry approximation) performance factor."
       ],
       "synonyms": [
        "target",
@@ -186,6 +192,15 @@
    {
     "id": "0144bcbd423fd889fb2908aa4a497090",
     "question": [
+     "What is the projected right-first-time of each lot touched by a Spindle 3 excursion today?"
+    ],
+    "sql": [
+     "WITH started AS (SELECT t.metadata['lot_id'] AS lot_id, COUNT(DISTINCT t.metadata['part_serial']) AS parts_started FROM cat.sch.manufacturing_microbatch t WHERE t.sensor_name LIKE 'cnc_1_%' AND t.event_time >= current_timestamp() - INTERVAL 24 HOURS AND t.metadata['lot_id'] IS NOT NULL GROUP BY 1), at_risk AS (SELECT t.metadata['lot_id'] AS lot_id, COUNT(DISTINCT t.metadata['part_serial']) AS parts_at_risk FROM cat.sch.manufacturing_microbatch t JOIN cat.sch.intelligence_alert_rules r ON r.rule_id = 'mfg-alert-spindle-temp' AND r.industry = 'manufacturing' WHERE t.sensor_name = 'cnc_1_spindle_temp' AND t.value > r.threshold AND t.event_time >= current_timestamp() - INTERVAL 24 HOURS AND t.metadata['lot_id'] IS NOT NULL GROUP BY 1) SELECT s.lot_id, s.parts_started, a.parts_at_risk, ROUND(100 * (s.parts_started - a.parts_at_risk) / s.parts_started, 1) AS projected_rft_pct FROM started s JOIN at_risk a ON a.lot_id = s.lot_id ORDER BY s.lot_id DESC"
+    ]
+   },
+   {
+    "id": "55cecf5f4be9708fb1af95f196204034",
+    "question": [
      "What is the streaming throughput and p99 latency over the last hour?"
     ],
     "sql": [
@@ -204,10 +219,10 @@
    {
     "id": "c02abf48a51448b909f21a22d98a9e3b",
     "question": [
-     "What is the approximate first-pass yield (right-first-time) proxy per sensor over the last 24 hours?"
+     "What is the approximate process health index (telemetry approximation) per sensor over the last 24 hours?"
     ],
     "sql": [
-     "WITH m AS (SELECT sensor_name, COUNT(DISTINCT date_trunc('minute', event_time)) AS observed_min, COUNT(DISTINCT CASE WHEN fault_active THEN date_trunc('minute', event_time) END) AS fault_min, AVG(CASE WHEN nominal_value > 0 THEN LEAST(value / nominal_value, 1) END) AS performance, AVG(CASE WHEN min_value IS NULL OR max_value IS NULL THEN NULL WHEN value BETWEEN min_value AND max_value THEN 1.0 ELSE 0.0 END) AS quality FROM cat.sch.manufacturing_microbatch WHERE event_time >= current_timestamp() - INTERVAL 24 HOURS GROUP BY sensor_name) SELECT sensor_name, ROUND(100 * (1 - fault_min / observed_min), 2) AS availability_pct, ROUND(100 * performance, 2) AS performance_pct, ROUND(100 * quality, 2) AS quality_pct, ROUND(100 * (1 - fault_min / observed_min) * COALESCE(performance, 1) * COALESCE(quality, 1), 2) AS fpy_proxy_pct FROM m ORDER BY fpy_proxy_pct ASC"
+     "WITH m AS (SELECT sensor_name, COUNT(DISTINCT date_trunc('minute', event_time)) AS observed_min, COUNT(DISTINCT CASE WHEN fault_active THEN date_trunc('minute', event_time) END) AS fault_min, AVG(CASE WHEN nominal_value > 0 THEN LEAST(value / nominal_value, 1) END) AS performance, AVG(CASE WHEN min_value IS NULL OR max_value IS NULL THEN NULL WHEN value BETWEEN min_value AND max_value THEN 1.0 ELSE 0.0 END) AS quality FROM cat.sch.manufacturing_microbatch WHERE event_time >= current_timestamp() - INTERVAL 24 HOURS GROUP BY sensor_name) SELECT sensor_name, ROUND(100 * (1 - fault_min / observed_min), 2) AS availability_pct, ROUND(100 * performance, 2) AS performance_pct, ROUND(100 * quality, 2) AS quality_pct, ROUND(100 * (1 - fault_min / observed_min) * COALESCE(performance, 1) * COALESCE(quality, 1), 2) AS process_health_pct FROM m ORDER BY process_health_pct ASC"
     ]
    },
    {
@@ -333,16 +348,16 @@
      "This space covers ONE medical devices micro-batch pipeline. Sensor telemetry is in cat.sch.manufacturing_microbatch (one row per reading). Streaming throughput/latency metrics are in cat.sch.manufacturing_metrics. Asset, sensor-binding, maintenance, alert-rule and alert-snapshot reference data is in the intelligence_* tables.\n",
      "Context: Trinity Medical orthopaedic implants plant (Warsaw, IN), regulated under 21 CFR 820 (QMSR) and ISO 13485. Spindle 3 on CNC-1 (5-axis mill) machines Ti-6Al-4V femoral hip stems (part_number HS-TI64-12) and acetabular cups. Line: MILL -> CMM INSPECT -> CLEAN / PASSIVATE -> STERILE PACK.\n",
      "Spindle 3 temperature (manufacturing_microbatch.sensor_name = 'cnc_1_spindle_temp') has a VALIDATED process-parameter limit (OQ-TM-CNC1-014, PQ-TM-HS12-022, process spec PS-TM-MILL-HS-003 rev C): take the threshold from intelligence_alert_rules where rule_id = 'mfg-alert-spindle-temp' (fault code VPP-SPINDLE3-TEMP). A reading above it is an excursion outside the validated state and a dimensional nonconformance risk.\n",
-     "Lot context: manufacturing_microbatch.metadata['lot_id'] is the lot, manufacturing_microbatch.metadata['part_serial'] the part serial; work_order, part_number, udi_di (UDI device identifier) and dhr_ref (device history record) are in the same manufacturing_microbatch.metadata column. Parts at risk for an excursion = distinct part_serial values on 'cnc_1_spindle_temp' readings above the validated limit; the rest of the lot is a release candidate pending QA review.\n",
+     "Lot context: manufacturing_microbatch.metadata['lot_id'] is the lot, manufacturing_microbatch.metadata['part_serial'] the part serial; work_order, part_number, udi_di (UDI device identifier) and dhr_ref (device history record) are in the same manufacturing_microbatch.metadata column. Parts at risk for an excursion = distinct part_serial values on 'cnc_1_spindle_temp' readings above the validated limit; the rest of the lot is a release candidate pending QA review. The app's QA hold is slightly wider (it runs from the first over-limit reading until the alert clears below the hysteresis band), so it can name one more part than this query; the app's list is authoritative.\n",
      "Time to detect = intelligence_alert_snapshot.opened_at minus the first reading above the validated limit in the same excursion. MTTR = cleared/updated time minus opened_at.\n",
-     "First-pass yield / right-first-time here is a telemetry proxy (share of in-range readings), not CMM or lot-release data; say so.\n",
+     "First-pass yield / right-first-time means ONLY this: Projected right-first-time = (parts started - parts at risk) / parts started, over the lots an excursion touched. Parts at risk are the parts whose cut overlapped the time Spindle 3 was outside its validated limit. Projected: no CMM results exist yet. Parts started = distinct manufacturing_microbatch.metadata['part_serial'] values on cnc_1_* readings in the lot. Never call the process health index first-pass yield.\n",
      "NCRs, QA holds (quarantine_lot), CMM inspection requests and their Part 11-style audit fields (actor, timestamp, reason, comment, signature meaning) are recorded in the app's decision log, not in these tables. For NCR numbers or dispositions, list the VPP-SPINDLE3-TEMP alert episodes and lots at risk, and say the NCR record lives in the app's decision log.\n",
      "You recommend; you never release or quarantine lots, open NCRs or sign records. Those require a qualified person's electronic signature in the app.\n",
      "Downtime = time intervals where manufacturing_microbatch.fault_active is TRUE. Approximate downtime minutes as the count of distinct minutes (date_trunc('minute', manufacturing_microbatch.event_time)) with at least one fault_active reading.\n",
      "Availability = 1 - (fault minutes / observed minutes), where observed minutes are distinct minutes with any reading. Report as a percentage.\n",
      "Performance = AVG(LEAST(manufacturing_microbatch.value / manufacturing_microbatch.nominal_value, 1)) for readings with nominal_value > 0 (how close output runs to its nominal rate).\n",
      "Quality = share of readings with manufacturing_microbatch.value BETWEEN manufacturing_microbatch.min_value AND manufacturing_microbatch.max_value.\n",
-     "first-pass yield (right-first-time) proxy (approximation) = Availability x Performance x Quality. Always say it is an approximation derived from sensor telemetry, not CMM inspection results or DHR lot-release records.\n",
+     "process health index (telemetry approximation) (approximation) = Availability x Performance x Quality. Always say it is an approximation derived from sensor telemetry, not CMM inspection results or DHR lot-release records.\n",
      "Anomaly = a reading where manufacturing_microbatch.value < manufacturing_microbatch.min_value OR manufacturing_microbatch.value > manufacturing_microbatch.max_value. Ignore rows where min_value or max_value is NULL.\n",
      "The intelligence_* tables hold several industries: ALWAYS filter every intelligence_* table with industry = 'manufacturing'.\n",
      "Bridge from telemetry to reference data: manufacturing_microbatch.sensor_name = intelligence_sensor_bindings.sensor_name, then intelligence_sensor_bindings.sensor_id = intelligence_alert_rules.sensor_id or intelligence_alert_snapshot.sensor_id (fault codes, thresholds, severity, alert status). intelligence_sensor_bindings.asset_id links to intelligence_assets and intelligence_maintenance_records.\n",

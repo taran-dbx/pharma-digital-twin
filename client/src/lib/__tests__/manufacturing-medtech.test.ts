@@ -10,12 +10,15 @@ import {
   partIndexAt,
 } from "@/lib/manufacturing-lot";
 import {
+  EXCURSION_STARTED_KEY,
+  PROJECTED_RFT_DEFINITION,
   costOfPoorQualityUsd,
   episodeDisposition,
+  excursionWindow,
   lotsQuarantined,
   meanTimeToRecoverSeconds,
   ncrsOpened,
-  rightFirstTime,
+  projectedRightFirstTime,
   timeToDetectSeconds,
 } from "@/lib/manufacturing-quality";
 import { SPINDLE_HEAT_SCENARIO, producerSignalPython } from "@/lib/manufacturing-scenario";
@@ -71,7 +74,10 @@ describe("lot clock", () => {
   it("matches the heat-event cycle and the Python mirror's format", () => {
     expect(LOT_CYCLE_S).toBe(SPINDLE_HEAT_SCENARIO.cycleSeconds);
     expect(PARTS_PER_LOT).toBe(15);
-    expect(lotIdAt(BASE)).toMatch(/^TM-HS12-\d{4}$/);
+    expect(lotIdAt(BASE)).toMatch(/^TM-HS12-\d{6}-\d{3}$/);
+    // 2027-01-15 00:00:00Z is the first cycle of its UTC day; ids carry the date, so they never wrap.
+    expect(lotIdAt(Date.UTC(2027, 0, 15) / 1000)).toBe("TM-HS12-270115-000");
+    expect(lotIdAt(Date.UTC(2027, 0, 15, 23, 59, 59) / 1000)).toBe("TM-HS12-270115-287");
     expect(partIndexAt(BASE + 245)).toBe(13);
     expect(lotContextAt(BASE + 245)).toEqual({
       lot_id: lotIdAt(BASE),
@@ -99,16 +105,33 @@ describe("lot clock", () => {
 });
 
 describe("quality KPIs", () => {
-  it("derives right-first-time and cost of poor quality from the excursion", () => {
-    const d = episodeDisposition(alert(BASE + 225, BASE + 275), BASE + 400);
-    expect(rightFirstTime(d)).toEqual({ pct: 80, good: 12, total: 15 });
+  it("derives projected right-first-time and cost of poor quality from the excursion", () => {
+    const window = excursionWindow(alert(BASE + 225, BASE + 275), BASE + 299);
+    const d = episodeDisposition(window);
+    expect(d?.partsAtRisk.map((p) => p.index)).toEqual([12, 13, 14]);
+    // All 15 parts of the lot started by t=299 s: (15 - 3) / 15.
+    expect(projectedRightFirstTime(d, BASE + 299)).toEqual({ pct: 80, good: 12, partsStarted: 15, partsAtRisk: 3 });
+    // Mid-lot, only the parts started so far count: (14 - 3) / 14.
+    expect(projectedRightFirstTime(d, BASE + 275)?.partsStarted).toBe(14);
     expect(costOfPoorQualityUsd(d)).toBe(3 * LOT_REFERENCE.unitCostUsd);
-    expect(rightFirstTime(null)).toBeNull();
-    expect(episodeDisposition(null, BASE)).toBeNull();
+    expect(projectedRightFirstTime(null, BASE)).toBeNull();
+    expect(episodeDisposition(null)).toBeNull();
+    expect(PROJECTED_RFT_DEFINITION).toContain("(parts started - parts at risk) / parts started");
+  });
+
+  it("starts the window at the first over-limit reading, else opened - duration", () => {
+    const stamped = { ...alert(BASE + 241), metadata: { [EXCURSION_STARTED_KEY]: iso(BASE + 239) } } as AlertRecord;
+    expect(excursionWindow(stamped, BASE + 250)?.start).toBe(BASE + 239);
+    const history = [{ t: (BASE + 238.5) * 1000, v: 60.2 }];
+    expect(excursionWindow(alert(BASE + 241), BASE + 250, { history, threshold: 60 })?.start).toBe(BASE + 238.5);
+    expect(excursionWindow(alert(BASE + 241), BASE + 250, { durationS: 2 })?.start).toBe(BASE + 239);
+    // Inclusive: the part cut from 220 s to 240 s is at risk even though the alert opened at 241 s.
+    const d = episodeDisposition(excursionWindow(alert(BASE + 241), BASE + 250, { durationS: 2 }));
+    expect(d?.partsAtRisk.map((p) => p.index)).toEqual([12, 13]);
   });
 
   it("an open excursion keeps growing until it clears", () => {
-    const open = episodeDisposition(alert(BASE + 225), BASE + 255);
+    const open = episodeDisposition(excursionWindow(alert(BASE + 225), BASE + 255));
     expect(open?.partsAtRisk.length).toBe(2);
   });
 
@@ -122,6 +145,8 @@ describe("quality KPIs", () => {
     expect(timeToDetectSeconds(alert(opened), history, 60)).toBeCloseTo(2.5);
     expect(timeToDetectSeconds(alert(opened), [], 60)).toBeUndefined();
     expect(timeToDetectSeconds(alert(opened), history, undefined)).toBeUndefined();
+    const stamped = { ...alert(opened), metadata: { [EXCURSION_STARTED_KEY]: iso(opened - 2) } } as AlertRecord;
+    expect(timeToDetectSeconds(stamped, [], undefined)).toBe(2);
   });
 
   it("counts NCRs and QA holds once per episode, legacy holds included", () => {
@@ -175,6 +200,8 @@ describe("response workflow", () => {
     expect(cmmRequest({ send_to_inspect: decision("send_to_inspect") })?.action).toBe("send_to_inspect");
     const hold = RESPONSE_STEPS[0];
     expect(decisionLabel(hold, true)).toBe("Lot on QA hold");
-    expect(decisionLabel(hold, false)).toBe("QA hold · flow resumed");
+    const record = { ...decision("quarantine_lot"), reference: { parts_at_risk: ["a", "b", "c"] } };
+    expect(decisionLabel(hold, false, record)).toBe("QA hold active on 3 parts · line resumed");
+    expect(decisionLabel(hold, false)).toBe("QA hold active · line resumed");
   });
 });

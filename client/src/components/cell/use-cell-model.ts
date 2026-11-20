@@ -23,15 +23,18 @@ import type { LotDisposition } from "@/lib/manufacturing-lot";
 import {
   costOfPoorQualityUsd,
   episodeDisposition,
-  rightFirstTime,
+  excursionWindow,
+  projectedRightFirstTime,
   timeToDetectSeconds,
-  type RightFirstTime,
+  type ExcursionWindow,
+  type ProjectedRft,
 } from "@/lib/manufacturing-quality";
 import { spindleHeatStateAt, type SpindleHeatState } from "@/lib/manufacturing-scenario";
 import {
   CELL_SENSORS,
   CMM_LAB_SENSOR,
   PACK_LINE_SENSOR,
+  SPINDLE_RULE_ID,
   SPINDLE_SENSOR,
   activeSpindleAlert,
   isActiveAlert,
@@ -103,7 +106,9 @@ export interface MachiningCellModel {
 export interface CellQuality {
   /** Parts cut while Spindle 3 was outside its validated limit (latest episode). */
   disposition: LotDisposition | null;
-  rightFirstTime: RightFirstTime | null;
+  /** First over-limit reading → cleared (or now); null without an excursion. */
+  window: ExcursionWindow | null;
+  projectedRft: ProjectedRft | null;
   costOfPoorQualityUsd: number | null;
   /** First reading over the limit → alert opened, seconds (live readings only). */
   timeToDetectS?: number;
@@ -301,14 +306,21 @@ export function useMachiningCellModel({
   }, [mode, rules, maintenance, zerobusReadings, sensors, history, alerts, now, stopped]);
 
   const quality = useMemo<CellQuality>(() => {
-    const disposition = episodeDisposition(episode.alert, now);
+    const spindleRule = rules.find((r) => r.rule_id === SPINDLE_RULE_ID);
+    const window = excursionWindow(episode.alert, now, {
+      history: model.spindle.history,
+      threshold: model.limit?.threshold,
+      durationS: spindleRule?.duration_s ?? 0,
+    });
+    const disposition = episodeDisposition(window);
     return {
       disposition,
-      rightFirstTime: rightFirstTime(disposition),
+      window,
+      projectedRft: projectedRightFirstTime(disposition, now),
       costOfPoorQualityUsd: costOfPoorQualityUsd(disposition),
       timeToDetectS: timeToDetectSeconds(episode.alert, model.spindle.history, model.limit?.threshold),
     };
-  }, [episode.alert, now, model.spindle.history, model.limit]);
+  }, [episode.alert, now, model.spindle.history, model.limit, rules]);
 
   return {
     ...model,

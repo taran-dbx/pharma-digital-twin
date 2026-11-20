@@ -2,6 +2,12 @@
  "config": {
   "sample_questions": [
    {
+    "id": "3eff188fc4da3b6152dfc807842d9f51",
+    "question": [
+     "What is the end-to-end p99 latency of the real-time stream over the last hour?"
+    ]
+   },
+   {
     "id": "42c27d2f525b4451acb05a25b4ab2635",
     "question": [
      "Which assets with recent faults are due for maintenance?"
@@ -22,7 +28,7 @@
    {
     "id": "ab1675b99ffae16504bf66b0cd077b9c",
     "question": [
-     "What is the end-to-end p99 latency of the real-time stream over the last hour?"
+     "Which sensors are faulting right now (last 5 minutes)?"
     ]
    },
    {
@@ -34,13 +40,13 @@
    {
     "id": "b713064b0c467ac34736d028bb848af6",
     "question": [
-     "Which Spindle 3 validated-limit excursions this shift need an NCR, and what is each alert's status?"
+     "What is the projected right-first-time of each lot touched by a Spindle 3 excursion today?"
     ]
    },
    {
     "id": "bea5a516a6f8b659ba6caa76aa3a9d4a",
     "question": [
-     "What is the approximate first-pass yield (right-first-time) proxy per sensor over the last 24 hours?"
+     "What is the approximate process health index (telemetry approximation) per sensor over the last 24 hours?"
     ]
    },
    {
@@ -58,7 +64,7 @@
    {
     "id": "d57471f09bf3c0d031ff2eaebacaf5b6",
     "question": [
-     "Which sensors are faulting right now (last 5 minutes)?"
+     "Which Spindle 3 validated-limit excursions this shift need an NCR, and what is each alert's status?"
     ]
    },
    {
@@ -157,7 +163,7 @@
      {
       "column_name": "nominal_value",
       "description": [
-       "Design/target value. Used for the first-pass yield (right-first-time) proxy performance factor."
+       "Design/target value. Used for the process health index (telemetry approximation) performance factor."
       ],
       "synonyms": [
        "target",
@@ -217,10 +223,10 @@
    {
     "id": "a3d91570d21284fde5c1fadcdb375aa9",
     "question": [
-     "What is the streaming throughput and p99 latency over the last hour?"
+     "What is the projected right-first-time of each lot touched by a Spindle 3 excursion today?"
     ],
     "sql": [
-     "SELECT date_trunc('minute', timestamp) AS minute, AVG(processed_rps) AS processed_rps, MAX(e2e_p99) AS e2e_p99_ms FROM cat.sch.manufacturing_metrics WHERE mode = 'realtime' AND timestamp >= current_timestamp() - INTERVAL 1 HOUR GROUP BY 1 ORDER BY 1"
+     "WITH started AS (SELECT t.metadata:lot_id::string AS lot_id, COUNT(DISTINCT t.metadata:part_serial::string) AS parts_started FROM cat.sch.lb__shadow_manufacturing_sensor_readings_history t WHERE t._pg_change_type IN ('insert', 'update_postimage') AND t.industry = 'manufacturing' AND t.sensor_name LIKE 'cnc_1_%' AND t.event_time >= current_timestamp() - INTERVAL 24 HOURS AND t.metadata:lot_id::string IS NOT NULL GROUP BY 1), at_risk AS (SELECT t.metadata:lot_id::string AS lot_id, COUNT(DISTINCT t.metadata:part_serial::string) AS parts_at_risk FROM cat.sch.lb__shadow_manufacturing_sensor_readings_history t JOIN cat.sch.intelligence_alert_rules r ON r.rule_id = 'mfg-alert-spindle-temp' AND r.industry = 'manufacturing' WHERE t._pg_change_type IN ('insert', 'update_postimage') AND t.industry = 'manufacturing' AND t.sensor_name = 'cnc_1_spindle_temp' AND t.value > r.threshold AND t.event_time >= current_timestamp() - INTERVAL 24 HOURS AND t.metadata:lot_id::string IS NOT NULL GROUP BY 1) SELECT s.lot_id, s.parts_started, a.parts_at_risk, ROUND(100 * (s.parts_started - a.parts_at_risk) / s.parts_started, 1) AS projected_rft_pct FROM started s JOIN at_risk a ON a.lot_id = s.lot_id ORDER BY s.lot_id DESC"
     ]
    },
    {
@@ -244,10 +250,19 @@
    {
     "id": "c7a6e534eeb3b343fa3e9274d516041a",
     "question": [
-     "What is the approximate first-pass yield (right-first-time) proxy per sensor over the last 24 hours?"
+     "What is the approximate process health index (telemetry approximation) per sensor over the last 24 hours?"
     ],
     "sql": [
-     "WITH m AS (SELECT sensor_name, COUNT(DISTINCT date_trunc('minute', event_time)) AS observed_min, COUNT(DISTINCT CASE WHEN fault_active THEN date_trunc('minute', event_time) END) AS fault_min, AVG(CASE WHEN nominal_value > 0 THEN LEAST(value / nominal_value, 1) END) AS performance, AVG(CASE WHEN min_value IS NULL OR max_value IS NULL THEN NULL WHEN value BETWEEN min_value AND max_value THEN 1.0 ELSE 0.0 END) AS quality FROM cat.sch.lb__shadow_manufacturing_sensor_readings_history WHERE _pg_change_type IN ('insert', 'update_postimage') AND industry = 'manufacturing' AND event_time >= current_timestamp() - INTERVAL 24 HOURS GROUP BY sensor_name) SELECT sensor_name, ROUND(100 * (1 - fault_min / observed_min), 2) AS availability_pct, ROUND(100 * performance, 2) AS performance_pct, ROUND(100 * quality, 2) AS quality_pct, ROUND(100 * (1 - fault_min / observed_min) * COALESCE(performance, 1) * COALESCE(quality, 1), 2) AS fpy_proxy_pct FROM m ORDER BY fpy_proxy_pct ASC"
+     "WITH m AS (SELECT sensor_name, COUNT(DISTINCT date_trunc('minute', event_time)) AS observed_min, COUNT(DISTINCT CASE WHEN fault_active THEN date_trunc('minute', event_time) END) AS fault_min, AVG(CASE WHEN nominal_value > 0 THEN LEAST(value / nominal_value, 1) END) AS performance, AVG(CASE WHEN min_value IS NULL OR max_value IS NULL THEN NULL WHEN value BETWEEN min_value AND max_value THEN 1.0 ELSE 0.0 END) AS quality FROM cat.sch.lb__shadow_manufacturing_sensor_readings_history WHERE _pg_change_type IN ('insert', 'update_postimage') AND industry = 'manufacturing' AND event_time >= current_timestamp() - INTERVAL 24 HOURS GROUP BY sensor_name) SELECT sensor_name, ROUND(100 * (1 - fault_min / observed_min), 2) AS availability_pct, ROUND(100 * performance, 2) AS performance_pct, ROUND(100 * quality, 2) AS quality_pct, ROUND(100 * (1 - fault_min / observed_min) * COALESCE(performance, 1) * COALESCE(quality, 1), 2) AS process_health_pct FROM m ORDER BY process_health_pct ASC"
+    ]
+   },
+   {
+    "id": "deb9692f391f664a0aa7fc1ee299dc17",
+    "question": [
+     "What is the streaming throughput and p99 latency over the last hour?"
+    ],
+    "sql": [
+     "SELECT date_trunc('minute', timestamp) AS minute, AVG(processed_rps) AS processed_rps, MAX(e2e_p99) AS e2e_p99_ms FROM cat.sch.manufacturing_metrics WHERE mode = 'realtime' AND timestamp >= current_timestamp() - INTERVAL 1 HOUR GROUP BY 1 ORDER BY 1"
     ]
    },
    {
@@ -355,16 +370,16 @@
      "This space covers ONE medical devices real-time (sub-second RTM) pipeline. Sensor telemetry is in cat.sch.lb__shadow_manufacturing_sensor_readings_history (one row per reading). Streaming throughput/latency metrics are in cat.sch.manufacturing_metrics. Asset, sensor-binding, maintenance, alert-rule and alert-snapshot reference data is in the intelligence_* tables.\n",
      "Context: Trinity Medical orthopaedic implants plant (Warsaw, IN), regulated under 21 CFR 820 (QMSR) and ISO 13485. Spindle 3 on CNC-1 (5-axis mill) machines Ti-6Al-4V femoral hip stems (part_number HS-TI64-12) and acetabular cups. Line: MILL -> CMM INSPECT -> CLEAN / PASSIVATE -> STERILE PACK.\n",
      "Spindle 3 temperature (lb__shadow_manufacturing_sensor_readings_history.sensor_name = 'cnc_1_spindle_temp') has a VALIDATED process-parameter limit (OQ-TM-CNC1-014, PQ-TM-HS12-022, process spec PS-TM-MILL-HS-003 rev C): take the threshold from intelligence_alert_rules where rule_id = 'mfg-alert-spindle-temp' (fault code VPP-SPINDLE3-TEMP). A reading above it is an excursion outside the validated state and a dimensional nonconformance risk.\n",
-     "Lot context: lb__shadow_manufacturing_sensor_readings_history.metadata:lot_id::string is the lot, lb__shadow_manufacturing_sensor_readings_history.metadata:part_serial::string the part serial; work_order, part_number, udi_di (UDI device identifier) and dhr_ref (device history record) are in the same lb__shadow_manufacturing_sensor_readings_history.metadata column. Parts at risk for an excursion = distinct part_serial values on 'cnc_1_spindle_temp' readings above the validated limit; the rest of the lot is a release candidate pending QA review.\n",
+     "Lot context: lb__shadow_manufacturing_sensor_readings_history.metadata:lot_id::string is the lot, lb__shadow_manufacturing_sensor_readings_history.metadata:part_serial::string the part serial; work_order, part_number, udi_di (UDI device identifier) and dhr_ref (device history record) are in the same lb__shadow_manufacturing_sensor_readings_history.metadata column. Parts at risk for an excursion = distinct part_serial values on 'cnc_1_spindle_temp' readings above the validated limit; the rest of the lot is a release candidate pending QA review. The app's QA hold is slightly wider (it runs from the first over-limit reading until the alert clears below the hysteresis band), so it can name one more part than this query; the app's list is authoritative.\n",
      "Time to detect = intelligence_alert_snapshot.opened_at minus the first reading above the validated limit in the same excursion. MTTR = cleared/updated time minus opened_at.\n",
-     "First-pass yield / right-first-time here is a telemetry proxy (share of in-range readings), not CMM or lot-release data; say so.\n",
+     "First-pass yield / right-first-time means ONLY this: Projected right-first-time = (parts started - parts at risk) / parts started, over the lots an excursion touched. Parts at risk are the parts whose cut overlapped the time Spindle 3 was outside its validated limit. Projected: no CMM results exist yet. Parts started = distinct lb__shadow_manufacturing_sensor_readings_history.metadata:part_serial::string values on cnc_1_* readings in the lot. Never call the process health index first-pass yield.\n",
      "NCRs, QA holds (quarantine_lot), CMM inspection requests and their Part 11-style audit fields (actor, timestamp, reason, comment, signature meaning) are recorded in the app's decision log, not in these tables. For NCR numbers or dispositions, list the VPP-SPINDLE3-TEMP alert episodes and lots at risk, and say the NCR record lives in the app's decision log.\n",
      "You recommend; you never release or quarantine lots, open NCRs or sign records. Those require a qualified person's electronic signature in the app.\n",
      "Downtime = time intervals where lb__shadow_manufacturing_sensor_readings_history.fault_active is TRUE. Approximate downtime minutes as the count of distinct minutes (date_trunc('minute', lb__shadow_manufacturing_sensor_readings_history.event_time)) with at least one fault_active reading.\n",
      "Availability = 1 - (fault minutes / observed minutes), where observed minutes are distinct minutes with any reading. Report as a percentage.\n",
      "Performance = AVG(LEAST(lb__shadow_manufacturing_sensor_readings_history.value / lb__shadow_manufacturing_sensor_readings_history.nominal_value, 1)) for readings with nominal_value > 0 (how close output runs to its nominal rate).\n",
      "Quality = share of readings with lb__shadow_manufacturing_sensor_readings_history.value BETWEEN lb__shadow_manufacturing_sensor_readings_history.min_value AND lb__shadow_manufacturing_sensor_readings_history.max_value.\n",
-     "first-pass yield (right-first-time) proxy (approximation) = Availability x Performance x Quality. Always say it is an approximation derived from sensor telemetry, not CMM inspection results or DHR lot-release records.\n",
+     "process health index (telemetry approximation) (approximation) = Availability x Performance x Quality. Always say it is an approximation derived from sensor telemetry, not CMM inspection results or DHR lot-release records.\n",
      "Anomaly = a reading where lb__shadow_manufacturing_sensor_readings_history.value < lb__shadow_manufacturing_sensor_readings_history.min_value OR lb__shadow_manufacturing_sensor_readings_history.value > lb__shadow_manufacturing_sensor_readings_history.max_value. Ignore rows where min_value or max_value is NULL.\n",
      "The intelligence_* tables hold several industries: ALWAYS filter every intelligence_* table with industry = 'manufacturing'.\n",
      "Bridge from telemetry to reference data: lb__shadow_manufacturing_sensor_readings_history.sensor_name = intelligence_sensor_bindings.sensor_name, then intelligence_sensor_bindings.sensor_id = intelligence_alert_rules.sensor_id or intelligence_alert_snapshot.sensor_id (fault codes, thresholds, severity, alert status). intelligence_sensor_bindings.asset_id links to intelligence_assets and intelligence_maintenance_records.\n",

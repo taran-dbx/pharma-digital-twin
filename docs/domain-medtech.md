@@ -18,7 +18,7 @@ nonconformance, so they are quarantined, measured and dispositioned.
 | Owner | Role | KPIs |
 |---|---|---|
 | Alex Morgan | VP Quality & Site Head (funding executive) | cost of poor quality, lots scrapped / quarantined, lot-release lead time |
-| Shreya | Head of Manufacturing Operations (operational owner) | time-to-detect, NCRs opened, right-first-time / first-pass yield, MTTR |
+| Shreya | Head of Manufacturing Operations (operational owner) | time-to-detect, NCRs opened, projected right-first-time (first-pass yield proxy), MTTR |
 
 ## IDs vs labels
 
@@ -43,13 +43,29 @@ are kept for compatibility with stored data, while their display names now read
 | Air compressor 1 | Clean dry air compressor (`compressor_1_*`) | catalog asset `mfg-asset-compressor-1` |
 | 60 °C operating limit | 60 °C **validated process parameter** (OQ-TM-CNC1-014, PQ-TM-HS12-022, PS-TM-MILL-HS-003 rev C) | alert rule `mfg-alert-spindle-temp`, validation refs in rule and alert `metadata` |
 | `M-SPINDLE-OVERTEMP`, `M-SPINDLE-VIBE`, `M-PRESS-LOW` | `VPP-SPINDLE3-TEMP`, `SPC-SPINDLE3-VIBE`, `CLN-PASSIVATION-PRESS-LOW` | alert `fault_code` |
-| Work order / batch fixture | Lot `TM-HS12-NNNN`, part serial `<lot>-NN`, work order `WO-TM-24817`, part `HS-TI64-12`, UDI-DI `00850012345671`, DHR `DHR-<lot>` | `metadata` on `cnc_1_*` readings and on alerts |
+| Work order / batch fixture | Lot `TM-HS12-<YYMMDD>-<NNN>` (cycle of the UTC day, so ids never wrap), part serial `<lot>-NN`, work order `WO-TM-24817`, part `HS-TI64-12`, UDI-DI `00850012345671`, DHR `DHR-<lot>` | `metadata` on `cnc_1_*` readings and on alerts |
 | Hold batch | **Quarantine lot** (QA hold) | `alert_response.action = quarantine_lot` |
 | Send to inspect | **Request CMM inspection** (stops the mill and the pack line) | `request_cmm_inspection` |
 | — | **Open NCR** | `open_ncr` |
 | Request maintenance | Request Spindle 3 maintenance | `request_maintenance` |
 | Operator click | Part 11-style signed record: actor, time, reason, comment, signature meaning | `alert_response` audit columns |
-| OEE tiles | first-pass yield / right-first-time, cost of poor quality, NCRs, lots quarantined, time-to-detect | cell KPIs, Genie, KPI notebook |
+| OEE tiles | projected right-first-time, cost of poor quality if scrapped, NCRs, lots quarantined, time-to-detect | cell KPIs, Genie, KPI notebook |
+| OEE (A × P × Q) | process health index (telemetry approximation); never called first-pass yield | Genie, KPI notebook |
+
+## KPI definitions
+
+- **Projected right-first-time** = (parts started − parts at risk) / parts started, over the lots an excursion touched. Parts at risk are the parts whose cut overlapped the time Spindle 3 was outside its validated limit. *Projected*, because no CMM results exist yet. The UI tile "Projected RFT", Genie's example SQL and this document use exactly this
+  definition. The canonical text is `PROJECTED_RFT_DEFINITION` in
+  `src/iot_twin/domain/lot_context.py`, mirrored in `client/src/lib/manufacturing-quality.ts`.
+- **Parts at risk** start at the first over-limit reading the alert engine saw
+  (`alert.metadata.excursion_started_at`), or `opened_at − duration_s` when that is unknown, and
+  end when the alert clears. Containment errs inclusive.
+- **Cost of poor quality (if scrapped)** = parts at risk × a reference unit cost; nothing has been
+  scrapped until QA dispositions the parts.
+- **Time to detect** = alert opened − first over-limit reading. **MTTR** = mean opened → cleared
+  time of recent excursions.
+- **Process health index (telemetry approximation)** = availability × performance × quality from
+  telemetry (the OEE product). It is not first-pass yield.
 
 ## Glossary
 
@@ -61,6 +77,12 @@ range, and **PQ** shows the process consistently makes conforming product under 
 conditions. Limits proven in OQ/PQ become *validated process parameters*: running outside them
 means the output is no longer covered by the validation.
 
+Machining that is fully checked by CMM is normally *verified* rather than validated
+(ISO 13485 §7.5.6 applies to processes whose output is not or cannot be fully verified). This demo
+treats spindle temperature as a validated parameter because it governs a characteristic that is
+not 100 % verified downstream, for example sub-surface or heat-affected material properties of
+the titanium that CMM cannot measure.
+
 *In the app:* the Spindle 3 temperature limit (60 °C) is modelled as a validated process
 parameter. The alert rule carries its OQ/PQ protocol and process-spec references in
 `metadata`, the fault code is prefixed `VPP-`, and the UI says "outside its validated limit"
@@ -69,8 +91,9 @@ rather than "over temperature". The protocol numbers are fixtures.
 ### DHR (device history record)
 
 The record of how each lot or unit was made: dates, quantities, the equipment and process
-parameters used, acceptance records, labels and the UDI. Under QMSR this content sits in the
-medical device file / production records required by ISO 13485.
+parameters used, acceptance records, labels and the UDI. Under QMSR the DHR/DMR terms are
+retired; per-lot production records (ISO 13485 §7.5.1) carry this content. The app keeps the
+familiar "DHR" label for the reference.
 
 *In the app:* every `cnc_1_*` reading and every Spindle 3 alert carries `lot_id`,
 `part_serial`, `work_order`, `part_number`, `udi_di` and a `dhr_ref` in its `metadata` JSONB,
@@ -125,10 +148,14 @@ the **meaning** of the signature (for example review, approval, responsibility o
 user), the time (`created_at`), a `reason`, an optional `comment`, the `signature_meaning`
 (`authored`, `reviewed`, `approved` or `responsible`) and `signed_at`. Rows are only ever
 inserted, never updated, and one decision per action and episode is enforced by a unique
-constraint. The API also returns a printed signature line
+constraint, and the `alert_id` foreign key is `ON DELETE RESTRICT`, so deleting an alert
+cannot silently delete its signed decisions. The API also returns a printed signature line
 (`<signer> · <meaning> · <signed at>`), and the UI requires an explicit "I sign this decision
 as …" intent before it submits. This is *Part 11-style*: there is no re-authentication at
-signing, no signature/record linking controls and no system validation.
+signing, no signature/record linking controls and no system validation. Resuming production
+after a validated-limit stop is not yet a signed decision (the resume records only who and when);
+a validated deployment should require a signed reason there too. Legacy clients that post
+`hold_batch` / `send_to_inspect` without signing fields are recorded as `legacy-unsigned`.
 
 ## Data model notes
 
@@ -142,9 +169,16 @@ databases in place, without data loss:
 - The audit columns are added only when missing (checked in `information_schema.columns`),
   which avoids the Postgres "must be owner of table" error that an unconditional
   `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` raises for a table created by another role.
-- If the app identity does not own a table that still needs either upgrade, boot logs a warning
-  instead of failing, and new decisions keep their signature fields in `reference.audit` until
-  the owner runs the upgrade; reads merge both locations.
+- A cascading `alert_id` foreign key (older tables) is replaced by `ON DELETE RESTRICT` in the
+  same guarded way; new tables are created with RESTRICT.
+- If the app identity does not own a table that still needs an upgrade, boot logs a warning
+  instead of failing. Signed decisions are then still stored durably: the signature fields go to
+  `reference.audit`, and an action the old CHECK rejects is stored under its legacy name
+  (`quarantine_lot` → `hold_batch`, `request_cmm_inspection` → `send_to_inspect`) with the real
+  action in `reference.audit.action`; reads and history map it back. `open_ncr` has no legacy
+  equivalent, so it is refused with `503 alert_response table not upgraded` until the owner runs
+  the upgrade. With the app backend configured, a decision is never kept only in memory; any
+  database error is a `503`. The in-memory store is used only when no app backend is configured.
 
 See [architecture.md](architecture.md#alerts) for the alert flow and
 [genie.md](genie.md) for the quality-aware Genie questions.

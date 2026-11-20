@@ -68,7 +68,7 @@ _TEMPLATES: dict[str, IndustryTemplate] = {
         kpis=[
             {"k": "Spindle 3 temperature", "v": "—", "u": "°C"},
             {"k": "Parts at risk", "v": "—", "u": ""},
-            {"k": "First-pass yield", "v": "—", "u": "%"},
+            {"k": "Projected RFT", "v": "—", "u": "%"},
             {"k": "Time to detect", "v": "—", "u": ""},
             {"k": "NCRs opened", "v": "—", "u": ""},
             {"k": "Last device event", "v": "—", "u": ""},

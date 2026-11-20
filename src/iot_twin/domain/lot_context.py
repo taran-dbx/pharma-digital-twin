@@ -6,7 +6,13 @@ the demo, so the lot clock is deterministic on the wall clock and mirrors
 on every ``cnc_1_*`` reading):
 
 * one lot per scenario cycle (``LOT_CYCLE_S`` = the 300 s heat-event cycle),
+  numbered within its UTC day, e.g. ``TM-HS12-261120-142`` (cycles align with
+  days because 86 400 s is a whole number of cycles, so ids never wrap),
 * one part every ``PART_CYCLE_S`` seconds, ``PARTS_PER_LOT`` parts per lot.
+
+Projected right-first-time (the app's single first-pass-yield proxy) is
+``(parts started - parts at risk) / parts started`` over the lots an
+excursion touched. It is *projected* because no CMM results exist yet.
 
 Every value here is a labelled reference fixture (work order, part number,
 UDI-DI, DHR reference), never a record of a real device.
@@ -15,10 +21,11 @@ UDI-DI, DHR reference), never a record of a real device.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 LOT_CYCLE_S = 300
+DAY_S = 86_400
 PART_CYCLE_S = 20
 PARTS_PER_LOT = LOT_CYCLE_S // PART_CYCLE_S
 LOT_PREFIX = "TM-HS12"
@@ -44,16 +51,25 @@ def _epoch(at: float | datetime) -> float:
     return at.timestamp() if isinstance(at, datetime) else float(at)
 
 
-def lot_seq_at(at: float | datetime) -> int:
-    return int(_epoch(at) // LOT_CYCLE_S) % 10000
-
-
-def lot_id_for(seq: int) -> str:
-    return f"{LOT_PREFIX}-{seq % 10000:04d}"
+PROJECTED_RFT_LABEL = "Projected right-first-time"
+PROJECTED_RFT_DEFINITION = (
+    "Projected right-first-time = (parts started - parts at risk) / parts started, over the "
+    "lots an excursion touched. Parts at risk are the parts whose cut overlapped the time "
+    "Spindle 3 was outside its validated limit. Projected: no CMM results exist yet."
+)
 
 
 def lot_id_at(at: float | datetime) -> str:
-    return lot_id_for(lot_seq_at(at))
+    """Lot being machined at ``at``: ``<prefix>-<YYMMDD>-<cycle of the UTC day>``."""
+    epoch = _epoch(at)
+    day = datetime.fromtimestamp(epoch, UTC).strftime("%y%m%d")
+    return f"{LOT_PREFIX}-{day}-{int((epoch % DAY_S) // LOT_CYCLE_S):03d}"
+
+
+def lot_start_at(at: float | datetime) -> float:
+    """Epoch second at which the lot being machined at ``at`` started."""
+    epoch = _epoch(at)
+    return float(epoch - (epoch % LOT_CYCLE_S))
 
 
 def part_index_at(at: float | datetime) -> int:
@@ -120,13 +136,39 @@ def parts_in_window(start: float | datetime, end: float | datetime) -> list[dict
     return parts
 
 
-def lot_disposition(start: float | datetime, end: float | datetime) -> dict[str, Any]:
+def projected_rft(
+    start: float | datetime, end: float | datetime, now: float | datetime
+) -> dict[str, Any] | None:
+    """The canonical first-pass-yield proxy; see ``PROJECTED_RFT_DEFINITION``."""
+    at_risk = parts_in_window(start, end)
+    if not at_risk:
+        return None
+    lot_starts = sorted({lot_start_at(part["cut_start"]) for part in at_risk})
+    current = _epoch(now)
+    started = 0
+    for lot_start in lot_starts:
+        if current >= lot_start:
+            started += min(PARTS_PER_LOT, int((current - lot_start) // PART_CYCLE_S) + 1)
+    started = max(started, len(at_risk))
+    good = started - len(at_risk)
+    return {
+        "pct": round(100.0 * good / started, 2),
+        "good": good,
+        "parts_started": started,
+        "parts_at_risk": len(at_risk),
+    }
+
+
+def lot_disposition(
+    start: float | datetime, end: float | datetime, now: float | datetime | None = None
+) -> dict[str, Any]:
     """Which parts to quarantine and how many of each affected lot can be released."""
     at_risk = parts_in_window(start, end)
     lots: dict[str, int] = {}
     for part in at_risk:
         lots[part["lot_id"]] = lots.get(part["lot_id"], 0) + 1
     return {
+        "projected_rft": projected_rft(start, end, end if now is None else now),
         "lot_ids": list(lots),
         "parts_at_risk": [part["serial"] for part in at_risk],
         "parts_released": sum(PARTS_PER_LOT - count for count in lots.values()),

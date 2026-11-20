@@ -287,7 +287,7 @@ function DecisionNotes({
     <div className="cell-card__decisions" data-testid="station-decisions">
       {recorded.map((step) => (
         <div key={step.action}>
-          <b>{decisionLabel(step, batchHeld)}</b>
+          <b>{decisionLabel(step, batchHeld, decisions[step.action])}</b>
           <span>
             signed {formatDeviceTime(Date.parse(decisions[step.action]!.created_at) / 1000).slice(0, 8)}
             {decisions[step.action]!.signature_meaning ? ` · ${decisions[step.action]!.signature_meaning}` : ""}
