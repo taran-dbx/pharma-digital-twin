@@ -20,6 +20,7 @@ import type {
   PipelineMode,
 } from "@/lib/industries-api";
 import type { LotDisposition } from "@/lib/manufacturing-lot";
+import { spindleRisk, type SpindleRisk } from "@/lib/manufacturing-risk";
 import {
   costOfPoorQualityUsd,
   episodeDisposition,
@@ -78,6 +79,8 @@ export interface RuleWatch {
 export interface MachiningCellModel {
   limit: SpindleLimit | null;
   spindleAlert: AlertRecord | null;
+  /** Thermal-risk model output from the latest predicted alert, if any. */
+  risk: SpindleRisk | null;
   alerts: AlertRecord[];
   openAlerts: number;
   spindle: LiveSignal & { health: HealthState; history: SensorHistoryPoint[] };
@@ -278,6 +281,7 @@ export function useMachiningCellModel({
     return {
       limit,
       spindleAlert,
+      risk: spindleRisk(alerts),
       alerts,
       openAlerts: alerts.filter(isActiveAlert).length,
       spindle: { ...temp, health, history: spindleHistory },

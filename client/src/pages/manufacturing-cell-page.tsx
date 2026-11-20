@@ -46,6 +46,7 @@ function StationCard({ model, selected, stacked }: { model: MachiningCellModel; 
       decisions={model.episode.decisions}
       batchHeld={model.batchHeld}
       disposition={model.quality.disposition}
+      risk={model.risk}
       stacked={stacked}
     />
   );

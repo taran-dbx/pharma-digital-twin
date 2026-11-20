@@ -1128,3 +1128,74 @@
   justify-content: flex-end;
   gap: 6px;
 }
+
+/* Thermal-risk model badge ("predicted", distinct from the "breached" limit alert). */
+.cellops-risk {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px dashed color-mix(in srgb, var(--cell-warn) 55%, transparent);
+  background: color-mix(in srgb, var(--cell-warn) 8%, transparent);
+  font-size: 12px;
+}
+.cellops-risk.is-quiet {
+  border-color: var(--db-border);
+  background: transparent;
+  color: var(--db-muted-foreground);
+}
+.cellops-risk__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.cellops-risk__kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--cell-warn);
+}
+.cellops-risk.is-quiet .cellops-risk__kind {
+  color: inherit;
+}
+.cellops-risk__kind svg {
+  width: 14px;
+  height: 14px;
+}
+.cellops-risk__head b {
+  font-size: 18px;
+}
+.cellops-risk__detail {
+  margin: 0;
+  color: var(--db-muted-foreground);
+}
+.cellops-risk__drivers {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 2px;
+}
+.cellops-risk__drivers li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.cellops-risk__drivers em {
+  font-style: normal;
+}
+.cellops-risk__drivers .is-up {
+  color: var(--cell-warn);
+}
+.cellops-risk__drivers .is-down {
+  color: var(--cell-ok);
+}
+.cellops-risk__model {
+  color: var(--db-muted-foreground);
+}
+.cellops-risk__lead {
+  margin: 0;
+  font-weight: 600;
+}

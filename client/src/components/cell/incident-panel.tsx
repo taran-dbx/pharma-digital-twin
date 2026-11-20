@@ -3,6 +3,7 @@ import { Check, Sparkles } from "lucide-react";
 
 import { clockOf } from "@/components/cell/cell-kpis";
 import { DecisionSignoffForm } from "@/components/cell/decision-signoff";
+import { RiskBadge } from "@/components/cell/risk-badge";
 import type { MachiningCellModel } from "@/components/cell/use-cell-model";
 import { heatEventText } from "@/components/dashboard/cell-station-card";
 import {
@@ -159,6 +160,8 @@ export function IncidentPanel({
         <span className="cellops-eyebrow">Incident</span>
         <span className={`cellops-chip is-${state}`}>{STATE_LABEL[state]}</span>
       </header>
+
+      {model.risk && <RiskBadge risk={model.risk} />}
 
       {active ? (
         <div className="cellops-incident__alert">

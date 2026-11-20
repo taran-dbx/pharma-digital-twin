@@ -10,9 +10,11 @@ import {
   YAxis,
 } from "recharts";
 
+import { RiskBadge } from "@/components/cell/risk-badge";
 import type { SensorHistoryPoint } from "@/contexts/sensor-context";
 import type { IndustryMaintenanceEvent } from "@/lib/industries-api";
 import type { LotDisposition } from "@/lib/manufacturing-lot";
+import type { SpindleRisk } from "@/lib/manufacturing-risk";
 import type { SpindleHeatState } from "@/lib/manufacturing-scenario";
 import {
   HEALTH_LABEL,
@@ -69,6 +71,8 @@ export interface CellStationCardProps {
   batchHeld: boolean;
   /** Parts cut while Spindle 3 was outside its validated limit, by lot. */
   disposition?: LotDisposition | null;
+  /** Thermal-risk model output (predicted alert), shown on the mill card. */
+  risk?: SpindleRisk | null;
 }
 
 function Field({ label, children, testId }: { label: string; children: React.ReactNode; testId?: string }) {
@@ -307,6 +311,7 @@ function SpindleCard({
   tiles,
   decisions,
   batchHeld,
+  risk,
 }: CellStationCardProps) {
   const tone = healthTone(spindle.health);
   return (
@@ -327,6 +332,7 @@ function SpindleCard({
         </div>
         <ThermalScale value={spindle.value} limit={limit} />
         <SpindleTrend history={spindle.history} limit={limit} />
+        {risk && <RiskBadge risk={risk} compact />}
         <SensorTiles tiles={tiles.mill.filter((t) => t.name !== "cnc_1_spindle_temp")} />
       </div>
 
