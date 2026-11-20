@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Check, Sparkles } from "lucide-react";
 
+import { ActionPlanCard } from "@/components/cell/action-plan-card";
 import { clockOf } from "@/components/cell/cell-kpis";
 import { DecisionSignoffForm } from "@/components/cell/decision-signoff";
 import type { MachiningCellModel } from "@/components/cell/use-cell-model";
@@ -14,6 +15,7 @@ import {
   formatCountdown,
   isActiveAlert,
 } from "@/lib/manufacturing-story";
+import type { SignoffPrefill } from "@/lib/action-plan";
 import type {
   AlertEpisode,
   AlertRecord,
@@ -96,6 +98,7 @@ export function IncidentPanel({
   controllable,
   onRecorded,
   onExplain,
+  mode,
 }: {
   model: MachiningCellModel;
   episodes: AlertEpisode[];
@@ -103,6 +106,8 @@ export function IncidentPanel({
   controllable: boolean;
   onRecorded: (action: AlertResponseAction) => void;
   onExplain: (alert: AlertRecord) => void;
+  /** Pipeline mode, so the AI plan reads the readings window from the right table. */
+  mode?: string;
 }) {
   const { episode, production, limit, spindle, now } = model;
   const { alert, decisions, pending, record, acknowledge } = episode;
@@ -118,9 +123,14 @@ export function IncidentPanel({
   const recorded = RESPONSE_STEPS.filter((step) => decisions[step.action]);
   const showResponse = active || recorded.length > 0;
   const [signing, setSigning] = useState<AlertResponseAction | null>(null);
+  const [prefill, setPrefill] = useState<SignoffPrefill | undefined>(undefined);
+  const sign = (action: AlertResponseAction | null, from?: SignoffPrefill) => {
+    setSigning(action);
+    setPrefill(from);
+  };
   const submit = async (action: AlertResponseAction, signoff: DecisionSignoff) => {
     if (await record(action, signoff)) {
-      setSigning(null);
+      sign(null);
       onRecorded(action);
     }
   };
@@ -331,11 +341,13 @@ export function IncidentPanel({
                   )}
                   {open && (
                     <DecisionSignoffForm
+                      key={prefill?.planId ?? "manual"}
                       step={step}
                       busy={pending === step.action}
                       primary={stopsCell}
+                      prefill={prefill}
                       onSign={(signoff) => void submit(step.action, signoff)}
-                      onCancel={() => setSigning(null)}
+                      onCancel={() => sign(null)}
                     />
                   )}
                 </div>
@@ -344,7 +356,7 @@ export function IncidentPanel({
                     type="button"
                     className={`btn sm${stopsCell ? " primary" : ""}`}
                     disabled={pending !== null}
-                    onClick={() => setSigning(step.action)}
+                    onClick={() => sign(step.action)}
                   >
                     {step.cta}
                   </button>
@@ -353,6 +365,16 @@ export function IncidentPanel({
             );
           })}
         </ol>
+      )}
+
+      {alert && (
+        <ActionPlanCard
+          alertId={alert.id}
+          mode={mode}
+          decisions={decisions}
+          canSign={active}
+          onApply={sign}
+        />
       )}
 
       {(episode.error || production.error) && (

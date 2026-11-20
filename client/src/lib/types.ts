@@ -550,6 +550,80 @@ export interface DecisionSignoff {
   reason: string;
   comment?: string;
   signature_meaning: SignatureMeaning;
+  /** Set when the decision applies an AI action plan; the server records who applied it. */
+  action_plan_id?: string;
+}
+
+/** Owner roles an AI action-plan step can be assigned to. */
+export type ActionPlanOwnerRole = "Operator" | "QA" | "Maintenance" | "Manufacturing Eng";
+
+export interface ActionPlanClaim {
+  text: string;
+  citations: string[];
+}
+
+export interface ActionPlanStep {
+  order: number;
+  owner_role: ActionPlanOwnerRole;
+  action: string;
+  response_action: Exclude<AlertResponseAction, "hold_batch" | "send_to_inspect"> | null;
+  citations: string[];
+}
+
+export interface ActionPlanBody {
+  summary: ActionPlanClaim;
+  disposition: {
+    quarantine: { lots: string[]; serials: string[]; rationale: string; citations: string[] };
+    cmm_inspection: { scope: string; serials: string[]; citations: string[] };
+    ncr: { required: boolean; rationale: string; citations: string[] };
+    maintenance_request: { required: boolean; rationale: string; citations: string[] };
+  };
+  risk_narrative: ActionPlanClaim;
+  steps: ActionPlanStep[];
+}
+
+/** One audited AI action plan (advisory; never applied automatically). */
+export interface ActionPlanRecord {
+  plan_id: string;
+  alert_id: string;
+  requested_by: string;
+  requested_at: string;
+  endpoint: string;
+  model: string | null;
+  model_version: string | null;
+  prompt_template_version: string;
+  prompt_hash: string;
+  grounding_hash: string;
+  grounding_check: "pass" | "fail";
+  grounding_reasons: string[];
+  status: "generated" | "rejected" | "error";
+  error: string | null;
+  latency_ms: number | null;
+  usage: { prompt_tokens: number | null; completion_tokens: number | null; total_tokens: number | null };
+  plan: ActionPlanBody | null;
+  citation_ids: string[];
+  applied_by: string | null;
+  applied_at: string | null;
+  applied_response_id: string | null;
+  advisory: true;
+}
+
+export interface GroundingRow {
+  id: string;
+  source: string;
+  key: string;
+  data: Record<string, unknown>;
+}
+
+/** Full trace: the plan plus the exact rows it was given. */
+export interface ActionPlanTrace extends ActionPlanRecord {
+  grounding_rows: GroundingRow[];
+  response: Record<string, unknown>;
+}
+
+export interface ActionPlanList {
+  alert_id: string;
+  plans: ActionPlanRecord[];
 }
 
 export interface AlertResponseRecord {

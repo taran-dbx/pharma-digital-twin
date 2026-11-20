@@ -1,4 +1,7 @@
 import type {
+  ActionPlanList,
+  ActionPlanRecord,
+  ActionPlanTrace,
   AlertHistoryResponse,
   AlertLifecycleEvent,
   AlertListResponse,
@@ -612,6 +615,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ action, ...signoff }),
     }),
+
+  generateActionPlan: (alertId: string, mode?: string) =>
+    request<ActionPlanRecord>(`/alerts/${alertId}/action-plan`, {
+      method: "POST",
+      body: JSON.stringify(mode ? { mode } : {}),
+    }),
+
+  listActionPlans: (alertId: string) => request<ActionPlanList>(`/alerts/${alertId}/action-plan`),
+
+  getActionPlanTrace: (planId: string) => request<ActionPlanTrace>(`/genai/audit/${planId}`),
 
   getAlertHistory: (industry: string, hours = 1) =>
     request<AlertHistoryResponse>(
