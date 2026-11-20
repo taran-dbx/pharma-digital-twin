@@ -21,7 +21,7 @@ from iot_twin.services import intelligence_catalog_service as ics
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG = "example-catalog"
-SCHEMA = "test_schema"
+SCHEMA = "pharma_twin_test_schema"
 
 
 @pytest.fixture(autouse=True)
@@ -184,7 +184,7 @@ class TestBundle:
         assert variables["risk_model_short_name"]["default"] == DEFAULT_MODEL_SHORT_NAME
 
     def test_app_queries_the_endpoint_through_a_resource(self) -> None:
-        app = _yaml("resources/app.yml")["resources"]["apps"]["iot_twin"]
+        app = _yaml("resources/app.yml")["resources"]["apps"]["pharma_twin"]
         resource = next(r for r in app["resources"] if "serving_endpoint" in r)
         assert resource["serving_endpoint"] == {
             "name": "${resources.model_serving_endpoints.spindle_risk.name}",
