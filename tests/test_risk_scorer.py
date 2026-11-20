@@ -482,3 +482,81 @@ class TestChampionGuards:
             assert await scorer.score_once() is not None
         assert caplog.text.count("served-vs-champion check is off") == 1
         assert "EXECUTE" in caplog.text
+
+
+@pytest.mark.asyncio
+class TestRoundIsolation:
+    async def test_second_pipeline_cannot_slip_in_between_query_and_lookup(self) -> None:
+        """Regression: p1's query thread finished and freed the worker before p1
+        resumed; p2's round started a (hung) call in that gap, p1's served-model
+        lookup queued behind it, timed out and cached version 'unknown'."""
+        loop = asyncio.get_running_loop()
+        release = threading.Event()
+        rounds: dict[str, asyncio.Task] = {}
+        scorer: rs.SpindleRiskScorer
+
+        def query(endpoint, record, timeout_s):
+            if record["temp_last"] > 50:  # p1 ("p-hot"): fast, but opens the gap
+                loop.call_soon_threadsafe(
+                    lambda: rounds.setdefault("p2", loop.create_task(scorer.score_once("p-calm")))
+                )
+                return [{"risk_score": 0.6}]
+            release.wait(5)  # p2: a hung endpoint call
+            return [{"risk_score": 0.1}]
+
+        scorer = rs.SpindleRiskScorer(
+            _config(timeout_s=0.2),
+            query_fn=query,
+            served_model_fn=lambda name, timeout: ("cat.pharma_twin.spindle_thermal_risk", "4"),
+            champion_fn=lambda name, timeout: "4",
+            now_fn=Clock(),
+            limit_c=60.0,
+            last_maintenance_at=T0,
+        )
+        scorer.observe(_readings(temp=58.0), "p-hot")
+        scorer.observe(_readings(temp=40.0), "p-calm")
+        try:
+            first = await scorer.score_once("p-hot")
+            second = await rounds["p2"]
+        finally:
+            release.set()
+        assert first is not None
+        assert first.model_version == "4"  # not 'unknown' from a starved lookup
+        assert second is None and scorer.stats["skipped_busy"] == 1
+        for _ in range(100):
+            if not scorer.inflight:
+                break
+            await asyncio.sleep(0.01)
+        assert not scorer.inflight
+        scorer.close()
+
+    async def test_unknown_identity_is_only_cached_briefly(self) -> None:
+        clock = Clock()
+        lookups: list[int] = []
+
+        def served(name, timeout):
+            lookups.append(1)
+            if len(lookups) == 1:
+                raise RuntimeError("endpoint metadata unavailable")
+            return "cat.pharma_twin.spindle_thermal_risk", "4"
+
+        scorer = rs.SpindleRiskScorer(
+            _config(interval_s=1.0),
+            query_fn=FakeEndpoint(),
+            served_model_fn=served,
+            champion_fn=lambda name, timeout: "4",
+            now_fn=clock,
+            limit_c=60.0,
+            last_maintenance_at=T0,
+        )
+        scorer.observe(_readings())
+        first = await scorer.score_once()
+        assert first is not None and first.model_version == "unknown"
+        clock.now += rs.UNKNOWN_IDENTITY_TTL_S - 1
+        assert (await scorer.score_once()).model_version == "unknown"  # still cached
+        clock.now += 2
+        assert (await scorer.score_once()).model_version == "4"  # looked up again
+        assert len(lookups) == 2
+        clock.now += rs.UNKNOWN_IDENTITY_TTL_S + 1
+        await scorer.score_once()
+        assert len(lookups) == 2  # a known identity keeps the long TTL

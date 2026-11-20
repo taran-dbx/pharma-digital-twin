@@ -31,6 +31,7 @@ import json
 import logging
 import math
 import os
+import threading
 import time
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
@@ -64,6 +65,8 @@ MODEL_THRESHOLD = "model"
 _BUFFER_MAX = 10_000
 _MAX_LANES = 32
 _VERSION_TTL_S = 300.0
+# An identity that could not be read ("unknown") is retried soon, not in 5 min.
+UNKNOWN_IDENTITY_TTL_S = 30.0
 
 
 def _env_float(name: str, default: float | None, low: float, high: float) -> float | None:
@@ -289,7 +292,12 @@ class SpindleRiskScorer:
         self._lanes: dict[str, _Lane] = {}
         # One worker: a hung call can block only the scorer, never the app.
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="risk-scorer")
-        self.inflight = False
+        # Busy = a scoring round is running (query + model lookups, one round at a
+        # time across all pipelines) OR a worker call is still outstanding, which
+        # covers a thread abandoned by a timeout.
+        self._round = asyncio.Lock()
+        self._outstanding = 0
+        self._outstanding_lock = threading.Lock()
         self._model: tuple[str, str, float] | None = None
         self._warned_version: str | None = None
         self._warned_lookup = False
@@ -339,6 +347,13 @@ class SpindleRiskScorer:
             lane.buffer.popleft()
         return len(wanted)
 
+    @property
+    def inflight(self) -> bool:
+        """True while a round runs or any worker call has not returned."""
+        with self._outstanding_lock:
+            outstanding = self._outstanding
+        return self._round.locked() or outstanding > 0
+
     def due(self, pipeline_id: str | None = None) -> bool:
         if self.inflight:
             return False
@@ -351,34 +366,36 @@ class SpindleRiskScorer:
 
     # -- endpoint calls -----------------------------------------------------
     async def _call(self, fn: Callable[..., Any], *args: Any) -> Any:
-        """Run ``fn`` on the scorer's executor; busy until the thread returns.
+        """Run ``fn`` on the scorer's executor.
 
-        ``inflight`` is cleared by the worker thread itself, in a ``finally``
-        that runs before the thread hands its result back. So on the normal path
-        it is already False when this coroutine resumes, on every Python version
-        (no reliance on when an asyncio done-callback runs). After a timeout the
-        abandoned thread keeps it True until the call really ends.
+        The outstanding count goes up here, before submitting, and down in the
+        worker thread's ``finally``. After a timeout the abandoned thread keeps
+        the scorer busy until the call really ends.
         """
         loop = asyncio.get_running_loop()
-        self.inflight = True
+        with self._outstanding_lock:
+            self._outstanding += 1
         call = functools.partial(self._run_worker, fn, *args, self.config.timeout_s)
         future = loop.run_in_executor(self._executor, call)
         return await asyncio.wait_for(asyncio.shield(future), timeout=self.config.timeout_s)
 
     def _run_worker(self, fn: Callable[..., Any], *args: Any) -> Any:
-        """Worker-thread body: the call, then release the busy flag."""
+        """Worker-thread body: the call, then release its outstanding slot."""
         try:
             return fn(*args)
         except Exception as exc:
             logger.debug("risk endpoint call finished with %r", exc)
             raise
         finally:
-            self.inflight = False
+            with self._outstanding_lock:
+                self._outstanding -= 1
 
     async def _model_identity(self) -> tuple[str, str]:
         cached = self._model
-        if cached is not None and self._now() - cached[2] < _VERSION_TTL_S:
-            return cached[0], cached[1]
+        if cached is not None:
+            ttl = UNKNOWN_IDENTITY_TTL_S if cached[1] == "unknown" else _VERSION_TTL_S
+            if self._now() - cached[2] < ttl:
+                return cached[0], cached[1]
         name, version = self.config.model_name or None, None
         try:
             served_name, version = await self._call(self._served_model, self.config.endpoint_name)
@@ -435,12 +452,21 @@ class SpindleRiskScorer:
         return lot_context_at(at)
 
     async def score_once(self, pipeline_id: str | None = None) -> RiskScore | None:
-        """Score the pipeline's latest full window, or ``None`` (no window, busy, error)."""
+        """Score the pipeline's latest full window, or ``None`` (no window, busy, error).
+
+        One round at a time: the busy check and taking the round lock happen with
+        no ``await`` in between, so no other pipeline's round can start between
+        this round's query and its model lookups.
+        """
         lane = self._lane(pipeline_id)
         lane.last_started = self._now()
         if self.inflight:
             self.stats["skipped_busy"] = self.stats.get("skipped_busy", 0) + 1
             return None
+        async with self._round:
+            return await self._score_round(lane, pipeline_id)
+
+    async def _score_round(self, lane: _Lane, pipeline_id: str | None) -> RiskScore | None:
         features = build_features(
             lane.buffer, limit_c=self.limit_c, last_maintenance_at=self.last_maintenance_at
         )
