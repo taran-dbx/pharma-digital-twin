@@ -17,7 +17,7 @@ import {
   prefillFor,
   type SignoffPrefill,
 } from "@/lib/action-plan";
-import { api } from "@/lib/api";
+import { api, isApiStatus } from "@/lib/api";
 import type { CellDecisions } from "@/lib/manufacturing-story";
 import type { ActionPlanClaim, ActionPlanRecord, AlertResponseAction, GroundingRow } from "@/lib/types";
 
@@ -86,15 +86,17 @@ export function ActionPlanCard({
     };
   }, [alertId]);
 
-  const generate = useCallback(async () => {
+  const generate = useCallback(async (force: boolean) => {
     setBusy(true);
     setError(null);
     try {
-      setPlan(await api.generateActionPlan(alertId, mode));
+      setPlan(await api.generateActionPlan(alertId, mode, force));
       setRows(null);
       setOpenId(null);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "The AI action plan was not generated");
+      const limited = isApiStatus(err, 429);
+      const message = err instanceof Error ? err.message : "The AI action plan was not generated";
+      setError(limited ? `Rate limited: ${message}` : message);
       const latest = await api.listActionPlans(alertId).catch(() => null);
       if (latest?.plans[0]) setPlan(latest.plans[0]);
     } finally {
@@ -132,7 +134,7 @@ export function ActionPlanCard({
             {BADGE_LABEL[badge]}
           </span>
         )}
-        <button type="button" className="btn sm" onClick={() => void generate()} disabled={busy}>
+        <button type="button" className="btn sm" onClick={() => void generate(plan !== null)} disabled={busy}>
           {busy ? "Generating…" : plan ? "Regenerate" : "Generate plan"}
         </button>
       </header>
@@ -141,7 +143,9 @@ export function ActionPlanCard({
         <p className="cell-plan__meta">
           {plan.model ?? plan.endpoint}
           {plan.model_version ? ` · ${plan.model_version}` : ""} · {plan.prompt_template_version} · {clockOf(plan.requested_at)}
+          {plan.reused ? " · reused (grounding unchanged)" : ""}
           {plan.applied_by ? ` · applied by ${plan.applied_by.split("@")[0]} ${clockOf(plan.applied_at)}` : ""}
+          {plan.applied_override_reason ? ` · override: ${plan.applied_override_reason}` : ""}
         </p>
       )}
 

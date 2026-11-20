@@ -616,10 +616,11 @@ export const api = {
       body: JSON.stringify({ action, ...signoff }),
     }),
 
-  generateActionPlan: (alertId: string, mode?: string) =>
+  /** `force` regenerates even when the grounding is unchanged (otherwise the latest plan is reused). */
+  generateActionPlan: (alertId: string, mode?: string, force = false) =>
     request<ActionPlanRecord>(`/alerts/${alertId}/action-plan`, {
       method: "POST",
-      body: JSON.stringify(mode ? { mode } : {}),
+      body: JSON.stringify({ ...(mode ? { mode } : {}), ...(force ? { force: true } : {}) }),
     }),
 
   listActionPlans: (alertId: string) => request<ActionPlanList>(`/alerts/${alertId}/action-plan`),

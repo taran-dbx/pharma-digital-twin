@@ -605,6 +605,10 @@ export interface ActionPlanRecord {
   applied_by: string | null;
   applied_at: string | null;
   applied_response_id: string | null;
+  /** Set when a person applied a plan that had not passed the grounding check. */
+  applied_override_reason?: string | null;
+  /** True when the server returned the latest plan because its grounding was unchanged. */
+  reused?: boolean;
   advisory: true;
 }
 
