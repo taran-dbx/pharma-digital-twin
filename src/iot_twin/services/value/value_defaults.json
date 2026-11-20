@@ -1,0 +1,20 @@
+{
+  "_comment": "Illustrative defaults for the Trinity Medical value model. Every value is an assumption, documented in docs/value-model.md; override any of them per request.",
+  "lines_in_scope": 4,
+  "excursion_events_per_line_per_year": 12,
+  "lot_cost_components": {
+    "scrap": 27750,
+    "rework_and_mrb": 6000,
+    "revalidation": 12000,
+    "lost_run_time": 4000
+  },
+  "capture_rate": 0.8,
+  "inspection_cost": 1500,
+  "lot_release_delay_cost_per_day": 0,
+  "release_delay_days_per_event": 5,
+  "definitions": {
+    "_comment": "Measurement definitions, not cost assumptions; not overridable per request. See docs/value-model.md.",
+    "caught_in_time_grace_s": 120,
+    "max_open_excursion_s": 86400
+  }
+}

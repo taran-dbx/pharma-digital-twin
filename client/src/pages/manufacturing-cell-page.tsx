@@ -18,6 +18,7 @@ import { useMachiningCellModel, type MachiningCellModel } from "@/components/cel
 import { CellStationCard } from "@/components/dashboard/cell-station-card";
 import { GenieCopilot } from "@/components/dashboard/genie-copilot";
 import type { CellCue } from "@/components/twin/machining-cell";
+import { CellValuePanel, CellViewTabs, type CellView } from "@/components/value/value-views";
 import { useAlertHistory } from "@/hooks/use-alert-history";
 import { usePlatformMetrics } from "@/hooks/use-platform-metrics";
 import type {
@@ -126,6 +127,7 @@ export function ManufacturingCellPage({
   ].join("|");
   const { history, error: historyError } = useAlertHistory(industry.id, changeKey);
 
+  const [view, setView] = useState<CellView>("cell");
   const [selected, setSelected] = useState<CellStationId>("mill");
   const [cue, setCue] = useState<CellCue | null>(null);
   const [genieOpen, setGenieOpen] = useState(false);
@@ -174,7 +176,7 @@ export function ManufacturingCellPage({
   );
 
   return (
-    <section id="view-dashboard" className={`cellops is-${production.phase}`} style={style}>
+    <section id="view-dashboard" className={`cellops is-${production.phase}`} style={style} data-view={view}>
       <div className="crumbs">
         <Link to="/industries">Industries</Link>
         <span className="sep">/</span>
@@ -195,6 +197,9 @@ export function ManufacturingCellPage({
         pipeline={pipeline}
         onOpenGenie={() => setGenieOpen(true)}
       />
+
+      <CellViewTabs value={view} onChange={setView} />
+      <CellValuePanel view={view} industry={industry.id} pipelineId={pipelineId} nonce={nonce} />
 
       {showKpis && <CellKpis kpis={industry.kpis} model={model} powered={powered} episodes={history?.episodes} />}
 

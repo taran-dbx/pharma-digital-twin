@@ -1,0 +1,408 @@
+/* Outcome views on the medical-device cell page (executive + operations). */
+
+/* Keep the live cell mounted (it feeds the twin) but out of view. */
+.cellops[data-view="exec"] > .cell-kpis,
+.cellops[data-view="exec"] > .cellops-main,
+.cellops[data-view="exec"] > .cellops-platform,
+.cellops[data-view="ops"] > .cell-kpis,
+.cellops[data-view="ops"] > .cellops-main,
+.cellops[data-view="ops"] > .cellops-platform {
+  display: none;
+}
+
+.cellview-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--db-border);
+  margin: 4px 0 14px;
+  overflow-x: auto;
+}
+.cellview-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 8px 14px 9px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--db-muted-foreground);
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cellview-tab:hover {
+  color: var(--db-foreground);
+}
+.cellview-tab.is-active {
+  color: var(--db-foreground);
+  border-bottom-color: var(--db-primary);
+}
+.cellview-tab:focus-visible {
+  outline: 2px solid var(--db-primary);
+  outline-offset: -2px;
+}
+.cellview-tab__label {
+  font-weight: 600;
+  font-size: 13px;
+}
+.cellview-tab__persona {
+  font-size: 11px;
+}
+
+.cellview-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.cellview-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.cellview-filters select {
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 4px;
+  border: 1px solid var(--db-input);
+  background: var(--db-background);
+  color: var(--db-foreground);
+  font: inherit;
+}
+
+.value-view {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.value-note {
+  color: var(--db-muted-foreground);
+  font-size: 12px;
+}
+.value-means {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--db-foreground);
+}
+.value-empty,
+.value-sampled,
+.value-error,
+.value-warning {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--db-border);
+  background: var(--cellops-surface, var(--db-background));
+  color: var(--db-muted-foreground);
+  font-size: 13px;
+}
+.value-error,
+.value-warning {
+  border-color: var(--cell-warn);
+  color: var(--db-foreground);
+}
+
+/* KPI row of stat tiles: value in text ink, never the data color. */
+.value-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  transition: opacity 160ms ease;
+}
+.value-tiles.is-refreshing,
+.value-tiles.is-loading {
+  opacity: 0.6;
+}
+.value-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 13px 15px;
+  border: 1px solid var(--db-border);
+  border-radius: 8px;
+  background: var(--db-background);
+  min-width: 0;
+}
+.value-tile__label {
+  font-size: 12px;
+  color: var(--db-muted-foreground);
+}
+.value-tile__value {
+  font-family: var(--db-font-sans);
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--db-foreground);
+  line-height: 1.15;
+}
+.value-tile__foot {
+  font-size: 12px;
+  color: var(--db-muted-foreground);
+}
+
+.value-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 8px;
+}
+.value-section-head h3 {
+  margin: 0;
+  font-family: var(--db-font-display);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.value-assumptions {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  grid-template-areas:
+    "head head"
+    "form breakdown"
+    "formula formula";
+  gap: 12px 20px;
+  padding: 14px 16px;
+  border: 1px solid var(--db-border);
+  border-radius: 8px;
+}
+.value-assumptions > .value-section-head {
+  grid-area: head;
+  margin: 0;
+}
+.value-assumptions__form {
+  grid-area: form;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px 12px;
+  align-content: start;
+}
+.value-breakdown {
+  grid-area: breakdown;
+}
+.value-formula {
+  grid-area: formula;
+}
+.value-breakdown h4,
+.value-formula h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--db-muted-foreground);
+}
+.value-formula ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.value-formula code {
+  font-family: var(--db-font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.value-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+.value-field__label {
+  color: var(--db-muted-foreground);
+}
+.value-field input {
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 4px;
+  border: 1px solid var(--db-input);
+  background: var(--db-background);
+  color: var(--db-foreground);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.value-field.has-error input {
+  border-color: var(--cell-crit);
+}
+.value-field__error {
+  color: var(--db-foreground);
+}
+.value-field__error::before {
+  content: "⚠ ";
+}
+.value-assumptions__actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
+}
+
+.value-table-wrap {
+  overflow-x: auto;
+}
+.value-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.value-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--db-muted-foreground);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--db-border);
+  white-space: nowrap;
+}
+.value-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--db-border);
+  white-space: nowrap;
+}
+.value-table .tnum {
+  font-variant-numeric: tabular-nums;
+}
+.value-table--compact td:last-child {
+  text-align: right;
+}
+.value-table tr.is-total td {
+  font-weight: 600;
+}
+.value-est {
+  color: var(--db-muted-foreground);
+}
+.value-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.value-flag > span {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  font-size: 10px;
+  color: #fff;
+}
+.value-flag.is-ok > span {
+  background: var(--cell-ok);
+}
+.value-flag.is-late > span {
+  background: var(--cell-warn);
+  color: #161616;
+}
+
+/* Duration histograms: sequential hue, thin columns, 2px gap, hairline base. */
+.value-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+.value-chart {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--db-border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.value-chart__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.value-chart__title {
+  font-weight: 600;
+  font-size: 13px;
+}
+.value-chart__toggle {
+  border: 0;
+  background: none;
+  color: var(--db-muted-foreground);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.value-chart__cols {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 120px;
+  border-bottom: 1px solid var(--db-border);
+}
+.value-chart__col {
+  position: relative;
+  flex: 1 1 0;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  outline: none;
+  cursor: default;
+}
+.value-chart__col:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--db-primary);
+  border-radius: 4px;
+}
+.value-chart__bar {
+  display: block;
+  width: 100%;
+  max-width: 24px;
+  border-radius: 4px 4px 0 0;
+  background: var(--db-primary);
+  transition: filter 120ms ease;
+}
+.value-chart__col.is-active .value-chart__bar {
+  filter: brightness(1.15);
+}
+.value-chart__tip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--db-border);
+  background: var(--db-background);
+  color: var(--db-foreground);
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 2;
+}
+.value-chart__tip strong {
+  font-size: 13px;
+}
+.value-chart__tip span {
+  color: var(--db-muted-foreground);
+}
+.value-chart__plot {
+  padding-top: 36px;
+}
+.value-chart__axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--db-muted-foreground);
+  font-variant-numeric: tabular-nums;
+  margin-top: 4px;
+}
+.value-chart__caption {
+  margin: 0;
+  font-size: 11px;
+  color: var(--db-muted-foreground);
+}
+
+@media (max-width: 900px) {
+  .value-assumptions {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "head" "form" "breakdown" "formula";
+  }
+}

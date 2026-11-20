@@ -709,6 +709,13 @@ class AlertEngine:
                     return None
                 self._pending.pop(fp, None)
                 self._pending_reading.pop(fp, None)
+                onset = excursion_started_at(first_reading, started, now, duration).isoformat()
+                # The row keeps the open episode's onset; the opened event keeps a
+                # copy so earlier episodes still have theirs after a reopen. A
+                # predicted alert has no excursion yet, so it never records one.
+                predicted = rule.rule_id == MODEL_RULE_ID
+                onset_fields = {} if predicted else {EXCURSION_STARTED_KEY: onset}
+                extra = {**extra, **onset_fields}
                 alert = AlertRecord(
                     id=str(uuid.uuid4()),
                     fingerprint=fp,
@@ -727,16 +734,7 @@ class AlertEngine:
                     metadata={
                         **open_metadata(rule, index.get(rule.sensor_id), industry, now),
                         # First over-limit reading seen; excursion windows start here.
-                        # A predicted alert has no excursion yet, so it never sets it.
-                        **(
-                            {}
-                            if rule.rule_id == MODEL_RULE_ID
-                            else {
-                                EXCURSION_STARTED_KEY: excursion_started_at(
-                                    first_reading, started, now, duration
-                                ).isoformat()
-                            }
-                        ),
+                        **onset_fields,
                         **live,
                     },
                 )
