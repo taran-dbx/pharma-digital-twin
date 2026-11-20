@@ -115,6 +115,11 @@ sync:
 
 targets:
   dev:
+    # Development mode decorates names: the risk job becomes
+    # "[dev <user>] pharma-twin-risk-model-train" and the endpoint
+    # "dev_<user>_pharma-twin-spindle-risk". That endpoint serves the same UC
+    # version (risk_model_version) and the app and job follow it through
+    # ${resources.model_serving_endpoints.spindle_risk.name}.
     mode: development
     default: true
     # workspace host is taken from --profile / DATABRICKS_CONFIG_PROFILE; never committed.

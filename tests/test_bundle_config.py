@@ -115,3 +115,58 @@ def test_derived_uc_schema_passes_the_app_ownership_check(monkeypatch) -> None:
     monkeypatch.setenv("RESOURCE_PREFIX", str(variables["resource_prefix"]["default"]))
     assert variables["uc_schema"]["default"] == "${var.resource_prefix_ident}"
     assert is_owned_name(str(variables["resource_prefix_ident"]["default"]))
+
+
+def _targets() -> dict[str, Any]:
+    data = yaml.safe_load((ROOT / "databricks.yml").read_text(encoding="utf-8"))
+    return data["targets"]
+
+
+ENDPOINT_REF = "${resources.model_serving_endpoints.spindle_risk.name}"
+
+
+def test_dev_target_does_not_prefix_resource_names() -> None:
+    """Dev mode decorates names ("[dev <user>] " / "dev_<user>_"), so nothing may
+    hardcode the endpoint name: the app's serving resource and the training job's
+    --endpoint-name both follow the bundle endpoint resource, whatever its name."""
+    assert _targets()["dev"].get("mode") == "development"
+    app = yaml.safe_load((ROOT / "resources" / "app.yml").read_text(encoding="utf-8"))
+    serving = [
+        r for r in app["resources"]["apps"]["pharma_twin"]["resources"] if "serving_endpoint" in r
+    ]
+    assert [r["serving_endpoint"]["name"] for r in serving] == [ENDPOINT_REF]
+    env = {e["name"]: e for e in app["resources"]["apps"]["pharma_twin"]["config"]["env"]}
+    assert env["RISK_ENDPOINT_NAME"].get("value_from") == serving[0]["name"]
+    risk = yaml.safe_load((ROOT / "resources" / "risk_model.yml").read_text(encoding="utf-8"))
+    params = risk["resources"]["jobs"]["risk_model_train"]["tasks"][0]["spark_python_task"][
+        "parameters"
+    ]
+    assert params[params.index("--endpoint-name") + 1] == ENDPOINT_REF
+    entity = risk["resources"]["model_serving_endpoints"]["spindle_risk"]["config"][
+        "served_entities"
+    ][0]
+    # The dev-prefixed endpoint serves the same registered version as any other target.
+    assert entity["entity_version"] == "${var.risk_model_version}"
+
+
+def test_risk_resources_resolve_to_owned_pharma_twin_names() -> None:
+    defaults = {name: str(spec.get("default", "")) for name, spec in _bundle_variables().items()}
+    risk = yaml.safe_load((ROOT / "resources" / "risk_model.yml").read_text(encoding="utf-8"))
+    job = _resolve(risk["resources"]["jobs"]["risk_model_train"]["name"], defaults)
+    endpoint = _resolve(
+        risk["resources"]["model_serving_endpoints"]["spindle_risk"]["name"], defaults
+    )
+    assert job == "pharma-twin-risk-model-train"
+    assert endpoint == "pharma-twin-spindle-risk"
+    for target in _targets().values():
+        overrides = {k: str(v) for k, v in (target.get("variables") or {}).items()}
+        for name in ("risk_job_name", "risk_endpoint_name"):
+            assert overrides.get(name, defaults[name]).startswith("pharma-twin")
+    app = yaml.safe_load((ROOT / "resources" / "app.yml").read_text(encoding="utf-8"))
+    serving = [
+        r["serving_endpoint"]["name"]
+        for r in app["resources"]["apps"]["pharma_twin"]["resources"]
+        if "serving_endpoint" in r
+    ]
+    # The app queries the bundle's endpoint resource, i.e. pharma-twin-spindle-risk.
+    assert serving == ["${resources.model_serving_endpoints.spindle_risk.name}"]

@@ -28,17 +28,22 @@ How it was produced, with `scripts/submit_risk_model_training.py --catalog <cata
    to v4, waited for any in-progress endpoint update, repointed the endpoint and
    logged `--var risk_model_version=4`.
 
-**The endpoint was created outside the bundle.** Before a `bundle deploy` that
-declares `spindle_risk` in the same workspace, bind it so the bundle adopts it
-instead of failing on a name clash:
+**This is the training-evidence endpoint.** `pharma-twin-spindle-risk` was created
+by the submit script, outside the bundle. Leave it as it is:
+
+* **Dev:** a `bundle deploy -t dev` creates its own
+  `dev_<user>_pharma-twin-spindle-risk`, serving the same v4. The dev app queries
+  that one, through the resource reference.
+* **Prod / staging:** only a non-development target that owns the unprefixed name
+  binds this endpoint, before its first deploy:
 
 ```bash
-databricks bundle deployment bind spindle_risk pharma-twin-spindle-risk -t <target> --profile <cli-profile>
-databricks bundle deploy -t <target> --var risk_model_version=4 --profile <cli-profile>
+databricks bundle deployment bind spindle_risk pharma-twin-spindle-risk -t prod --profile <cli-profile>
+databricks bundle deploy -t prod --var risk_model_version=4 --profile <cli-profile>
 ```
 
-In dev mode the bundle names its endpoint `dev_<user>_pharma-twin-spindle-risk`,
-so binding is only needed for a production-mode target.
+Never bind it from `dev`. The prefixed name differs, so that would plan a rename
+of an immutable endpoint name.
 
 **Reading the queries.**
 

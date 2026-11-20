@@ -12,7 +12,6 @@ import pytest
 import yaml
 
 from iot_twin.ml.risk_contract import (
-    DEFAULT_ENDPOINT_NAME,
     DEFAULT_MODEL_SCHEMA,
     DEFAULT_MODEL_SHORT_NAME,
     MODEL_RULE_ID,
@@ -178,7 +177,7 @@ class TestBundle:
 
     def test_names_default_to_the_resource_prefix(self) -> None:
         variables = _yaml("databricks.yml")["variables"]
-        assert variables["risk_endpoint_name"]["default"] == DEFAULT_ENDPOINT_NAME
+        assert variables["risk_endpoint_name"]["default"] == "pharma-twin-spindle-risk"
         assert variables["risk_job_name"]["default"] == "pharma-twin-risk-model-train"
         assert variables["risk_model_schema"]["default"] == DEFAULT_MODEL_SCHEMA
         assert variables["risk_model_short_name"]["default"] == DEFAULT_MODEL_SHORT_NAME
@@ -241,7 +240,7 @@ def test_live_endpoint_returns_a_risk_score() -> None:  # pragma: no cover - liv
     from iot_twin.ml.spindle_features import FEATURE_NAMES
     from iot_twin.services.ml.risk_scorer import parse_prediction
 
-    endpoint = os.getenv("RISK_ENDPOINT_NAME", DEFAULT_ENDPOINT_NAME)
+    endpoint = os.getenv("RISK_ENDPOINT_NAME", "pharma-twin-spindle-risk")
     record = {name: 0.0 for name in FEATURE_NAMES} | {"temp_last": 50.0, "temp_margin_c": 10.0}
     response = WorkspaceClient().serving_endpoints.query(name=endpoint, dataframe_records=[record])
     score, top = parse_prediction(response.predictions)

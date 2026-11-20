@@ -250,6 +250,13 @@ databricks bundle deploy -t dev --profile <cli-profile>
 databricks bundle run risk_model_train -t dev --profile <cli-profile>   # later retrains
 ```
 
+In `dev` (development mode) the bundle's endpoint and job are
+`dev_<user>_pharma-twin-spindle-risk` and `[dev <user>] pharma-twin-risk-model-train`.
+They serve and train the same UC model, and the app follows the endpoint through
+its resource reference. Only `prod` (or another non-development target) uses the
+unprefixed `pharma-twin-spindle-risk`; to adopt one created by the submit script,
+see [deployment.md](deployment.md#adopting-the-script-created-risk-endpoint).
+
 ## Integration contract (alerts → GenAI, Genie, UI)
 
 A predicted alert is an ordinary alert row. Read it from `GET /api/alerts`,
