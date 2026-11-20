@@ -8,6 +8,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from iot_twin.core import resource_names
+from iot_twin.routes._admin import ADMIN_ONLY
 
 logger = logging.getLogger("pharma_twin.routes.warehouses")
 
@@ -38,7 +39,7 @@ async def list_warehouses():
         return JSONResponse(status_code=500, content={"error": str(exc)[:300]})
 
 
-@router.post("/api/warehouses")
+@router.post("/api/warehouses", dependencies=ADMIN_ONLY)
 async def create_warehouse(request: Request):
     """Create a new serverless SQL warehouse."""
     try:

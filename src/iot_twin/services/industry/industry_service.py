@@ -20,7 +20,7 @@ import os
 from typing import Any
 
 from iot_twin.core import resource_names
-from iot_twin.core.config import LAKEBASE_SYNC_DATABASE
+from iot_twin.core.config import LAKEBASE_SYNC_DATABASE, NotOwnedError
 from iot_twin.core.state import AppState
 from iot_twin.core.workspace_config import get_secret_scope
 from iot_twin.services.deployment import deployment_service
@@ -30,6 +30,7 @@ from iot_twin.services.industry.industry_templates import (
     get_template,
     mode_config,
 )
+from iot_twin.services.ownership import assert_owned_job
 
 
 def _resolve_app_sp(state: Any) -> dict:
@@ -654,6 +655,7 @@ async def _deploy_and_start(
         w = getattr(state, "workspace_client", None) or WorkspaceClient()
         try:
             await deployment_service.sync_runtime_oauth_secret(w)
+            assert_owned_job(w, zerobus_job_id)  # stored id: re-verify before run_now
             run = w.jobs.run_now(job_id=int(zerobus_job_id))
             return {
                 "status": "running",
@@ -686,6 +688,7 @@ async def _deploy_and_start(
     w = getattr(state, "workspace_client", None) or WorkspaceClient()
     try:
         await deployment_service.sync_runtime_oauth_secret(w)
+        assert_owned_job(w, job_id)  # stored id: re-verify before unpausing
         w.jobs.update(
             job_id=int(job_id),
             new_settings=JobSettings(continuous=Continuous(pause_status=PauseStatus.UNPAUSED)),
@@ -711,6 +714,11 @@ def _stop_job(job_id: str, state: AppState | None = None) -> dict:
     from databricks.sdk.service.jobs import Continuous, JobSettings, PauseStatus
 
     w = getattr(state, "workspace_client", None) or WorkspaceClient()
+    try:
+        assert_owned_job(w, job_id)  # stored id: never pause / cancel a foreign job
+    except NotOwnedError as exc:
+        logger.error("refusing to stop job %s: %s", job_id, exc)
+        return {"status": "failed", "job_id": job_id, "error": str(exc)[:200]}
     # PAUSE FIRST, then cancel: a Continuous job's scheduler immediately starts a
     # fresh run when the active one is cancelled, so cancelling before pausing
     # races (the run comes back before the pause lands, leaving it RUNNING).

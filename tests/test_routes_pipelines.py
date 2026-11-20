@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from iot_twin.core.state import AppState
+from tests._fakes import own_jobs_and_clusters, owned_job_settings
 
 
 def _build_app_with_state(state: AppState) -> FastAPI:
@@ -220,6 +221,7 @@ def _make_ws_mock(
     me.user_name = sp_client_id
     ws.current_user.me = MagicMock(return_value=me)
     ws.jobs = MagicMock()
+    ws.jobs.get.return_value = owned_job_settings()
     runs = []
     for rid in active_run_ids or []:
         r = MagicMock()
@@ -445,6 +447,7 @@ def _make_delete_ws_mock() -> MagicMock:
     ws.jobs = MagicMock()
     ws.jobs.delete = MagicMock(return_value=None)
     ws.clusters = MagicMock()
+    own_jobs_and_clusters(ws)
     ws.clusters.permanent_delete = MagicMock(return_value=None)
     ws.schemas = MagicMock()
     ws.schemas.delete = MagicMock(return_value=None)

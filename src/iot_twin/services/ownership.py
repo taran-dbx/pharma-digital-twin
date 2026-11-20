@@ -141,3 +141,93 @@ def assert_direct_lakebase(lb: dict, *, internal: bool = False, ws: Any = None) 
         raise NotOwnedError(
             f"direct-mode host {host!r} is not an endpoint of owned project {project_id!r}"
         )
+
+
+# --- Jobs and clusters, by ID ------------------------------------------------------
+# A numeric job / cluster id says nothing about who owns it, so every mutation by
+# id first fetches the object and checks BOTH its name and the ``app`` tag this
+# app stamps on everything it creates (``resource_names.resource_tags``).
+_DISPLAY_NAME_SEPARATORS = ("-", "_", ".", " ")
+
+
+def _is_owned_display_name(name: Any) -> bool:
+    """Owned job/cluster display names may contain spaces (``pharma-twin LakeTS …``)."""
+    from iot_twin.core.config import _LEGACY_NAMESPACE_RE, get_resource_prefix
+
+    if not isinstance(name, str) or not name or name != name.strip():
+        return False
+    if _LEGACY_NAMESPACE_RE.match(name.lower()):
+        return False
+    prefix = get_resource_prefix()
+    return name == prefix or any(name.startswith(prefix + sep) for sep in _DISPLAY_NAME_SEPARATORS)
+
+
+def _app_tag_matches(tags: Any) -> bool:
+    from iot_twin.core import resource_names
+
+    return isinstance(tags, dict) and tags.get("app") == resource_names.app_name()
+
+
+def assert_owned_job(w: Any, job_id: Any) -> int:
+    """Return ``job_id`` as int, or raise :class:`NotOwnedError` if this app does not own it.
+
+    Owned means: the job exists, its name carries the resource prefix, and its
+    ``app`` tag equals ``resource_names.app_name()``. Lookup failures fail closed.
+    """
+    try:
+        jid = int(job_id)
+    except (TypeError, ValueError) as exc:
+        raise NotOwnedError(f"job id {job_id!r} is not a valid job id") from exc
+    try:
+        job = w.jobs.get(job_id=jid)
+    except Exception as exc:
+        raise NotOwnedError(f"job {jid} could not be verified as owned: {exc}") from exc
+    settings = getattr(job, "settings", None)
+    name = getattr(settings, "name", None)
+    if not _is_owned_display_name(name) or not _app_tag_matches(getattr(settings, "tags", None)):
+        raise NotOwnedError(
+            f"job {jid} ({name!r}) is not owned by this deployment (name prefix + app tag)"
+        )
+    return jid
+
+
+def assert_owned_cluster(w: Any, cluster_id: Any) -> str:
+    """Return ``cluster_id``, or raise :class:`NotOwnedError` unless this app owns the cluster.
+
+    Owned means: the cluster exists, ``cluster_name`` carries the resource prefix
+    and ``custom_tags['app']`` equals ``resource_names.app_name()``.
+    """
+    cid = str(cluster_id or "").strip()
+    if not cid:
+        raise NotOwnedError("cluster id is empty")
+    try:
+        info = w.clusters.get(cluster_id=cid)
+    except Exception as exc:
+        raise NotOwnedError(f"cluster {cid} could not be verified as owned: {exc}") from exc
+    name = getattr(info, "cluster_name", None)
+    if not _is_owned_display_name(name) or not _app_tag_matches(getattr(info, "custom_tags", None)):
+        raise NotOwnedError(
+            f"cluster {cid} ({name!r}) is not owned by this deployment (name prefix + app tag)"
+        )
+    return cid
+
+
+def cluster_tags() -> dict[str, str]:
+    """``custom_tags`` stamped on every cluster this app creates."""
+    from iot_twin.core import resource_names
+
+    return {"app": resource_names.app_name()}
+
+
+def job_lookup_missing(exc: NotOwnedError) -> bool:
+    """True when an ownership check failed only because the object no longer exists."""
+    cause = exc.__cause__
+    if cause is None:
+        return False
+    message = str(cause).lower()
+    return (
+        type(cause).__name__ == "NotFound"
+        or getattr(cause, "status_code", None) == 404
+        or "not found" in message
+        or "does not exist" in message
+    )

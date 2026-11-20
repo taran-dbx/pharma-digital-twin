@@ -22,6 +22,7 @@ from iot_twin.services import resource_deleters
 from iot_twin.services.resource_deleters import make_all_deleters
 from iot_twin.services.resource_ledger import RESOURCE_TYPES
 from iot_twin.services.teardown_service import SkipResource
+from tests._fakes import own_jobs_and_clusters
 
 pytestmark = pytest.mark.asyncio
 
@@ -322,7 +323,7 @@ async def test_grant_swallows_revoke_error() -> None:
 # Job — reuses the existing job deleter
 # ---------------------------------------------------------------------------
 async def test_job_deleter_cancels_and_deletes() -> None:
-    ws = MagicMock()
+    ws = own_jobs_and_clusters(MagicMock())
     reg = make_all_deleters(ws=ws, warehouse_id="wh")
     await reg["job"]({"identifier": "12345", "metadata": {"mode": "realtime"}})
     ws.jobs.delete.assert_called_once_with(job_id=12345)

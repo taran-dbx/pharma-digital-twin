@@ -24,7 +24,7 @@ from iot_twin.services import health_checks as hc
 from iot_twin.services.validation import validation_state_machine as sm
 from iot_twin.services.validation import validation_steps as vs
 from iot_twin.services.validation.validation_service import StepContext, StepResult
-from tests._fakes import fake_credential
+from tests._fakes import fake_credential, owned_cluster_info
 
 UC_CATALOG = "test_catalog"
 UC_SCHEMA = "pharma_twin_test"
@@ -710,6 +710,9 @@ class _RecordingClusters:
 
     def delete(self, cluster_id=None):
         self.deleted = cluster_id
+
+    def get(self, cluster_id=None):
+        return owned_cluster_info()
 
 
 class _ProvisionWs:

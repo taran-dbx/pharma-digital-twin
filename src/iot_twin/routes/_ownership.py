@@ -90,3 +90,25 @@ def reject_direct_lakebase(lb: dict) -> JSONResponse | None:
 def reject_foreign_scope(scope: str | None) -> JSONResponse | None:
     """Return a 403 response when a secret ``scope`` is set but not owned."""
     return reject_foreign_name(scope, what="secret scope")
+
+
+def reject_foreign_job(w, job_id) -> JSONResponse | None:
+    """Return a 403 unless the job is owned (name prefix + ``app`` tag)."""
+    from iot_twin.services.ownership import assert_owned_job
+
+    try:
+        assert_owned_job(w, job_id)
+    except NotOwnedError as exc:
+        return not_owned_response(exc)
+    return None
+
+
+def reject_foreign_cluster(w, cluster_id) -> JSONResponse | None:
+    """Return a 403 unless the cluster is owned (name prefix + ``app`` custom tag)."""
+    from iot_twin.services.ownership import assert_owned_cluster
+
+    try:
+        assert_owned_cluster(w, cluster_id)
+    except NotOwnedError as exc:
+        return not_owned_response(exc)
+    return None
