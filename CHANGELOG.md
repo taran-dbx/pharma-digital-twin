@@ -14,6 +14,21 @@ All notable changes to this project are documented here. The format follows
   `intelligence_genai_audit` for Genie. The incident panel has an "AI action plan" card
   whose apply action pre-fills the signed response form. See
   `docs/genai-action-plan.md`.
+- Protections on the AI action plan:
+  - Admission control: a concurrency cap, one generation per alert and a
+    per-user cooldown. Requests over the limit get a 429.
+  - When the grounding is unchanged, the latest plan is reused (`force: true`
+    regenerates).
+  - Endpoint calls are bounded: a dedicated SDK client and thread pool inside
+    a request budget.
+  - On the server, a plan can be applied only if it passed the grounding
+    check; otherwise an override reason is required and recorded.
+  - The signed decision and the plan link commit in one transaction.
+  - The audit table is append-only, enforced by a trigger.
+  - People appear as pseudonyms in the grounding and the UC mirror.
+  - Untrusted text is NFKC-normalised, then defanged.
+  - Numbers are checked against each claim's own citations.
+
 - Declarative Automation Bundle (`databricks.yml`, `resources/app.yml`) with `dev` and
   `prod` targets and variable-driven configuration.
 - `client/` frontend source is tracked, so `static/dist` is reproducible.
@@ -29,6 +44,14 @@ All notable changes to this project are documented here. The format follows
   `USAGE_TRACKING_ENABLED=false`.
 
 ### Changed
+- **Genie allowlist (upgrade step):** `intelligence_genai_audit` is now an
+  expected table in every Genie space. Existing spaces without it stay
+  authorized, report it in `missing_optional_tables` and log a warning.
+  Re-provision them (`POST /api/admin/pipelines/{setup_id}/genie/{mode}`, or
+  redeploy the pipeline) to enable the AI-audit questions.
+- `intelligence_catalog_service._sql_str` now backslash-escapes backslashes and
+  quotes, because Databricks SQL treats `\` as the escape character. This
+  fixes UC writes of values that contain `\'`.
 - Python code moved to the `src/iot_twin/` package; `services/` grouped into subpackages.
 - App start command is `uvicorn --app-dir src iot_twin.app:app`.
 - Workspace profiles are templates (`*.profile.example`); real profiles are gitignored.

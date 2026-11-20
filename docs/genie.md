@@ -334,7 +334,21 @@ quality questions: lots machined outside the validated limit, part serials to qu
 excursion, time to detect each excursion, and which excursions this shift need an NCR. Two more questions
 cover the AI action plan: why Spindle 3 was flagged and what the AI recommended, and which rows the AI used
 and whether its plan passed the grounding check. Both are answered from `intelligence_genai_audit`; see
-[genai-action-plan.md](genai-action-plan.md). Other industries get
+[genai-action-plan.md](genai-action-plan.md).
+
+**Upgrade note: a new table.** `intelligence_genai_audit` is now in every space's
+expected table set.
+
+* An existing space without it stays authorized. The table is optional
+  (`genie_service.OPTIONAL_SPACE_TABLES`), so the Genie status lists it under
+  `missing_optional_tables` and the app logs a warning.
+* New spaces need it to exist. The app creates it at boot, and the admin
+  intelligence sync creates it too.
+* To enable the AI-audit questions on an existing space, re-provision it
+  (`POST /api/admin/pipelines/{setup_id}/genie/{mode}`) or redeploy the pipeline.
+  See [genai-action-plan.md](genai-action-plan.md#genie-upgrade).
+
+Other industries get
 shared questions (health index, downtime, anomalies, faults, maintenance), per-sensor questions (average
 reading per hour of their first two sample sensors) and questions for the mode. The exact list per industry
 and mode is pinned by the golden files in `tests/golden/`.
