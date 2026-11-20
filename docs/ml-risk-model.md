@@ -43,9 +43,9 @@ The names follow the `RESOURCE_PREFIX` convention (default `pharma-twin` /
 | `risk_job_name` | `pharma-twin-risk-model-train` | training job |
 | `risk_model_version` | `1` | version the endpoint serves at deploy time (the job repoints it to the champion) |
 | `risk_training_data_source` | `auto` | `auto`, `synthetic` or `real` |
-| `risk_alert_threshold` | `0.22` | `RISK_ALERT_THRESHOLD`, the alert cut-off |
+| `risk_alert_threshold` | `model` | `RISK_ALERT_THRESHOLD`: `model` uses the cut-off the served version ships; a number overrides it |
 
-The app scorer also reads these optional env vars: `RISK_ALERT_HYSTERESIS` (0.15),
+The app scorer also reads these optional env vars: `RISK_ALERT_HYSTERESIS` (unset: the model's clear level, else 0.05),
 `RISK_SCORE_INTERVAL_S` (5), `RISK_QUERY_TIMEOUT_S` (3), `RISK_BREAKER_FAILURES` (3),
 `RISK_BREAKER_COOLDOWN_S` (60) and `RISK_HORIZON_S` (120). With no
 `RISK_ENDPOINT_NAME` the scorer is off. That covers local runs, tests and
@@ -72,7 +72,7 @@ call the endpoint.
 | `power_mean`, `power_slope`, `power_max` | Spindle power (kW) |
 | `temp_last` | Latest temperature |
 | `temp_margin_c` | Distance to the validated limit: `60 − temp_last` |
-| `hours_since_maintenance` | Hours since the last Spindle 3 maintenance in the catalog (`mfg-mnt-001`) |
+| `hours_since_maintenance` | Hours since the last Spindle 3 maintenance in the catalog (`mfg-mnt-001`), clipped to the 0–3000 h training range at train *and* serve time |
 
 **Label.** Forward-looking: 1 when any temperature reading exceeds the validated
 limit in `(t, t + horizon]`. The default horizon is 120 s (`--horizon-s`). Rows
@@ -105,24 +105,33 @@ Every synthetic reading is tagged `data_origin=synthetic`. Defaults are 24 runs
 **Training.** LightGBM (`LGBMClassifier`, 400 trees max, early stopping on
 validation PR-AUC). The split is time-ordered, train → validation (20 % of
 train) → test (last 25 %), so every test row is later than every training row.
-The cut-off is chosen on validation as the highest-recall threshold with
-precision ≥ 0.8 (fallback: best F1), then evaluated once on test.
+An embargo of `window_s + horizon_s` (180 s) drops the training rows just before
+each boundary, because their feature window or label horizon overlaps the next
+period. The cut-off is chosen on validation as the highest-recall threshold with
+precision ≥ 0.9 (fallback: best F1), then evaluated once on test. The clear
+level is the cut-off minus `--clear-hysteresis` (0.05). The job logs the
+calm-score spread (`val_calm_score_p50/p90`) and warns if the clear level is under
+the p90. Both thresholds are stored in the model version (a `decision`
+artifact), so the served pyfunc returns `decision_threshold` and
+`clear_threshold` with every score. A single-class split fails training on
+train/validation; on test it skips ROC-AUC / PR-AUC with a warning.
 
-**Metrics** (test split, synthetic, live run, model version 2; see
+**Metrics** (test split, synthetic, live run, model version 4; see
 `docs/evidence/ml/`):
 
 <!-- metrics:start -->
 | Metric | Value |
 | --- | --- |
 | ROC-AUC | 0.814 |
-| PR-AUC | 0.710 (positive rate 0.218) |
-| Cut-off (chosen on validation) | 0.22 (`max_recall_at_precision>=0.8`) |
-| Precision / recall / F1 at the cut-off | 0.736 / 0.620 / 0.673 |
+| PR-AUC | 0.718 (positive rate 0.218) |
+| Cut-off / clear level (shipped in the model) | 0.47 / 0.42 (`max_recall_at_precision>=0.9`, band 0.05) |
+| Calm validation scores | p50 0.115, p90 0.169; live calm windows 0.11-0.27 depending on wear (see evidence) |
+| Precision / recall / F1 at the cut-off | 0.899 / 0.577 / 0.703 |
 | Excursions in the test period | 171 |
-| Predicted before the onset | 165 (96.5 %) |
-| Mean lead before onset | 83.0 s |
-| Lead time gained vs the threshold rule | mean 84.9 s, median 106 s |
-| Rows train / validation / test | 18,537 / 4,635 / 7,725 |
+| Predicted before the onset | 161 (94.2 %) |
+| Mean lead before onset | 75.9 s |
+| Lead time gained vs the threshold rule | mean 77.8 s, median 101 s |
+| Rows train / validation / test (after the 180 s embargo) | 18,479 / 4,628 / 7,725 |
 <!-- metrics:end -->
 
 "Lead time" is measured per excursion. The onset is the first over-limit
@@ -138,15 +147,19 @@ badge shows the same quantity for the live episode: the breach alert's
 
 * Trained on synthetic data; the precursor physics is assumed. Retrain on real
   telemetry (`--data-source real`) before using the score for anything but the demo.
-* The cut-off picked on validation (0.22) is low because positives are
-  imbalanced and probabilities are uncalibrated. Test precision at that cut-off
-  is 0.74, so roughly 1 in 4 predicted windows has no excursion within 2 min.
-  `RISK_ALERT_THRESHOLD` is the knob.
-* Heat events without a precursor are only predictable once the ramp starts.
-  On the live producer's scheduled event, which has no precursor, the lead comes
-  from the temperature slope and is seconds, not minutes.
+* Probabilities are uncalibrated, and calm-running scores rise with wear: 0.11–0.16
+  below 1000 h, up to about 0.27 at 1950 h or more. A precision floor of 0.8 put
+  the cut-off at 0.26, inside that calm range, so a worn spindle could open
+  predicted alerts while running calm. The floor is 0.9 (cut-off 0.47); about 1 in 10
+  predicted windows still has no excursion within 2 min. `RISK_ALERT_THRESHOLD`
+  overrides the shipped cut-off.
+* Heat events without a precursor are only predictable once the ramp starts. On
+  the live producer's scheduled event, which has none, v4 first crosses the
+  cut-off 12 s into the ramp, **7 s before the onset** (about 9 s ahead of the
+  rule): seconds, not minutes (`docs/evidence/ml/endpoint_query_no_precursor_ramp.json`).
 * `hours_since_maintenance` comes from the catalog fixture. With no maintenance
-  feed, it grows without bound in a long-running demo.
+  feed it would grow without bound, so it is clipped at 3000 h; past that the
+  model cannot tell more wear apart.
 * Top features are TreeSHAP contributions in log-odds, which explain the model,
   not the physics.
 
@@ -158,15 +171,48 @@ badge shows the same quantity for the live episode: the breach alert's
 * The app's `risk-endpoint` resource grants `CAN_QUERY` and injects the
   resolved endpoint name as `RISK_ENDPOINT_NAME` (`value_from`), so dev-mode
   name prefixes stay correct.
-* The scorer keeps 2 × 60 s of spindle readings from every batch that reaches
-  `evaluate_and_emit`. It runs at most one round every `RISK_SCORE_INTERVAL_S`, in
-  the background, so ingest never waits. Each call is
-  `WorkspaceClient().serving_endpoints.query(dataframe_records=[features])` with
-  a `RISK_QUERY_TIMEOUT_S` timeout. After `RISK_BREAKER_FAILURES` consecutive
-  failures, which includes a cold scale-to-zero start, the breaker opens for
-  `RISK_BREAKER_COOLDOWN_S` and then allows one trial call.
+* **One lane per pipeline.** The scorer keeps 2 × 60 s of spindle readings and a
+  scoring timer *per `pipeline_id`*, so two pipelines (or a test call to
+  `POST /api/alerts/evaluate`) never mix readings or share a score. It keeps at most
+  32 lanes and evicts the least recently seen.
+* **Never blocks the app.** Each lane runs at most one round every
+  `RISK_SCORE_INTERVAL_S`, in the background, so ingest never waits.
+  * Calls run on the scorer's own **single-worker executor**, not the default
+    `asyncio.to_thread` pool that Lakebase credential refresh uses.
+  * The scorer has its own `WorkspaceClient`, with `http_timeout_seconds` and
+    `retry_timeout_seconds` equal to `RISK_QUERY_TIMEOUT_S`.
+  * After an await times out, the scorer stays *busy* until the worker thread
+    returns, so hung calls never pile up.
+  * After `RISK_BREAKER_FAILURES` consecutive failures, which includes a cold
+    scale-to-zero start, the breaker opens for `RISK_BREAKER_COOLDOWN_S` and then
+    allows one trial call.
 * The model version comes from the endpoint's served entity, cached for 5 min.
-  If the app cannot read it, it falls back to `RISK_MODEL_NAME` and version `unknown`.
+  If the app cannot read it, it falls back to `RISK_MODEL_NAME` and version
+  `unknown`. When the app SP can read the UC model, the scorer also reads the
+  `champion` alias and logs a warning when the endpoint serves a different version.
+
+### The endpoint version and `bundle deploy`
+
+The training job repoints the endpoint to the new champion. A later
+`databricks bundle deploy` **reverts** it to `var.risk_model_version` (default
+`1`), because the bundle owns the endpoint config. The job log and its summary
+print the override to use, for example `--var risk_model_version=3`. Set it in
+the target's variable overrides, or rerun the job after a deploy. The app logs
+`serves … but @champion is v…` while the two differ.
+
+### Prerequisites and grants
+
+* **Job identity:**
+  * `USE CATALOG` on `uc_catalog`;
+  * `CREATE SCHEMA` there, or an existing `pharma_twin` schema. The job runs
+    `CREATE SCHEMA IF NOT EXISTS`;
+  * `USE SCHEMA` and `CREATE MODEL` on the schema;
+  * `SELECT` on `manufacturing_realtime` for `--data-source auto|real`;
+  * permission to create or manage the serving endpoint.
+* **App service principal:**
+  * `CAN_QUERY` on the endpoint, which the `risk-endpoint` resource grants;
+  * optionally `EXECUTE` (or `BROWSE`) on the UC model, for the champion-mismatch
+    warning.
 
 ### Bootstrap on a new workspace
 
@@ -204,6 +250,7 @@ keys they do not know:
 | `alert_kind` | `"predicted"` | Same as the top-level field |
 | `risk_score` | number | Latest score, 4 decimals |
 | `risk_threshold` | number | Cut-off the alert opened against |
+| `risk_clear_threshold` | number | Score at or below which the alert clears (`risk_threshold − hysteresis`) |
 | `model_name` | string | UC model, e.g. `<catalog>.pharma_twin.spindle_thermal_risk` |
 | `model_version` | string | UC model version the endpoint served (`unknown` if not readable) |
 | `top_features` | list of `{feature, contribution, value}` | Up to 3 TreeSHAP drivers (log-odds; positive raises risk), `feature` ∈ `FEATURE_NAMES` |
@@ -222,15 +269,16 @@ Example:
   "alert_kind": "predicted",
   "risk_score": 0.8123,
   "value": 0.81,
-  "threshold": 0.22,
+  "threshold": 0.47,
   "severity": "warn",
   "status": "open",
   "metadata": {
     "alert_kind": "predicted",
     "risk_score": 0.8123,
-    "risk_threshold": 0.22,
+    "risk_threshold": 0.47,
+    "risk_clear_threshold": 0.42,
     "model_name": "<catalog>.pharma_twin.spindle_thermal_risk",
-    "model_version": "2",
+    "model_version": "4",
     "top_features": [{"feature": "temp_slope", "contribution": 1.21, "value": 9.5}],
     "horizon_s": 120.0,
     "scored_at": "2026-11-20T12:00:00+00:00",
@@ -243,9 +291,10 @@ Example:
 
 * One fingerprint per `rule_id` × Spindle 3 × pipeline: `fingerprint_for(MODEL_RULE_ID, ["mfg-sns-cnc_1_spindle_temp"], pipeline_id)`.
 * The alert opens at `risk ≥ threshold`.
-* Later scores update the same alert, refreshing `value` and `metadata`, but only when the rounded score changes.
-* While the score sits inside the band `(threshold − hysteresis, threshold)` the alert stays open and no event is emitted.
-* It clears at `risk ≤ threshold − hysteresis`.
+* Later scores update the same alert, refreshing `value` and the score fields of `metadata`, but only when the rounded score changes.
+* This includes scores inside the band `(risk_clear_threshold, threshold)`: the alert stays open but shows the current score.
+* An episode keeps the lot context it opened on; a reopen takes the new lot.
+* It clears at `risk ≤ risk_clear_threshold`. The default band is 0.05 (cut-off 0.47 → clear at 0.42). Calm scores stay at 0.27 or below even for a worn spindle.
 * A later rise reopens the same row as a new episode.
 * Predicted and breach alerts never share a fingerprint, so both can be open at once.
 

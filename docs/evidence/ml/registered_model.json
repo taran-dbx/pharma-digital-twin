@@ -3,22 +3,22 @@
     "aliases": [
       {
         "alias_name": "champion",
-        "id": "594edbca-b807-4068-9aca-c2276b005ae4",
-        "version_num": 2
+        "id": "596162ba-2329-4607-bd92-3f6e36203788",
+        "version_num": 4
       }
     ],
-    "created_at": 1795187682765,
-    "run_id": "e7ed1fd498c34d22af6b504ed17bde5e",
-    "source": "models:/m-d3836d98b30c4b2785efcb939983515c",
+    "created_at": 1795192712195,
+    "run_id": "db985118d81e43ffacc8b5c833324c89",
+    "source": "models:/m-aa8ab13237bb45a0adea408d0fdc7dbd",
     "status": "READY",
-    "version": 2
+    "version": 4
   },
   "registered_model": {
     "aliases": [
       {
         "alias_name": "champion",
-        "id": "594edbca-b807-4068-9aca-c2276b005ae4",
-        "version_num": 2
+        "id": "596162ba-2329-4607-bd92-3f6e36203788",
+        "version_num": 4
       }
     ],
     "created_at": 1795187128573,
