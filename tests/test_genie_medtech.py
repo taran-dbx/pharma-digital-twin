@@ -23,7 +23,7 @@ OTHERS = [i for i in CURATED_INDUSTRIES if i != "manufacturing"]
 @pytest.fixture(autouse=True)
 def _env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("UC_CATALOG", "cat")
-    monkeypatch.setenv("UC_SCHEMA", "sch")
+    monkeypatch.setenv("UC_SCHEMA", "pharma_twin_sch")
 
 
 def _space(industry: str, mode: str) -> dict:

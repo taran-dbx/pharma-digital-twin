@@ -6,9 +6,12 @@ metadata tell Trinity Medical's orthopaedic-implant machining story.
 
 from __future__ import annotations
 
-import importlib
+import os
+import subprocess
+import sys
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -79,16 +82,21 @@ class TestMedtechCatalog:
         assert all(r["metadata"] == {} for r in energy)
 
 
-def test_default_industries_lead_with_medical_devices_c7801_regression(monkeypatch) -> None:
+def test_default_industries_lead_with_medical_devices_c7801_regression() -> None:
     """[C7801][regression] Without INDUSTRIES set, the med-device industry is offered first."""
-    from iot_twin.core import config
-
-    monkeypatch.delenv("INDUSTRIES", raising=False)
-    try:
-        reloaded = importlib.reload(config)
-        assert reloaded.INDUSTRIES.split(",") == ["manufacturing", "pharmaceutical"]
-    finally:
-        importlib.reload(config)
+    # A fresh interpreter reads the import-time default; reloading ``iot_twin.core.config``
+    # in-process would replace classes other tests hold (e.g. ``NotOwnedError``).
+    env = {k: v for k, v in os.environ.items() if k != "INDUSTRIES"}
+    src = str(Path(__file__).resolve().parents[1] / "src")
+    env["PYTHONPATH"] = src + os.pathsep + env.get("PYTHONPATH", "")
+    out = subprocess.run(
+        [sys.executable, "-c", "from iot_twin.core import config; print(config.INDUSTRIES)"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert out.stdout.strip().split(",") == ["manufacturing", "pharmaceutical"]
 
 
 class TestLotClock:
