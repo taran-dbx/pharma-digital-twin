@@ -405,7 +405,12 @@ def build_spark_tasks(
     single_user_name: str,
     cloud: str | None = None,
 ) -> list:
-    """Build the producer + consumer tasks for a Spark (realtime/microbatch) job."""
+    """Build the producer + consumer tasks for a Spark (realtime/microbatch) job.
+
+    The job is Continuous, so the tasks carry no retry policy: the Jobs API rejects one
+    (``retryPolicy is not allowed in continuous job``) and the continuous trigger already
+    restarts a failed run.
+    """
     from databricks.sdk.service.jobs import NotebookTask, Task
 
     realtime = mode == "realtime"
@@ -422,9 +427,6 @@ def build_spark_tasks(
             ),
             notebook_task=NotebookTask(notebook_path=consumer_notebook_path),
             libraries=build_cluster_libraries(CLASSIC_CONSUMER_LIBRARIES),
-            max_retries=3,
-            min_retry_interval_millis=30_000,
-            retry_on_timeout=True,
         )
     ]
     if producer_notebook_path:
@@ -441,9 +443,6 @@ def build_spark_tasks(
                     base_parameters=dict(PRODUCER_RUN_PARAMETERS),
                 ),
                 libraries=build_cluster_libraries(PRODUCER_LIBRARIES),
-                max_retries=3,
-                min_retry_interval_millis=30_000,
-                retry_on_timeout=True,
             )
         )
     return tasks
