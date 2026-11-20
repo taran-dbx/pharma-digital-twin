@@ -37,8 +37,9 @@ databricks bundle deployment bind spindle_risk pharma-twin-spindle-risk -t <targ
 databricks bundle deploy -t <target> --var risk_model_version=4 --profile <cli-profile>
 ```
 
-In dev mode the bundle names its endpoint `dev_<user>_pharma-twin-spindle-risk`,
-so binding is only needed for a production-mode target.
+The `dev` target does not use `mode: development`, so the bundle keeps the exact
+`pharma-twin-spindle-risk` name (no `dev_<user>_` prefix). Binding therefore
+adopts this endpoint in every target, with no rename of its immutable name.
 
 **Reading the queries.**
 

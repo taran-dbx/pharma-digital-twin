@@ -100,8 +100,15 @@ sync:
 
 targets:
   dev:
-    mode: development
+    # No `mode: development`: it prefixes every resource name ("[dev <user>] " for
+    # jobs, "dev_<user>_" for serving endpoints) and an empty presets.name_prefix
+    # does not turn that off. The risk-model job and endpoint must keep their
+    # pharma-twin* names: an endpoint name is immutable, and a prefixed endpoint
+    # would be a second, untrained endpoint for the app to query. Deploys still go
+    # to the per-user default root path; schedules stay paused as in dev mode.
     default: true
+    presets:
+      trigger_pause_status: PAUSED
     # workspace host is taken from --profile / DATABRICKS_CONFIG_PROFILE; never committed.
 
   # WARNING: prod resolves to the LIVE app name (iot-digital-twin). Always run

@@ -88,3 +88,41 @@ def test_deployment_doc_lists_exactly_the_required_variables() -> None:
     assert documented == required, (
         f"missing from docs: {required - documented}; stale in docs: {documented - required}"
     )
+
+
+def _targets() -> dict[str, Any]:
+    data = yaml.safe_load((ROOT / "databricks.yml").read_text(encoding="utf-8"))
+    return data["targets"]
+
+
+def test_dev_target_does_not_prefix_resource_names() -> None:
+    """Development mode renames jobs to "[dev <user>] ..." and endpoints to
+    "dev_<user>_...": the risk endpoint name is immutable and the app must query
+    the trained pharma-twin-spindle-risk endpoint, not a second, prefixed one."""
+    dev = _targets()["dev"]
+    assert dev.get("mode") != "development"
+    assert not (dev.get("presets") or {}).get("name_prefix")
+    assert (dev.get("presets") or {}).get("trigger_pause_status") == "PAUSED"
+
+
+def test_risk_resources_resolve_to_owned_pharma_twin_names() -> None:
+    defaults = {name: str(spec.get("default", "")) for name, spec in _bundle_variables().items()}
+    risk = yaml.safe_load((ROOT / "resources" / "risk_model.yml").read_text(encoding="utf-8"))
+    job = _resolve(risk["resources"]["jobs"]["risk_model_train"]["name"], defaults)
+    endpoint = _resolve(
+        risk["resources"]["model_serving_endpoints"]["spindle_risk"]["name"], defaults
+    )
+    assert job == "pharma-twin-risk-model-train"
+    assert endpoint == "pharma-twin-spindle-risk"
+    for target in _targets().values():
+        overrides = {k: str(v) for k, v in (target.get("variables") or {}).items()}
+        for name in ("risk_job_name", "risk_endpoint_name"):
+            assert overrides.get(name, defaults[name]).startswith("pharma-twin")
+    app = yaml.safe_load((ROOT / "resources" / "app.yml").read_text(encoding="utf-8"))
+    serving = [
+        r["serving_endpoint"]["name"]
+        for r in app["resources"]["apps"]["iot_twin"]["resources"]
+        if "serving_endpoint" in r
+    ]
+    # The app queries the bundle's endpoint resource, i.e. pharma-twin-spindle-risk.
+    assert serving == ["${resources.model_serving_endpoints.spindle_risk.name}"]

@@ -146,8 +146,14 @@ package (`iot_twin.core.paths`). The env var still overrides it.
 
 ## Dev vs prod
 
-* `dev` (`mode: development`, default): creates its own app with a distinct
-  name and a per-user workspace folder. Safe to `destroy`.
+* `dev` (default, deliberately **not** `mode: development`): creates its own app
+  with a distinct name, in a per-user workspace folder, with schedules paused.
+  Safe to `destroy`. Development mode would prefix resource names with
+  `[dev <user>]` / `dev_<user>_`, which would rename the `pharma-twin-*`
+  risk-model job and create a second, untrained `dev_<user>_pharma-twin-spindle-risk`
+  endpoint. Resource names come from variables instead (`app_name`,
+  `risk_job_name`, `risk_endpoint_name`), so override them per developer if
+  several people deploy to one workspace.
 * `prod` (`mode: production`): explicit `root_path`, fixed app name
   `iot-digital-twin`, `CAN_MANAGE` for the deployer and `admin_group`.
 
