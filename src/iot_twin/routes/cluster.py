@@ -10,11 +10,12 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
+from iot_twin.core import resource_names
 from iot_twin.core.state import AppState, get_app_state
 from iot_twin.services.databricks_sdk import detect_cloud
 from iot_twin.services.pipelines.pipeline_service import track_resource
 
-logger = logging.getLogger("iot_digital_twin.routes.cluster")
+logger = logging.getLogger("pharma_twin.routes.cluster")
 
 router = APIRouter(tags=["cluster"])
 
@@ -117,7 +118,7 @@ async def provision_cluster(request: Request, state: AppState = Depends(get_app_
     auto_terminate_min = int(body.get("auto_terminate_min", 30))
     spark_conf = body.get("spark_conf", {})
     spark_conf["spark.databricks.streaming.realTimeMode.enabled"] = "true"
-    cluster_name = body.get("cluster_name", f"iot-digital-twin-{int(time.time())}")
+    cluster_name = body.get("cluster_name") or resource_names.cluster_name(str(int(time.time())))
 
     if not worker_node_type or not spark_version:
         return JSONResponse(

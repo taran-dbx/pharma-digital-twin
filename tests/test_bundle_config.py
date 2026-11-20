@@ -33,7 +33,7 @@ def _example_overrides() -> dict[str, str]:
 
 def _env_entries() -> list[dict[str, Any]]:
     data = yaml.safe_load((ROOT / "resources" / "app.yml").read_text(encoding="utf-8"))
-    return data["resources"]["apps"]["iot_twin"]["config"]["env"]
+    return data["resources"]["apps"]["pharma_twin"]["config"]["env"]
 
 
 def _resolve(raw: str, values: dict[str, str]) -> str:

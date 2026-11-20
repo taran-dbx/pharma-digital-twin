@@ -1,8 +1,14 @@
 # Deploying with Declarative Automation Bundles (DABs)
 
-> **WARNING: `prod` resolves to the live app name (`iot-digital-twin`).** Always
-> `databricks bundle deployment bind` first, review `databricks bundle plan -t prod`,
-> and never deploy without prod overrides
+> **ISOLATION GUARD: this app is deployed side by side with the upstream IoT
+> Digital Twin in the same workspace.** `prod` creates its **own** app
+> (`pharma-twin`); never run `databricks bundle deployment bind` against an
+> existing app and never set `app_name` to an upstream app name. Every
+> runtime-created resource (jobs, Kafka topics, catalogs, Lakebase projects,
+> secret scopes, clusters, workspace folders) is named from `resource_prefix` /
+> `RESOURCE_PREFIX` (default `pharma-twin`); a prefix in the upstream `iot`
+> namespace is rejected at startup. Review `databricks bundle plan -t prod`, and
+> never deploy without prod overrides
 > (`.databricks/bundle/prod/variable-overrides.json`). Workspace variables have no
 > defaults, so validation fails until they are supplied; do not work around that
 > with placeholder values.
@@ -28,7 +34,7 @@ Never commit a workspace host. Pass the CLI profile with `--profile` (or
 make bundle-validate PROFILE=<profile>              # validate --strict, target dev
 databricks bundle validate --strict -t dev --output json --profile <profile>   # inspect resolved app name
 databricks bundle deploy -t dev --profile <profile>
-databricks bundle run iot_twin -t dev --profile <profile>   # (re)deploys source + starts the app
+databricks bundle run pharma_twin -t dev --profile <profile>   # (re)deploys source + starts the app
 databricks apps logs <app-name> --profile <profile>
 databricks bundle destroy -t dev --profile <profile>        # dev only
 ```
@@ -39,7 +45,7 @@ Validation needs workspace auth, so it is **not** run in CI; run it locally
 Things worth knowing about the workflow:
 
 * `bundle deploy` uploads the files and applies the app's resources and config, but
-  it does **not** start the app or deploy the source. Run `bundle run iot_twin` for
+  it does **not** start the app or deploy the source. Run `bundle run pharma_twin` for
   that; it normally takes about 60 s to reach `RUNNING`.
 * Deploys are idempotent. A repeated `bundle deploy` prints `Resources: 1 changed`,
   yet the deployment id and app state are unchanged.
@@ -56,9 +62,11 @@ validation. Copy `deploy/variable-overrides.json.example` (placeholders only) to
 gitignored `.databricks/bundle/<target>/variable-overrides.json` and fill in real
 values (or use `--var name=value` / `BUNDLE_VAR_<name>`). `make bundle-validate`
 stops with a clear message when the file for `BUNDLE_TARGET` is missing.
-Variables with defaults are not workspace-specific: `app_name` (dev default
-`iot-twin-dev`, fixed to `iot-digital-twin` in `prod`), `uc_schema`,
-`lakebase_branch`, `lakebase_database`, `industries`, `admin_group` and
+Variables with defaults are not workspace-specific: `resource_prefix`
+(`pharma-twin`), `app_name` (dev default `pharma-twin-dev`, fixed to `pharma-twin`
+in `prod`), `uc_schema` (`pharma_twin`), `lakebase_project` (`pharma-twin-backend`),
+`pipelines_lakebase_project` (`pharma-twin-pipelines`), `lakebase_branch`,
+`lakebase_database`, `industries`, `admin_group` (`pharma-twin-admins`) and
 `zerobus_secret_key`. `uc_catalog` has **no** default.
 
 ### Required variables (no default)
@@ -73,20 +81,19 @@ checked against `databricks.yml` by `tests/test_bundle_config.py`.
 | `uc_catalog` | `UC_CATALOG` | `example-catalog` |
 | `warehouse_id` | `sql-warehouse` resource (CAN_USE) | `0123456789abcdef` |
 | `genie_space_id` | `genie-space` resource (CAN_VIEW) | 32-char hex space id |
-| `lakebase_project` | `lakebase` resource, `LAKEBASE_PROJECT`, `LAKEBASE_ENDPOINT` | `iot-app-backend-example` |
 | `pghost` | `PGHOST` | `<endpoint>.database.<region>.cloud.databricks.com` |
-| `pipelines_lakebase_project` | `PIPELINES_LAKEBASE_PROJECT` | `iot-pipelines-example` |
 | `msk_bootstrap_servers` | `MSK_BOOTSTRAP_SERVERS` | `b-1....:9198,b-2....:9198` |
 | `zerobus_server_endpoint` | `ZEROBUS_SERVER_ENDPOINT` | `<id>.zerobus.<region>.cloud.databricks.com` |
 | `zerobus_client_id` | `ZEROBUS_CLIENT_ID` | service principal client id |
-| `uc_service_credential` | `UC_SERVICE_CREDENTIAL` | `iot-rtm-sc` |
+| `uc_service_credential` | `UC_SERVICE_CREDENTIAL` | `iot-rtm-sc` (shared credential, deliberately reused) |
 <!-- required-variables:end -->
 
 ### All variables
 
 | Variable | Env var / resource it feeds | Notes |
 | --- | --- | --- |
-| `app_name` | App name | Workspace-global, max 30 chars. Dev default is the fixed `iot-twin-dev`, so override it per developer (e.g. `iot-twin-dev-<initials>`, check `bundle validate --output json`); `prod` is fixed to `iot-digital-twin` |
+| `resource_prefix` | `RESOURCE_PREFIX` | Prefix of every runtime-created resource name (default `pharma-twin`). Must not be in the upstream `iot` namespace |
+| `app_name` | App name | Workspace-global, max 30 chars. Dev default is the fixed `pharma-twin-dev`, so override it per developer (e.g. `pharma-twin-dev-<initials>`, check `bundle validate --output json`); `prod` is fixed to `pharma-twin` |
 | `uc_catalog`, `uc_schema` | `UC_CATALOG`, `UC_SCHEMA` | |
 | `warehouse_id` | `sql-warehouse` resource (CAN_USE) → `DATABRICKS_SQL_WAREHOUSE_ID` via `value_from` | |
 | `genie_space_id` | `genie-space` resource (CAN_VIEW) → `GENIE_SPACE_ID` via `value_from` | |
@@ -145,24 +152,22 @@ package (`iot_twin.core.paths`). The env var still overrides it.
 * `dev` (`mode: development`, default): creates its own app with a distinct
   name and a per-user workspace folder. Safe to `destroy`.
 * `prod` (`mode: production`): explicit `root_path`, fixed app name
-  `iot-digital-twin`, `CAN_MANAGE` for the deployer and `admin_group`.
+  `pharma-twin`, `CAN_MANAGE` for the deployer and `admin_group`.
 
-## Prod must bind, not create
+## Prod creates its own app; never bind
 
-App names are workspace-global. The live app already exists, so
-`databricks bundle deploy -t prod` would fail on the name conflict, or (if it
-were deleted first) create a new app with a new service principal that has none
-of the existing grants. Bind instead:
+App names are workspace-global, and the upstream IoT Digital Twin app is live in
+the same workspace. This bundle's `prod` target creates a **new** app named
+`pharma-twin` with its own service principal (grant it as described under
+"Fresh app prerequisites"). Do **not** run `databricks bundle deployment bind`
+against any existing app: binding would make the next deploy replace that app's
+resources and env, and `bundle destroy` would delete it. If `bundle deploy -t prod`
+fails on a name conflict, the fix is a different `app_name`, never a bind.
 
-```bash
-databricks bundle deployment bind iot_twin iot-digital-twin -t prod --profile <profile>
-databricks bundle deploy -t prod --profile <profile>
-```
-
-After binding, the next deploy applies the bundle's `resources` and `config` to
-the existing app, replacing its current resources and env. Review
-`databricks bundle plan -t prod` first. `bundle destroy` on a bound `prod` app
-deletes it; do not use it there.
+Resources shared with the upstream deployment on purpose (never created, renamed or
+deleted by this app): the SQL warehouse, the MSK cluster, the UC service credential
+(`uc_service_credential`), the catalog (`uc_catalog`) and its external location.
+Everything the app creates inside them is prefixed.
 
 ## Fresh app prerequisites
 

@@ -390,7 +390,7 @@ class TestDeployPipeline:
         )
 
         assert result["job_id"] == 4242
-        assert result["job_name"] == "iot-pharmaceutical-realtime"
+        assert result["job_name"] == "pharma-twin-pharmaceutical-realtime"
         assert result["num_workers"] == 2  # 6 partitions / 4 cores → 2
         assert result["spark_version"] == "18.2.x-scala2.13"
         assert result["tasks"] == ["rtm_consumer", "data_producer"]
@@ -446,7 +446,7 @@ class TestDeployPipeline:
             producer_notebook="# p",
             w=w,
         )
-        assert result["job_name"] == "iot-pharmaceutical-microbatch"
+        assert result["job_name"] == "pharma-twin-pharmaceutical-microbatch"
         w.jobs.create.assert_called_once()
 
     @pytest.mark.asyncio
@@ -463,7 +463,7 @@ class TestDeployPipeline:
             gate_override=True,
             w=w,
         )
-        assert result["job_name"] == "iot-pharmaceutical-microbatch"
+        assert result["job_name"] == "pharma-twin-pharmaceutical-microbatch"
         w.jobs.create.assert_called_once()
 
     @pytest.mark.asyncio
@@ -486,7 +486,7 @@ class TestDeployPipeline:
         db = _db(setup, {"id": "dep-rt", "mode": "realtime", "partition_count": 6})
         w = _ws()
         existing = MagicMock(job_id=999, settings=MagicMock())
-        existing.settings.name = "iot-pharmaceutical-realtime"
+        existing.settings.name = "pharma-twin-pharmaceutical-realtime"
         w.jobs.list.return_value = [existing]
         calls = []
         w.jobs.update.side_effect = lambda **_kwargs: calls.append("pause")

@@ -11,6 +11,7 @@ import traceback
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
+from iot_twin.core import resource_names
 from iot_twin.core.auth import get_current_user
 from iot_twin.core.state import AppState, get_app_state
 from iot_twin.models.sql_ddl import (
@@ -22,7 +23,7 @@ from iot_twin.models.sql_ddl import (
 from iot_twin.services import provisioning_service
 from iot_twin.services.pipelines.pipeline_service import track_resource
 
-logger = logging.getLogger("iot_digital_twin.routes.provisioning")
+logger = logging.getLogger("pharma_twin.routes.provisioning")
 
 router = APIRouter()
 
@@ -452,11 +453,11 @@ async def provision_pipeline_catalog(
         if catalog_pattern and "{name}" in catalog_pattern:
             catalog_name = catalog_pattern.replace("{name}", "shared")
         else:
-            catalog_name = catalog_pattern or "iot_shared"
+            catalog_name = catalog_pattern or resource_names.shared_catalog_name()
     elif catalog_pattern and "{name}" in catalog_pattern:
         catalog_name = catalog_pattern.replace("{name}", f"{safe_name}_{short_id}")
     else:
-        catalog_name = f"iot_{safe_name}_{short_id}"
+        catalog_name = resource_names.pipeline_catalog_name(safe_name, short_id)
 
     schemas = ["raw", "metrics", "checkpoints"]
     volume_name = "stream_checkpoints"
@@ -596,7 +597,7 @@ async def put_pipeline_secrets(
 
     if not scope_name:
         short_id = pipeline_id.replace("-", "")[:8]
-        scope_name = f"iot-pipeline-{short_id}"
+        scope_name = resource_names.pipeline_secret_scope(short_id)
 
     try:
         from databricks.sdk import WorkspaceClient

@@ -9,9 +9,9 @@
  * `models/metrics_schema.py`) so a DEPLOYED job behaves like what was
  * validated:
  *   - UC namespace   configured `UC_CATALOG.UC_SCHEMA`
- *   - topic          `iot.<industry>.<mode>`         (dot notation, §1.14)
+ *   - topic          `<prefix>.<industry>.<mode>`    (dot notation, §1.14)
  *   - service cred   `iot-rtm-sc`                    (MSK-IAM via UC)
- *   - realtime sink  Lakebase `sensor_readings` on the `iot-pipelines`
+ *   - realtime sink  Lakebase `sensor_readings` on the `<prefix>-pipelines`
  *                    project, per-industry branch (branch == industry),
  *                    database `databricks_postgres`
  *   - microbatch sink Delta `<UC_CATALOG>.<UC_SCHEMA>.<industry>_microbatch`
@@ -33,6 +33,7 @@ import {
   type IndustryConsumerConfig,
 } from "@/lib/notebook-template";
 import { generateDataProducerNotebook } from "@/lib/data-producer-notebook";
+import { consumerGroup, topicName } from "@/lib/resource-names";
 
 /**
  * Resolve a workspace-specific value from appDefaults, raising if absent.
@@ -89,8 +90,8 @@ function topicSlug(industry: string): string {
   return industry.toLowerCase().replace(/[^a-z0-9]+/g, "_");
 }
 
-export function industryTopic(industry: string, mode: PipelineMode): string {
-  return `iot.${topicSlug(industry)}.${mode}`;
+export function industryTopic(prefix: string, industry: string, mode: PipelineMode): string {
+  return topicName(prefix, topicSlug(industry), mode);
 }
 
 function checkpointLocation(
@@ -126,6 +127,7 @@ function managedMetricsTableFqn(
 /** Kafka producer connection shared by the two Spark modes — MSK-IAM handled
  * entirely by the UC service credential (no inline SASL keys). */
 function kafkaProducerConnection(
+  prefix: string,
   industry: string,
   topic: string,
   bootstrapServers: string,
@@ -135,7 +137,7 @@ function kafkaProducerConnection(
     kafka: {
       bootstrap_servers: bootstrapServers,
       topic,
-      consumer_group: `iot-${topicSlug(industry)}`,
+      consumer_group: consumerGroup(prefix, topicSlug(industry)),
       security_protocol: "SASL_SSL",
       service_credential: serviceCredential,
       num_partitions: KAFKA_NUM_PARTITIONS,
@@ -184,9 +186,11 @@ export async function buildIndustryDeployPayload(
 
   // Fall back to the workspace's configured MSK bootstrap when the setup row
   // has none; if neither is set the caller will receive a clear error below.
+  // Every resource name derives from the backend RESOURCE_PREFIX — no fallback.
+  const resourcePrefix = requireAppDefault(appDefaults, "resource_prefix", "RESOURCE_PREFIX");
   const effectiveBootstrap = bootstrapServers || appDefaults.msk_bootstrap || "";
 
-  const topic = industryTopic(industry, mode);
+  const topic = industryTopic(resourcePrefix, industry, mode);
 
   // Managed metrics table in the one-schema layout — shared across modes,
   // distinguished by the `mode` column. Mirrors industry_table(industry, "metrics").
@@ -243,7 +247,7 @@ export async function buildIndustryDeployPayload(
     updateRateHz: producerRateHz,
     sensorConfig: [],
     source: "kafka",
-    connection: kafkaProducerConnection(industry, topic, effectiveBootstrap, serviceCredential),
+    connection: kafkaProducerConnection(resourcePrefix, industry, topic, effectiveBootstrap, serviceCredential),
   });
 
   return {

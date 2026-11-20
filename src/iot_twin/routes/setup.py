@@ -18,7 +18,7 @@ from iot_twin.core.state import AppState, get_app_state
 from iot_twin.core.workspace_config import get_secret_scope
 from iot_twin.services.pipelines.pipeline_setup_service import setup_pipeline_lakebase
 
-logger = logging.getLogger("iot_digital_twin.routes.setup")
+logger = logging.getLogger("pharma_twin.routes.setup")
 
 router = APIRouter(tags=["setup"])
 

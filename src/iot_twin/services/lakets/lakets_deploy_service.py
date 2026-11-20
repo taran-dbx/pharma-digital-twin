@@ -12,7 +12,9 @@ import base64
 import logging
 from typing import Any
 
-logger = logging.getLogger("iot_digital_twin.services.lakets_deploy")
+from iot_twin.core import resource_names
+
+logger = logging.getLogger("pharma_twin.services.lakets_deploy")
 
 # Notebook source is inlined rather than read from disk.  `databricks sync`
 # treats any `.py` file starting with ``# Databricks notebook source`` as a
@@ -581,7 +583,6 @@ else:
 """
 
 # Workspace path where the notebook is uploaded (under the running user's home).
-_WS_SUBDIR = "iot-digital-twin/lakets"
 _WS_FILENAME = "retention"  # no extension — Databricks infers from import format
 
 # Daily 03:00 UTC.  Quartz syntax required by the Jobs API (seconds + ? for DOW).
@@ -631,10 +632,12 @@ def deploy_retention_job(
     w = WorkspaceClient()
     user = w.current_user.me()
     user_email = user.user_name
-    workspace_path = f"/Workspace/Users/{user_email}/{_WS_SUBDIR}/{_WS_FILENAME}"
+    workspace_path = (
+        f"/Workspace/Users/{user_email}/{resource_names.lakets_workspace_subdir()}/{_WS_FILENAME}"
+    )
 
     # ── 1. Ensure parent folders exist ────────────────────────────────────
-    parent = f"/Workspace/Users/{user_email}/{_WS_SUBDIR}"
+    parent = f"/Workspace/Users/{user_email}/{resource_names.lakets_workspace_subdir()}"
     try:
         w.workspace.mkdirs(parent)
     except Exception as exc:
@@ -703,7 +706,7 @@ def deploy_retention_job(
         ),
         max_concurrent_runs=1,
         tags={
-            "app": "iot-digital-twin",
+            "app": resource_names.app_name(),
             "component": "lakets-retention",
             "project": project_id,
         },
@@ -749,7 +752,7 @@ def deploy_retention_job(
 def _ws_path(w: Any, filename: str) -> str:
     """Workspace path for ``filename`` under the running user's LakeTS subdir."""
     user_email = w.current_user.me().user_name
-    return f"/Workspace/Users/{user_email}/{_WS_SUBDIR}/{filename}"
+    return f"/Workspace/Users/{user_email}/{resource_names.lakets_workspace_subdir()}/{filename}"
 
 
 def _upload_notebook(w: Any, dw: Any, workspace_path: str, content: bytes) -> None:
@@ -844,7 +847,7 @@ def _deploy_ops_job(
         ),
         max_concurrent_runs=1,
         tags={
-            "app": "iot-digital-twin",
+            "app": resource_names.app_name(),
             "component": component,
             "project": project_id,
         },

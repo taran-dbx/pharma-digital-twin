@@ -10,7 +10,7 @@ from collections import OrderedDict
 
 from fastapi import HTTPException, Request
 
-logger = logging.getLogger("iot_digital_twin.auth")
+logger = logging.getLogger("pharma_twin.auth")
 
 _MAX_CACHE_SIZE = 1024
 _user_cache: OrderedDict[str, str] = OrderedDict()

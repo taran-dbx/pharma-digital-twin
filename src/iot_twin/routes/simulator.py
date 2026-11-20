@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Request
 from iot_twin.core.state import AppState, get_app_state
 from iot_twin.services.simulator_service import run_simulator
 
-logger = logging.getLogger("iot_digital_twin.routes.simulator")
+logger = logging.getLogger("pharma_twin.routes.simulator")
 router = APIRouter()
 
 

@@ -27,7 +27,7 @@ from iot_twin.services.alerts.alert_sse import (
     enqueue_alert_events,
 )
 
-logger = logging.getLogger("iot_digital_twin.services.alert_engine")
+logger = logging.getLogger("pharma_twin.services.alert_engine")
 
 ACTIVE_STATUSES = ("open", "acknowledged")
 

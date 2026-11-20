@@ -26,6 +26,8 @@ from typing import Any
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
 
+from iot_twin.core import resource_names
+
 logger = logging.getLogger(__name__)
 
 PRODUCTION_STATE_EVENT = "production_state"
@@ -33,7 +35,6 @@ PRODUCTION_STATE_EVENT = "production_state"
 PRODUCTION_CONTROL_PLACEHOLDER = "__IOT_PRODUCTION_CONTROL_FILE__"
 PRODUCTION_STATES = ("running", "stopped")
 CONTROL_DIR = "production_control"
-WORKSPACE_SUBDIR = ".iot-digital-twin"
 
 # industry -> sensor-name prefixes of the machines a stop halts
 CELL_ASSETS: dict[str, tuple[str, ...]] = {
@@ -225,7 +226,7 @@ class ProductionControl:
                 logger.exception("could not list %s deployments for production control", industry)
         if not dirs:
             me = await asyncio.to_thread(lambda: self._workspace().current_user.me())
-            dirs = {f"/Workspace/Users/{me.user_name}/{WORKSPACE_SUBDIR}"}
+            dirs = {resource_names.user_workspace_dir(me.user_name)}
         return sorted(control_file_path(d, industry) for d in dirs)
 
     async def _write_control(self, change: ProductionChange, db: Any | None) -> None:

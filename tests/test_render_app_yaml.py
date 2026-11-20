@@ -43,8 +43,8 @@ _MINIMAL_PROFILE = {
     "UC_CATALOG": "test-catalog",
     "UC_SCHEMA": "test_schema",
     "PGHOST": "",
-    "LAKEBASE_PROJECT": "iot-app-backend",
-    "LAKEBASE_ENDPOINT": "projects/iot-app-backend/branches/production/endpoints/primary",
+    "LAKEBASE_PROJECT": "pharma-twin-backend",
+    "LAKEBASE_ENDPOINT": "projects/pharma-twin-backend/branches/production/endpoints/primary",
     "DATABRICKS_SQL_WAREHOUSE_ID": "warehouse-id",
     "ZEROBUS_SERVER_ENDPOINT": "123.zerobus.us-east-1.cloud.databricks.com",
     "ZEROBUS_CLIENT_ID": "",
@@ -133,7 +133,7 @@ def test_eu_example_profile_values(renderer) -> None:
     assert profile["DATABRICKS_SQL_WAREHOUSE_ID"] == "0123456789abcdef"
     assert profile["ZEROBUS_CLIENT_ID"] == "00000000-0000-0000-0000-00000000000a"
     assert profile["UC_SERVICE_CREDENTIAL"] == "iot-rtm-sc"
-    assert profile["PIPELINES_LAKEBASE_PROJECT"] == "iot-pipelines"
+    assert profile["PIPELINES_LAKEBASE_PROJECT"] == "pharma-twin-pipelines"
     assert profile["MSK_BOOTSTRAP_SERVERS"] == (
         "boot-public-9dm.example.abc123.c1.kafka.eu-central-1.amazonaws.com:9198,"
         "boot-public-hak.example.abc123.c1.kafka.eu-central-1.amazonaws.com:9198,"
@@ -147,19 +147,19 @@ def test_us_example_profile_values(renderer) -> None:
     profile = renderer.load_profile("example-us-east", PROFILES_DIR, use_example=True)
 
     assert profile["UC_CATALOG"] == "example-catalog"
-    assert profile["UC_SCHEMA"] == "rtm_lakets_zb"
+    assert profile["UC_SCHEMA"] == "pharma_twin"
     assert profile["DATABRICKS_SQL_WAREHOUSE_ID"] == "0123456789abcdef"
     assert (
         profile["ZEROBUS_SERVER_ENDPOINT"]
         == "111111111111111.zerobus.us-east-1.cloud.databricks.com"
     )
     assert profile["UC_SERVICE_CREDENTIAL"] == "iot-rtm-sc"
-    assert profile["PIPELINES_LAKEBASE_PROJECT"] == "iot-pipelines-example"
+    assert profile["PIPELINES_LAKEBASE_PROJECT"] == "pharma-twin-pipelines-example"
     assert profile["PGHOST"] == "example-lakebase.database.us-east-1.cloud.databricks.com"
-    assert profile["LAKEBASE_PROJECT"] == "iot-app-backend-example"
+    assert profile["LAKEBASE_PROJECT"] == "pharma-twin-backend-example"
     assert (
         profile["LAKEBASE_ENDPOINT"]
-        == "projects/iot-app-backend-example/branches/production/endpoints/primary"
+        == "projects/pharma-twin-backend-example/branches/production/endpoints/primary"
     )
     assert profile["ZEROBUS_CLIENT_ID"] == "00000000-0000-0000-0000-00000000000b"
     assert profile["ZEROBUS_SECRET_SCOPE"] == ""

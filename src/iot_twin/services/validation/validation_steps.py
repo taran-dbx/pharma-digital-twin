@@ -37,6 +37,7 @@ from databricks.sdk.service.compute import (
     Language as CmdLanguage,
 )
 
+from iot_twin.core import resource_names
 from iot_twin.core.workspace_config import get_secret_scope
 from iot_twin.models.metrics_schema import ALL_METRIC_MODES, metrics_table_location
 from iot_twin.models.sensor_schema import delta_table_ddl
@@ -68,7 +69,7 @@ _WRITE_TEST_WINDOW_BEFORE = timedelta(minutes=30)
 _WRITE_TEST_WINDOW_AFTER = timedelta(minutes=5)
 _FALLBACK_LOOKBACK = timedelta(minutes=15)
 
-logger = logging.getLogger("iot_digital_twin.services.validation_steps")
+logger = logging.getLogger("pharma_twin.services.validation_steps")
 
 # Interactive validation cluster bring-up ceiling.  This workspace's AWS
 # instance acquisition for the GP fleet node can take ~12 min (observed
@@ -407,7 +408,7 @@ async def provision_cluster(ctx: StepContext) -> StepResult:
         node_type_id=node_type_id,
         num_workers=sizing["workers"],
         single_user_name=user,
-        cluster_name=f"iot-validate-{cfg['industry']}",
+        cluster_name=resource_names.cluster_name("validate", cfg["industry"]),
         spark_version=spark_version,
     )
     cluster_id = await asyncio.to_thread(_create_validation_cluster, ws, spec)

@@ -29,7 +29,7 @@ SPINDLE = {
     "sensor_name": "cnc_1_spindle_temp",
     "industry": "manufacturing",
 }
-APP_DIR = "/Workspace/Users/app-sp/.iot-digital-twin"
+APP_DIR = "/Workspace/Users/app-sp/.pharma-twin"
 CONTROL_FILE = f"{APP_DIR}/production_control/manufacturing.json"
 
 
@@ -275,8 +275,8 @@ async def test_lakebase_path_writes_beside_every_deployment_c7436_regression() -
     workspace = FakeWorkspace()
     db = FakeLakebase(
         [
-            "/Workspace/Users/app-sp/.iot-digital-twin/manufacturing_realtime_consumer_1",
-            "/Workspace/Users/ops/.iot-digital-twin/manufacturing_microbatch_consumer_2",
+            "/Workspace/Users/app-sp/.pharma-twin/manufacturing_realtime_consumer_1",
+            "/Workspace/Users/ops/.pharma-twin/manufacturing_microbatch_consumer_2",
         ]
     )
     control = ProductionControl(workspace_factory=lambda: workspace, now_fn=clock)
@@ -288,7 +288,7 @@ async def test_lakebase_path_writes_beside_every_deployment_c7436_regression() -
     assert changed is True
     assert sorted(workspace.files) == [
         CONTROL_FILE,
-        "/Workspace/Users/ops/.iot-digital-twin/production_control/manufacturing.json",
+        "/Workspace/Users/ops/.pharma-twin/production_control/manufacturing.json",
     ]
     assert (await control.current("manufacturing", db=db))["changed_by"] == "op@example.com"
     history = await control.history("manufacturing", clock.instant - timedelta(minutes=1), db=db)

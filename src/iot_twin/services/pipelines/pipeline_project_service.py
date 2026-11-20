@@ -1,7 +1,7 @@
-"""Shared ``iot-pipelines`` Lakebase project provisioning (spec §2.1–2.2).
+"""Shared ``<prefix>-pipelines`` Lakebase project provisioning (spec §2.1–2.2).
 
 Real-time streaming data for **all** real-time industry pipelines lives in a
-single shared Lakebase project, ``iot-pipelines``.  Each real-time industry
+single shared Lakebase project, ``<prefix>-pipelines``.  Each real-time industry
 pipeline gets **one never-expiring branch** (branch name = industry) with:
 
 - a **primary ``READ_WRITE`` endpoint** — the streaming job writes here.  The
@@ -20,7 +20,7 @@ primary endpoint (``get_write_conn``), reusing ``core.lakebase.LakebaseConnectio
 for OAuth-refreshing asyncpg pools.
 
 This module is **additive** — it does not touch ``app.yaml`` wiring,
-``core/lakebase.py`` live wiring, or the legacy ``iot-lakets-demo`` project.
+``core/lakebase.py`` live wiring, or the legacy ``<prefix>-lakets-demo`` project.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from iot_twin.core.lakebase import LakebaseConnectionManager
 from iot_twin.core.workspace_config import get_pipelines_project
 from iot_twin.services.resource_ledger import record_resource
 
-logger = logging.getLogger("iot_digital_twin.services.pipelines_project")
+logger = logging.getLogger("pharma_twin.services.pipelines_project")
 
 # --- Constants -------------------------------------------------------------
 # PIPELINES_PROJECT has been removed as an import-time constant to prevent
@@ -101,7 +101,7 @@ def _is_already_exists(exc: Exception) -> bool:
 
 # --- Project ---------------------------------------------------------------
 def ensure_pipelines_project(*, ws: Any | None = None, project_id: str | None = None) -> dict:
-    """Ensure the shared ``iot-pipelines`` project exists (create if missing).
+    """Ensure the shared ``<prefix>-pipelines`` project exists (create if missing).
 
     Returns ``{"project", "name", "status"}`` where status is
     ``"existing"`` or ``"created"``.
@@ -189,7 +189,7 @@ async def provision_industry_branch(
     wait_timeout_s: int = _WAIT_TIMEOUT_S,
     poll_interval_s: int = _POLL_INTERVAL_S,
 ) -> dict:
-    """Provision a never-expiring branch for ``industry`` on ``iot-pipelines``.
+    """Provision a never-expiring branch for ``industry`` on ``<prefix>-pipelines``.
 
     Idempotent: an existing branch / replica is reused.  Steps:
       1. Ensure the shared project exists.

@@ -20,7 +20,7 @@ from iot_twin.services.deployment import deployment_repo
 from iot_twin.services.genie import genie_space_service
 from iot_twin.services.pipelines import pipeline_view
 
-logger = logging.getLogger("iot_digital_twin.services.genie_provisioning")
+logger = logging.getLogger("pharma_twin.services.genie_provisioning")
 
 GENIE_SPACE_TIMEOUT_S = 60.0
 

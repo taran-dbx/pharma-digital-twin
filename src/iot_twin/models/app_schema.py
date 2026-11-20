@@ -1,4 +1,4 @@
-"""App-backend data-model DDL for the ``iot-app-backend`` Lakebase project.
+"""App-backend data-model DDL for the ``<prefix>-backend`` Lakebase project.
 
 Implements the parent/child + normalized-ledger model from the admin pipeline
 design spec §2.3 (Option B):
@@ -9,9 +9,9 @@ design spec §2.3 (Option B):
     provisioned_resource — normalized teardown ledger; FK setup_id CASCADE +
                            nullable deployment_id, ordered by teardown_order
 
-These tables live ONLY in the new ``iot-app-backend`` project — they are
+These tables live ONLY in the new ``<prefix>-backend`` project — they are
 additive and do not touch the legacy ``pipelines`` / ``user_settings`` /
-``source_bindings`` wiring on ``iot-lakets-demo``.
+``source_bindings`` wiring on ``<prefix>-lakets-demo``.
 
 The ``ensure_*`` creators are idempotent (``CREATE TABLE IF NOT EXISTS`` +
 ``CREATE INDEX IF NOT EXISTS``) and accept any async DB executor exposing an

@@ -69,7 +69,7 @@ export function UcSettingsTab({
               <div className="space-y-3">
                 <InputField
                   label="Catalog Name Pattern"
-                  placeholder="iot_{name}"
+                  placeholder="pharma_twin_{name}"
                   value={settings.catalog_pattern}
                   onChange={(v) => onUpdate({ catalog_pattern: v })}
                 />

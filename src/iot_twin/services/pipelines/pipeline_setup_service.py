@@ -44,7 +44,7 @@ except Exception as _exc:  # pragma: no cover - import guard
 else:
     _DEPLOY_IMPORT_ERROR = ""
 
-logger = logging.getLogger("iot_digital_twin.services.pipeline_setup")
+logger = logging.getLogger("pharma_twin.services.pipeline_setup")
 
 
 def _ok_step(step: str, results: Any) -> dict:

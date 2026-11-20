@@ -308,7 +308,7 @@ async def _drain() -> None:
 
 @pytest.mark.asyncio
 async def test_post_timeout_failure_is_logged_and_task_discarded(caplog) -> None:
-    caplog.set_level("ERROR", logger="iot_digital_twin.services.genie_space")
+    caplog.set_level("ERROR", logger="pharma_twin.services.genie_space")
     w = _slow_ws(error=RuntimeError("quota exceeded"))
     with pytest.raises(asyncio.TimeoutError):
         await asyncio.wait_for(
@@ -335,7 +335,7 @@ async def test_post_timeout_failure_is_logged_and_task_discarded(caplog) -> None
 
 @pytest.mark.asyncio
 async def test_post_timeout_success_is_logged_and_task_discarded(caplog) -> None:
-    caplog.set_level("INFO", logger="iot_digital_twin.services.genie_space")
+    caplog.set_level("INFO", logger="pharma_twin.services.genie_space")
     w = _slow_ws(result="sp-bg")
     with pytest.raises(asyncio.TimeoutError):
         await asyncio.wait_for(

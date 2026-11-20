@@ -19,7 +19,7 @@ class TestAppName:
     def test_falls_back_to_constant(self, monkeypatch) -> None:
         monkeypatch.delenv("DATABRICKS_APP_NAME", raising=False)
         assert _app_name() == DEFAULT_APP_NAME
-        assert DEFAULT_APP_NAME == "iot-digital-twin"
+        assert DEFAULT_APP_NAME == "pharma-twin"
 
     def test_blank_env_var_falls_back(self, monkeypatch) -> None:
         monkeypatch.setenv("DATABRICKS_APP_NAME", "   ")
@@ -32,11 +32,11 @@ class TestGrantAppCanUse:
         w.apps = MagicMock()
         w.apps.update_permissions = MagicMock(return_value=None)
 
-        grant_app_can_use(w, "iot-digital-twin", "sp-app-id-123")
+        grant_app_can_use(w, "pharma-twin", "sp-app-id-123")
 
         w.apps.update_permissions.assert_called_once()
         call = w.apps.update_permissions.call_args
-        assert call.kwargs["app_name"] == "iot-digital-twin"
+        assert call.kwargs["app_name"] == "pharma-twin"
         acl = call.kwargs["access_control_list"]
         assert len(acl) == 1
         entry = acl[0]
@@ -53,7 +53,7 @@ class TestGrantAppCanUse:
 
         # Must not raise — failure is non-fatal.
         with caplog.at_level("WARNING"):
-            grant_app_can_use(w, "iot-digital-twin", "sp-app-id-123")
+            grant_app_can_use(w, "pharma-twin", "sp-app-id-123")
 
         assert any(
             "403 forbidden" in r.getMessage() or "app" in r.getMessage().lower()
@@ -64,7 +64,7 @@ class TestGrantAppCanUse:
         # Older SDKs / odd clients: w.apps may raise on access — still non-fatal.
         w = MagicMock()
         type(w).apps = property(lambda self: (_ for _ in ()).throw(AttributeError("no apps")))
-        grant_app_can_use(w, "iot-digital-twin", "sp-app-id-123")
+        grant_app_can_use(w, "pharma-twin", "sp-app-id-123")
 
 
 class TestIsAdmin:

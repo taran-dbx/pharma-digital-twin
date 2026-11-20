@@ -9,6 +9,7 @@
 import { Fragment } from "react";
 
 import type { Industry, IndustryMode } from "@/lib/industries-api";
+import { useResourcePrefix } from "@/lib/resource-names";
 import { archNodes, NodeIcon } from "./arch-nodes";
 
 export interface DataFlowModalContentProps {
@@ -17,13 +18,14 @@ export interface DataFlowModalContentProps {
 }
 
 export function DataFlowModalContent({ industry, mode }: DataFlowModalContentProps) {
+  const resourcePrefix = useResourcePrefix();
   return (
     <>
       <div className="af-desc">
         {mode.desc} <b>Primary sink:</b> {mode.to}.
       </div>
       <div className="af-flow">
-        {archNodes(industry, mode.id).map((node, i) => (
+        {archNodes(industry, mode.id, resourcePrefix).map((node, i) => (
           <Fragment key={`${node.t}-${i}`}>
             {i > 0 && <div className="af-arrow">→</div>}
             <div className={`af-node ${node.sink ? "sink" : ""}`}>

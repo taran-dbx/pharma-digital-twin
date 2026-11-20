@@ -37,7 +37,7 @@ from iot_twin.services.industry.industry_templates import MODES
 from iot_twin.services.intelligence_catalog_service import reference_tables
 from iot_twin.services.uc_ident import sql_fqn
 
-logger = logging.getLogger("iot_digital_twin.services.genie")
+logger = logging.getLogger("pharma_twin.services.genie")
 
 _ALLOWED_REQUEST_KEYS = frozenset(
     {"industry", "mode", "asset_id", "component_id", "alert_id", "question"}

@@ -16,6 +16,7 @@ from databricks.sdk.service.workspace import ImportFormat
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
+from iot_twin.core import resource_names
 from iot_twin.core.auth import get_current_user
 from iot_twin.core.state import AppState, get_app_state
 from iot_twin.services.databricks_sdk import detect_cloud
@@ -41,7 +42,7 @@ except ImportError:  # pragma: no cover — transitional fallback
         )
 
 
-logger = logging.getLogger("iot_digital_twin.routes.deployment")
+logger = logging.getLogger("pharma_twin.routes.deployment")
 
 router = APIRouter(tags=["deployment"])
 
@@ -62,7 +63,7 @@ async def upload_wheel(user_email: str = Depends(get_current_user)):
         w = WorkspaceClient()
         me = w.current_user.me()
         username = me.user_name or "unknown"
-        ws_dir = f"/Workspace/Users/{username}/.iot-digital-twin/lib"
+        ws_dir = f"{resource_names.user_workspace_dir(username)}/lib"
         ws_path = f"{ws_dir}/{WHEEL_FILENAME}"
 
         try:
@@ -112,7 +113,7 @@ async def submit_connectivity_test(request: Request, user_email: str = Depends(g
         me = w.current_user.me()
         username = me.user_name or "unknown"
         ts = int(time.time())
-        notebook_path = f"/Workspace/Users/{username}/.iot-digital-twin/connectivity_test_{ts}"
+        notebook_path = f"{resource_names.user_workspace_dir(username)}/connectivity_test_{ts}"
         parent_folder = notebook_path.rsplit("/", 1)[0]
 
         try:
@@ -130,7 +131,7 @@ async def submit_connectivity_test(request: Request, user_email: str = Depends(g
         logger.info("Uploaded connectivity test notebook to %s", notebook_path)
 
         waiter = w.jobs.submit(
-            run_name=f"iot-connectivity-test-{ts}",
+            run_name=resource_names.run_name("connectivity-test", str(ts)),
             tasks=[
                 SubmitTask(
                     task_key="connectivity_test",
@@ -257,7 +258,7 @@ async def validate_on_cluster(
 
         me = w.current_user.me()
         username = me.user_name or "unknown"
-        notebook_path = f"/Workspace/Users/{username}/.iot-digital-twin/validate_{int(time.time())}"
+        notebook_path = f"{resource_names.user_workspace_dir(username)}/validate_{int(time.time())}"
 
         parent_folder = notebook_path.rsplit("/", 1)[0]
         try:
@@ -512,7 +513,7 @@ async def deploy_job(
         me = w.current_user.me()
         username = me.user_name or "unknown"
         notebook_path = (
-            f"/Workspace/Users/{username}/.iot-digital-twin/sss_pipeline_{int(time.time())}"
+            f"{resource_names.user_workspace_dir(username)}/sss_pipeline_{int(time.time())}"
         )
 
         from databricks.sdk.service.workspace import ImportFormat, Language
@@ -536,7 +537,7 @@ async def deploy_job(
         producer_notebook_path = None
         if producer_notebook_content:
             producer_notebook_path = (
-                f"/Workspace/Users/{username}/.iot-digital-twin/data_producer_{int(time.time())}"
+                f"{resource_names.user_workspace_dir(username)}/data_producer_{int(time.time())}"
             )
             w.workspace.import_(
                 path=producer_notebook_path,
@@ -646,7 +647,7 @@ async def deploy_job(
             w.jobs.reset(
                 job_id=jid,
                 new_settings=JobSettings(
-                    name=f"IoT-SSS-Pipeline-{jid}",
+                    name=resource_names.run_name("sss-pipeline", str(jid)),
                     continuous=Continuous(pause_status=PauseStatus.UNPAUSED),
                     tasks=tasks,
                     environments=environments,
@@ -658,7 +659,7 @@ async def deploy_job(
         else:
             # Create a brand new job
             job = w.jobs.create(
-                name=f"IoT-SSS-Pipeline-{int(time.time())}",
+                name=resource_names.run_name("sss-pipeline", str(int(time.time()))),
                 continuous=Continuous(pause_status=PauseStatus.UNPAUSED),
                 tasks=tasks,
                 environments=environments,

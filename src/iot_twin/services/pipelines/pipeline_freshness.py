@@ -18,9 +18,9 @@ Design contract (spec §1.10, readiness gate):
 Per-mode sinks (spec §2.5):
 
 * ``realtime``   → Lakebase ChronoTable ``public.sensor_readings`` on the
-  per-industry branch (project ``iot-pipelines``, db ``databricks_postgres``).
-* ``microbatch`` → Delta ``iot_<industry>.microbatch.sensor_data`` (via DBSQL).
-* ``zerobus``    → Delta ``iot_<industry>.zerobus.iot_sensor_data`` (via DBSQL).
+  per-industry branch (project ``<prefix>-pipelines``, db ``databricks_postgres``).
+* ``microbatch`` → Delta ``<prefix_ident>_<industry>.microbatch.sensor_data`` (via DBSQL).
+* ``zerobus``    → Delta ``<prefix_ident>_<industry>.zerobus.iot_sensor_data`` (via DBSQL).
 
 The canonical event/ingest timestamp column is ``event_time`` for every sink
 (SSOT ``models/sensor_schema.py``).
@@ -38,7 +38,7 @@ from iot_twin.services.industry import industry_catalog_service as cat
 from iot_twin.services.pipelines import pipeline_view as pv
 from iot_twin.services.uc_ident import sql_fqn
 
-logger = logging.getLogger("iot_digital_twin.services.pipeline_freshness")
+logger = logging.getLogger("pharma_twin.services.pipeline_freshness")
 
 # Freshness window: a mode is "flowing" if its sink has a row newer than this.
 # realtime uses a 5-min trigger, so 10 min gives comfortable margin (spec §1.10).

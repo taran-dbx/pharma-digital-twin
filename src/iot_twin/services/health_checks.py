@@ -43,7 +43,7 @@ backend / SP cannot mint an MSK-IAM token), so the topic check is marked
 
 Additive only — this module reads live state; it never provisions or mutates
 resources and does not touch ``app.yaml`` / ``core/lakebase.py`` / the legacy
-``iot-lakets-demo`` wiring.
+``<prefix>-lakets-demo`` wiring.
 """
 
 from __future__ import annotations
@@ -53,6 +53,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from iot_twin.core import resource_names
 from iot_twin.models.sensor_schema import ID_COLUMN_NAME, insert_columns
 from iot_twin.services import cdf_reconciliation_service as cdf
 from iot_twin.services.deployment import deployment_repo, deployment_service
@@ -67,7 +68,7 @@ from iot_twin.services.provisioning_service import (
 )
 from iot_twin.services.uc_ident import sql_fqn, sql_ident
 
-logger = logging.getLogger("iot_digital_twin.services.health_checks")
+logger = logging.getLogger("pharma_twin.services.health_checks")
 
 # --- Vocabulary (shared with pipeline_view so nothing drifts) ----------------
 TIER_API = pv.TIER_API
@@ -695,7 +696,9 @@ def check_kafka_topic(industry: str, enabled_modes: list[str]) -> dict:
     test (``topics_created`` step), not the fast Tier-1 API sweep.
     """
     topics = [
-        f"iot.{industry}.{m}" for m in (enabled_modes or []) if m in ("realtime", "microbatch")
+        resource_names.topic_name(industry, m)
+        for m in (enabled_modes or [])
+        if m in ("realtime", "microbatch")
     ]
     return _result(
         KAFKA_TOPIC_CHECK,

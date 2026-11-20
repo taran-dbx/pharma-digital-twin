@@ -145,6 +145,8 @@ export interface AppDefaults {
   uc_catalog?: string;
   /** UC_SCHEMA — single schema holding all industry-prefixed managed tables (Task 3/4). */
   uc_schema?: string;
+  /** RESOURCE_PREFIX — prefix of every resource name (`pharma-twin` by default). */
+  resource_prefix?: string;
 }
 
 export const api = {

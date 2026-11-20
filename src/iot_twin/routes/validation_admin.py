@@ -34,7 +34,7 @@ from iot_twin.services import app_permissions
 from iot_twin.services.validation import validation_service
 from iot_twin.services.validation.validation_service import IncompleteSetupError, ValidationError
 
-logger = logging.getLogger("iot_digital_twin.routes.validation_admin")
+logger = logging.getLogger("pharma_twin.routes.validation_admin")
 
 router = APIRouter()
 

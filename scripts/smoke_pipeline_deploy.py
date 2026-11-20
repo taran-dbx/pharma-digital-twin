@@ -1,11 +1,11 @@
-"""Full-path smoke: wizard→provisioning glue against iot-lakets-demo.
+"""Full-path smoke: wizard→provisioning glue against the ``<prefix>-lakets-demo`` project.
 
 Spins up a minimal FastAPI app with the provisioning router, injects a mock
 state.db that returns a synthetic pipeline carrying ``sink_config.tiering``,
 and POSTs to ``/api/provision/lakebase-table``.  The route's extractors pull
 tiering + sse_metrics out of the pipeline row, build the ``lb`` dict, and
 forward to ``provisioning_service.provision_lakebase_table`` — which hits the
-real iot-lakets-demo Lakebase and applies (or confirms) ChronoTable + tier
+real ``<prefix>-lakets-demo`` Lakebase and applies (or confirms) ChronoTable + tier
 policy.  Afterwards the script inspects ``lakets.*`` registries to prove the
 end-to-end write landed.
 
@@ -33,12 +33,14 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from scripts._profile import require_profile
 
+from iot_twin.core import resource_names
+from iot_twin.core.config import LAKEBASE_SYNC_DATABASE
 from iot_twin.core.state import AppState
 from iot_twin.routes.provisioning import router as provisioning_router
 
-PROJECT_ID = os.getenv("LAKETS_PROJECT_ID", "iot-lakets-demo")
+PROJECT_ID = os.getenv("LAKETS_PROJECT_ID") or resource_names.lakets_demo_project()
 BRANCH_ID = os.getenv("LAKETS_BRANCH_ID", "production")
-DATABASE = os.getenv("PGDATABASE", "databricks_postgres")
+DATABASE = os.getenv("PGDATABASE", LAKEBASE_SYNC_DATABASE)
 TABLE = os.getenv("PG_TABLE", "sensor_readings")
 LAKETS_SQL_PATH = os.getenv(
     "LAKETS_SQL_PATH",
@@ -76,7 +78,7 @@ def _build_app() -> FastAPI:
 
 
 async def _inspect_registries() -> None:
-    """Query iot-lakets-demo directly to confirm provisioning landed."""
+    """Query the LakeTS demo project directly to confirm provisioning landed."""
     import asyncpg
     from databricks.sdk import WorkspaceClient
 

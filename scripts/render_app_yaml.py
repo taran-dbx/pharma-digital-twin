@@ -51,11 +51,14 @@ REQUIRED_PROFILE_KEYS: tuple[str, ...] = (
 
 
 OPTIONAL_PROFILE_KEYS: tuple[str, ...] = (
+    "RESOURCE_PREFIX",
     "ADMIN_EMAILS",
     "LAKETS_SQL_PATH",
     "USAGE_TRACKING_ENABLED",
 )
 DEFAULT_USAGE_TRACKING_ENABLED = "true"
+# Mirrors iot_twin.core.config.DEFAULT_RESOURCE_PREFIX (this script stays import-free).
+DEFAULT_RESOURCE_PREFIX = "pharma-twin"
 EXAMPLE_SUFFIX = ".profile.example"
 
 
@@ -138,6 +141,8 @@ def load_profile(
 
 def render_app_yaml(profile: dict[str, str]) -> str:
     env_blocks = [
+        # Prefix for every runtime-created resource name (isolation from upstream).
+        _env_entry("RESOURCE_PREFIX", profile.get("RESOURCE_PREFIX") or DEFAULT_RESOURCE_PREFIX),
         _env_entry("UC_CATALOG", profile["UC_CATALOG"]),
         _env_entry("UC_SCHEMA", profile["UC_SCHEMA"]),
         _env_entry("PGHOST", profile["PGHOST"]),

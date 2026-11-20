@@ -34,7 +34,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
-logger = logging.getLogger("iot_digital_twin")
+logger = logging.getLogger("pharma_twin")
 
 # Usage tracking (dbdemos-tracker): a no-op until started; opt out with
 # USAGE_TRACKING_ENABLED=false. See services/usage_tracking.py.
@@ -78,7 +78,7 @@ async def lifespan(application: FastAPI):
     logger.info("DATABRICKS_CLIENT_ID=%s", os.getenv("DATABRICKS_CLIENT_ID", "(not set)"))
     logger.info("INDUSTRIES=%s", INDUSTRIES)
 
-    # --- Single Lakebase connection (iot-app-backend, OAuth) ---
+    # --- Single Lakebase connection (<prefix>-backend, OAuth) ---
     # One AppBackendConnectionManager serves both state.db and state.app_backend_db
     # so existing callsites on either field keep working without modification.
     if os.getenv("PGHOST"):
@@ -94,7 +94,7 @@ async def lifespan(application: FastAPI):
             state.app_backend_available = True
             state.db_error = None
             state.app_backend_error = None
-            logger.info("Lakebase connection pool ready (iot-app-backend)")
+            logger.info("Lakebase connection pool ready (<prefix>-backend)")
             await app_schema.ensure_app_schema(app_db)
             await app_db.ensure_pipelines_table()
             await app_db.ensure_user_settings_table()

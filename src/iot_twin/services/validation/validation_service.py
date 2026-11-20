@@ -37,7 +37,7 @@ from typing import Any
 from iot_twin.services.pipelines import pipeline_setup_repo
 from iot_twin.services.validation import validation_state_machine as sm
 
-logger = logging.getLogger("iot_digital_twin.services.validation")
+logger = logging.getLogger("pharma_twin.services.validation")
 
 # Safety bound on driver iterations (a full 3-mode run is ~25 steps).
 _MAX_DRIVER_STEPS = 200

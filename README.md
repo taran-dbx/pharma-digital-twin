@@ -105,7 +105,7 @@ placeholders only. Main settings:
 | `INDUSTRIES` | Industries offered in the UI |
 | `ADMIN_GROUP` | Group whose members are app admins (optional `ADMIN_EMAILS` CSV adds extra admins; not set by the bundle) |
 | `USAGE_TRACKING_ENABLED` | Usage tracking on/off (default `true`; `false`, `0`, `no` or `off` opts out) |
-| `USAGE_TRACKING_APP_NAME`, `USAGE_TRACKING_DEMO_CATALOG_ID` | Optional tracker app name (default `iot-digital-twin`) and [demo catalog](https://go/demo-catalog) id |
+| `USAGE_TRACKING_APP_NAME`, `USAGE_TRACKING_DEMO_CATALOG_ID` | Optional tracker app name (default: the resource prefix, `pharma-twin`) and [demo catalog](https://go/demo-catalog) id |
 
 ### Usage tracking
 
@@ -141,9 +141,11 @@ databricks bundle deploy -t dev --profile <cli-profile>
 databricks bundle run -t dev --profile <cli-profile>
 ```
 
-Do not point `prod` at an existing app without binding it first
-(`databricks bundle deployment bind`); see [docs/deployment.md](docs/deployment.md) for
-variables, targets, binding, prerequisites (service-principal grants) and troubleshooting.
+`prod` creates its own app (`pharma-twin`); never bind it to an existing app — the
+upstream IoT Digital Twin runs in the same workspace. All runtime resource names derive
+from `RESOURCE_PREFIX` (default `pharma-twin`). See [docs/deployment.md](docs/deployment.md)
+for variables, targets, the isolation guard, prerequisites (service-principal grants)
+and troubleshooting.
 
 ## Testing and quality gates
 
@@ -165,7 +167,7 @@ run locally through `pre-commit`.
 |---|---|
 | [docs/README.md](docs/README.md) | Index of the documentation |
 | [docs/architecture.md](docs/architecture.md) | Components, data flow, alerts, Genie copilot, auth, storage |
-| [docs/deployment.md](docs/deployment.md) | Bundle deploys, variables, binding, prerequisites, troubleshooting |
+| [docs/deployment.md](docs/deployment.md) | Bundle deploys, variables, isolation guard, prerequisites, troubleshooting |
 | [docs/genie.md](docs/genie.md) | Shared copilot space, per-pipeline Genie spaces, permissions, API |
 | [docs/api.md](docs/api.md) | API routes by router; live OpenAPI at `/docs` and `/openapi.json` |
 | [ops/README.md](ops/README.md) | Pipeline health-check notebook (read-only, inline report) |

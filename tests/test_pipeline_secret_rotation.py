@@ -281,7 +281,7 @@ class TestAppPublishesSecret:
         assert puts == [("cat", "sch", "app_sp_oauth", fake_credential("rotated"))]
 
         monkeypatch.delenv("DATABRICKS_CLIENT_SECRET")
-        with caplog.at_level(logging.INFO, logger="iot_digital_twin"):
+        with caplog.at_level(logging.INFO, logger="pharma_twin"):
             asyncio.run(app_module.publish_runtime_oauth_secret())
         assert len(puts) == 1
         assert "Skipping UC secret refresh" in caplog.text

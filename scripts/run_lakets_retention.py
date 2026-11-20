@@ -4,9 +4,9 @@ Entry point for a Databricks Job task (scheduled daily).  Connects using
 autoscale OAuth (or direct PG creds), discovers tables with retention policies,
 and invokes ``lakets.execute_retention`` for each.
 
-Usage (local, against iot-lakets-demo):
+Usage (local, against the LakeTS demo project):
     DATABRICKS_CONFIG_PROFILE=<cli-profile> \\
-    LAKETS_PROJECT_ID=iot-lakets-demo \\
+    LAKETS_PROJECT_ID=pharma-twin-lakets-demo \\
     .venv/bin/python -m scripts.run_lakets_retention
 """
 

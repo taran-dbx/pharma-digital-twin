@@ -15,7 +15,7 @@ from fastapi import WebSocket
 from iot_twin.core.state import AppState
 from iot_twin.domain.catalog import map_simulator_industries, to_record_industry
 
-logger = logging.getLogger("iot_digital_twin.simulator")
+logger = logging.getLogger("pharma_twin.simulator")
 
 
 async def broadcast(state: AppState, data: dict[str, Any]) -> None:

@@ -27,6 +27,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from iot_twin.core import resource_names
+
 __all__ = [
     "MetricsFieldSpec",
     "METRICS_FIELD_MAP",
@@ -143,10 +145,12 @@ def metrics_table_location(catalog: str, storage_base: str, mode: str) -> str:
     ``storage_base`` is the shared external-location root (e.g.
     ``s3://example-shared-bucket``).  Layout (spec §1.11)::
 
-        <base>/iot-digital-twin/<catalog>/metrics/streaming_metrics_<mode>/
+        <base>/<prefix>/<catalog>/metrics/streaming_metrics_<mode>/
     """
     base = storage_base.rstrip("/")
-    return f"{base}/iot-digital-twin/{catalog}/metrics/{_table_name(mode)}/"
+    return (
+        f"{base}/{resource_names.metrics_storage_segment()}/{catalog}/metrics/{_table_name(mode)}/"
+    )
 
 
 def metrics_external_table_ddl(catalog: str, storage_base: str, mode: str) -> str:

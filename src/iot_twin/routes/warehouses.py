@@ -7,7 +7,9 @@ import logging
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-logger = logging.getLogger("iot_digital_twin.routes.warehouses")
+from iot_twin.core import resource_names
+
+logger = logging.getLogger("pharma_twin.routes.warehouses")
 
 router = APIRouter(tags=["warehouses"])
 
@@ -44,7 +46,7 @@ async def create_warehouse(request: Request):
     except Exception as exc:
         return JSONResponse(status_code=400, content={"error": f"Invalid JSON: {exc}"})
 
-    name = body.get("name", "iot-digital-twin")
+    name = body.get("name") or resource_names.warehouse_name()
     cluster_size = body.get("cluster_size", "2X-Small")
     auto_stop_mins = body.get("auto_stop_mins", 10)
 
