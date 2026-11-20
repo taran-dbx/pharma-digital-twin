@@ -3,22 +3,22 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSensorContext } from "@/contexts/sensor-context";
 import { api } from "@/lib/api";
 import { decisionsFor, latestSpindleAlert, type CellDecisions } from "@/lib/manufacturing-story";
-import type { AlertRecord, AlertResponseAction } from "@/lib/types";
+import type { AlertRecord, AlertResponseAction, DecisionSignoff } from "@/lib/types";
 
 export type EpisodeAction = AlertResponseAction | "acknowledge";
 
 export interface SpindleEpisode {
-  /** Latest Spindle 3 alert episode, open or cleared. */
+  /** Latest Spindle 3 excursion episode, open or cleared. */
   alert: AlertRecord | null;
   decisions: CellDecisions;
   pending: EpisodeAction | null;
   error: string | null;
-  /** Resolves true once the decision is saved (or was already saved). */
-  record: (action: AlertResponseAction) => Promise<boolean>;
+  /** Resolves true once the signed decision is saved (or was already saved). */
+  record: (action: AlertResponseAction, signoff: DecisionSignoff) => Promise<boolean>;
   acknowledge: () => Promise<boolean>;
 }
 
-/** Latest Spindle 3 episode plus the operator decisions recorded against it. */
+/** Latest Spindle 3 episode plus the signed decisions recorded against it. */
 export function useSpindleEpisode(alerts: AlertRecord[]): SpindleEpisode {
   const { responses, applyAlertResponses, applyAlertEvent, applyProduction } = useSensorContext();
   const [cleared, setCleared] = useState<AlertRecord[]>([]);
@@ -60,12 +60,12 @@ export function useSpindleEpisode(alerts: AlertRecord[]): SpindleEpisode {
   }, [alertId, openedAt, applyAlertResponses]);
 
   const record = useCallback(
-    async (action: AlertResponseAction) => {
+    async (action: AlertResponseAction, signoff: DecisionSignoff) => {
       if (!alertId) return false;
       setPending(action);
       setError(null);
       try {
-        const event = await api.recordAlertResponse(alertId, action);
+        const event = await api.recordAlertResponse(alertId, action, signoff);
         applyAlertResponses([event.response]);
         if (event.production) applyProduction(event.production);
         if (event.production_error) setError(`Decision saved, but the cell was not stopped: ${event.production_error}`);

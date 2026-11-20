@@ -4,6 +4,7 @@ import type {
   AlertListResponse,
   AlertRecord,
   AlertResponseAction,
+  DecisionSignoff,
   AlertResponseEvent,
   AlertResponseList,
   GenieAskRequest,
@@ -606,10 +607,10 @@ export const api = {
   listAlertResponses: (alertId: string) =>
     request<AlertResponseList>(`/alerts/${alertId}/responses`),
 
-  recordAlertResponse: (alertId: string, action: AlertResponseAction) =>
+  recordAlertResponse: (alertId: string, action: AlertResponseAction, signoff: DecisionSignoff) =>
     request<AlertResponseEvent>(`/alerts/${alertId}/responses`, {
       method: "POST",
-      body: JSON.stringify({ action }),
+      body: JSON.stringify({ action, ...signoff }),
     }),
 
   getAlertHistory: (industry: string, hours = 1) =>

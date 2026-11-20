@@ -1,5 +1,7 @@
+import { lotContextPython } from "./manufacturing-lot";
+
 /**
- * Scheduled Spindle 3 heat event for the manufacturing realtime producer.
+ * Scheduled Spindle 3 thermal excursion for the implant cell's realtime producer.
  *
  * The producer notebook applies this schedule to `cnc_1_spindle_temp` on the
  * wall clock, so every consumer (Lakebase, SSE, alert engine) sees the same
@@ -149,8 +151,10 @@ def _production_allows(payload):
   const s = SPINDLE_HEAT_SCENARIO;
   return `${calibrate}
 
-# Scheduled Spindle 3 heat event on the wall clock. Random simulator faults are
-# disabled so this is the only fault the dashboard narrates.
+# Scheduled Spindle 3 thermal excursion on the wall clock: the spindle drifts
+# past its validated limit, putting the stems cut meanwhile at risk of a
+# dimensional nonconformance. Random simulator faults are disabled so this is
+# the only fault the dashboard narrates.
 SCENARIO_ENABLED = True
 SCENARIO_ID = "${s.id}"
 SCENARIO_SENSOR = "${s.sensorName}"
@@ -176,8 +180,17 @@ def _scenario_phase(now):
     return "cooling", SCENARIO_PEAK_DELTA * max(0.0, 1.0 - t / SCENARIO_COOL_S)
 
 
+${lotContextPython()}
+
+
 def _apply_scenario(payload):
-    if payload.get("sensor_name") != SCENARIO_SENSOR:
+    name = str(payload.get("sensor_name") or "")
+    if name.startswith(LOT_SENSOR_PREFIX):
+        payload["metadata"] = {
+            **(payload.get("metadata") or {}),
+            **_lot_context(payload["timestamp"]),
+        }
+    if name != SCENARIO_SENSOR:
         return payload
     phase, delta = _scenario_phase(payload["timestamp"])
     value = payload["value"] + delta

@@ -61,7 +61,7 @@ export function CellHeader({
   return (
     <header className={`cellops-hero is-${phase}`} data-testid="cell-header">
       <div className="cellops-hero__id">
-        <span className="cellops-eyebrow">Manufacturing twin · {modeLabel}</span>
+        <span className="cellops-eyebrow">Medical device twin · {modeLabel}</span>
         <h1>
           CNC cell
           <span className="cellops-hero__route" aria-label="Mill, inspect, pack">
