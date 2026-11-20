@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 from types import SimpleNamespace
 
@@ -45,15 +46,26 @@ class FakeEndpoint:
         self.fail = fail
         self.delay = delay
         self.records: list[dict] = []
+        self.timeouts: list[float] = []
+        self.threads: list[str] = []
 
-    def __call__(self, endpoint: str, record):
+    def __call__(self, endpoint: str, record, timeout_s: float):
         self.records.append(dict(record))
+        self.timeouts.append(timeout_s)
+        self.threads.append(threading.current_thread().name)
         if self.delay:
             time.sleep(self.delay)
         if self.fail:
             raise self.fail
         top = [{"feature": "temp_slope", "contribution": 0.9, "value": 6.0}]
-        return [{"risk_score": self.score, "top_features": json.dumps(top)}]
+        return [
+            {
+                "risk_score": self.score,
+                "top_features": json.dumps(top),
+                "decision_threshold": 0.22,
+                "clear_threshold": 0.17,
+            }
+        ]
 
 
 class Clock:
@@ -74,7 +86,8 @@ def _scorer(endpoint: FakeEndpoint, clock: Clock | None = None, **config) -> rs.
     return rs.SpindleRiskScorer(
         _config(**config),
         query_fn=endpoint,
-        served_model_fn=lambda name: ("cat.pharma_twin.spindle_thermal_risk", "2"),
+        served_model_fn=lambda name, timeout: ("cat.pharma_twin.spindle_thermal_risk", "2"),
+        champion_fn=lambda name, timeout: "2",
         now_fn=clock or Clock(),
         limit_c=60.0,
         last_maintenance_at=T0 - 3600,
@@ -96,21 +109,65 @@ class TestConfig:
         assert config is not None
         assert config.threshold == 0.35
         assert config.timeout_s == 3.0  # not a number → default
-        assert config.hysteresis == 0.15  # out of range → default
+        assert config.hysteresis is None  # out of range → the model's clear level
         assert config.model_name == "cat.pharma_twin.spindle_thermal_risk"
+
+    def test_model_keyword_defers_to_the_served_model(self, monkeypatch) -> None:
+        monkeypatch.setenv("RISK_ENDPOINT_NAME", "pharma-twin-spindle-risk")
+        monkeypatch.setenv("RISK_ALERT_THRESHOLD", "model")
+        config = rs.RiskScorerConfig.from_env()
+        assert config is not None and config.threshold is None
+
+    def test_threshold_precedence(self) -> None:
+        score = rs.RiskScore(0.5, (), "m", "2", T0, decision_threshold=0.3, clear_threshold=0.24)
+        assert score.thresholds(_config()) == (0.3, 0.06)  # the model's
+        assert score.thresholds(_config(threshold=0.5, hysteresis=0.1)) == (0.5, 0.1)  # env
+        bare = rs.RiskScore(0.5, (), "m", "2", T0)
+        assert bare.thresholds(_config()) == (0.47, 0.05)  # contract defaults
+
+    def test_sdk_client_uses_the_query_timeout_for_http_and_retries(self, monkeypatch) -> None:
+        import databricks.sdk as sdk
+        import databricks.sdk.config as sdk_config
+
+        seen: dict = {}
+
+        class FakeConfig:
+            def __init__(self, **kwargs):
+                seen.update(kwargs)
+
+        class FakeClient:
+            def __init__(self, config=None):
+                seen["config"] = config
+
+        monkeypatch.setattr(sdk_config, "Config", FakeConfig)
+        monkeypatch.setattr(sdk, "WorkspaceClient", FakeClient)
+        monkeypatch.setattr(rs, "_clients", {})
+        client = rs._client(2.2)
+        assert seen["http_timeout_seconds"] == 3 and seen["retry_timeout_seconds"] == 3
+        assert rs._client(2.9) is client  # cached per timeout
 
 
 class TestParse:
-    def test_record_with_json_top_features(self) -> None:
-        score, top = rs.parse_prediction(
-            {"predictions": [{"risk_score": 0.4, "top_features": '[{"feature": "x"}]'}]}
+    def test_record_with_json_top_features_and_thresholds(self) -> None:
+        parsed = rs.parse_prediction(
+            {
+                "predictions": [
+                    {
+                        "risk_score": 0.4,
+                        "top_features": '[{"feature": "x"}]',
+                        "decision_threshold": 0.22,
+                        "clear_threshold": 0.17,
+                    }
+                ]
+            }
         )
-        assert score == 0.4 and top == ({"feature": "x"},)
+        assert parsed == rs.Prediction(0.4, ({"feature": "x"},), 0.22, 0.17)
 
     def test_bare_scores_and_list_top_features(self) -> None:
-        assert rs.parse_prediction([0.2]) == (0.2, ())
-        score, top = rs.parse_prediction([{"risk_score": "0.9", "top_features": [{"a": 1}, 3]}])
-        assert score == 0.9 and top == ({"a": 1},)
+        assert rs.parse_prediction([0.2]) == rs.Prediction(0.2)
+        parsed = rs.parse_prediction([{"risk_score": "0.9", "top_features": [{"a": 1}, 3]}])
+        assert parsed.risk_score == 0.9 and parsed.top_features == ({"a": 1},)
+        assert parsed.decision_threshold is None
 
     @pytest.mark.parametrize(
         "bad", [[], None, "x", [{"risk_score": "nan?"}], [{"risk_score": 1.5}], {"predictions": []}]
@@ -171,16 +228,14 @@ class TestScorer:
         )
         scorer.observe(_readings(10, start=T0))
         scorer.observe(_readings(10, start=T0 + 1000))
-        assert min(r["timestamp"] for r in scorer._buffer) >= T0 + 1000 - 120
+        assert min(r["timestamp"] for r in scorer.buffer(None)) >= T0 + 1000 - 120
 
-    async def test_timeout_and_errors_open_the_breaker(self) -> None:
+    async def test_errors_open_the_breaker(self) -> None:
         clock = Clock()
-        endpoint = FakeEndpoint(delay=0.3)
-        scorer = _scorer(endpoint, clock, timeout_s=0.05, breaker_failures=2)
+        endpoint = FakeEndpoint(fail=RuntimeError("503 endpoint scaling from zero"))
+        scorer = _scorer(endpoint, clock, breaker_failures=2)
         scorer.observe(_readings())
         assert await scorer.score_once() is None
-        assert "TimeoutError" in scorer.stats["last_error"]
-        endpoint.delay, endpoint.fail = 0.0, RuntimeError("503 endpoint scaling from zero")
         assert await scorer.score_once() is None
         assert scorer.breaker.state == OPEN
         calls = len(endpoint.records)
@@ -191,6 +246,85 @@ class TestScorer:
         assert (await scorer.score_once()) is not None
         assert scorer.breaker.state == CLOSED
 
+    async def test_hung_call_keeps_the_scorer_busy_until_the_thread_returns(self) -> None:
+        release = threading.Event()
+
+        def hung(endpoint, record, timeout_s):
+            release.wait(5)
+            return [{"risk_score": 0.5}]
+
+        scorer = rs.SpindleRiskScorer(
+            _config(timeout_s=0.05),
+            query_fn=hung,
+            served_model_fn=lambda name, timeout: ("m", "2"),
+            champion_fn=lambda name, timeout: "2",
+            now_fn=Clock(),
+            limit_c=60.0,
+            last_maintenance_at=T0,
+        )
+        scorer.observe(_readings())
+        assert await scorer.score_once() is None
+        assert "TimeoutError" in scorer.stats["last_error"]
+        # The await timed out but the worker thread is still running.
+        assert scorer.inflight and not scorer.due()
+        assert await scorer.score_once() is None
+        assert scorer.stats["skipped_busy"] == 1
+        # The default to_thread pool stays free while the scorer is stuck.
+        assert await asyncio.wait_for(asyncio.to_thread(lambda: "free"), 1) == "free"
+        release.set()
+        for _ in range(100):
+            if not scorer.inflight:
+                break
+            await asyncio.sleep(0.01)
+        assert not scorer.inflight
+        scorer.close()
+
+    async def test_calls_run_on_the_dedicated_executor_with_the_timeout(self) -> None:
+        endpoint = FakeEndpoint()
+        scorer = _scorer(endpoint, timeout_s=2.5)
+        scorer.observe(_readings())
+        assert await scorer.score_once() is not None
+        assert endpoint.threads[0].startswith("risk-scorer")
+        assert endpoint.timeouts == [2.5]
+
+    async def test_pipelines_have_separate_buffers_and_timers(self) -> None:
+        clock = Clock()
+        endpoint = FakeEndpoint()
+        scorer = _scorer(endpoint, clock, interval_s=5.0)
+        hot = _readings(temp=58.0)
+        calm = _readings(temp=40.0)
+        # Interleave the two pipelines' batches.
+        for i in range(0, len(hot), 8):
+            scorer.observe(hot[i : i + 8], "p-hot")
+            scorer.observe(calm[i : i + 8], "p-calm")
+        assert {r["value"] for r in scorer.buffer("p-hot") if "temp" in r["sensor_name"]} == {
+            r["value"] for r in hot if "temp" in r["sensor_name"]
+        }
+        hot_score = await scorer.score_once("p-hot")
+        assert not scorer.due("p-hot") and scorer.due("p-calm")
+        calm_score = await scorer.score_once("p-calm")
+        assert hot_score is not None and calm_score is not None
+        assert hot_score.pipeline_id == "p-hot" and calm_score.pipeline_id == "p-calm"
+        assert endpoint.records[0]["temp_last"] == pytest.approx(58.0 + 2.9)
+        assert endpoint.records[1]["temp_last"] == pytest.approx(40.0 + 2.9)
+
+    async def test_warns_when_the_endpoint_is_not_on_the_champion(self, caplog) -> None:
+        scorer = rs.SpindleRiskScorer(
+            _config(),
+            query_fn=FakeEndpoint(),
+            served_model_fn=lambda name, timeout: ("cat.pharma_twin.spindle_thermal_risk", "1"),
+            champion_fn=lambda name, timeout: "3",
+            now_fn=Clock(),
+            limit_c=60.0,
+            last_maintenance_at=T0,
+        )
+        scorer.observe(_readings())
+        with caplog.at_level("WARNING"):
+            result = await scorer.score_once()
+        assert result is not None and result.model_version == "1"
+        assert "risk_model_version=3" in caplog.text
+        assert scorer.stats["champion_version"] == "3"
+
     async def test_bad_response_counts_as_failure(self) -> None:
         scorer = _scorer(FakeEndpoint(score=7.0))
         scorer.observe(_readings())
@@ -198,7 +332,7 @@ class TestScorer:
         assert scorer.stats["failures"] == 1
 
     async def test_model_lookup_failure_falls_back_to_configured_name(self) -> None:
-        def broken(name: str):
+        def broken(name: str, timeout_s: float):
             raise RuntimeError("no CAN_VIEW")
 
         scorer = rs.SpindleRiskScorer(
@@ -264,7 +398,7 @@ class TestEndToEnd:
         scorer = _scorer(FakeEndpoint())
         state = _state_with(scorer)
         assert rs.observe_and_score(state, _readings(), industry="energy", pipeline_id=None) is None
-        assert not scorer._buffer
+        assert not scorer.buffer(None)
         monkeypatch.delenv("RISK_ENDPOINT_NAME", raising=False)
         empty = AppState()
         assert (
