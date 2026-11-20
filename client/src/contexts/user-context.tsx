@@ -11,7 +11,7 @@ import { getCatalog } from "@/lib/industries-api";
 
 /**
  * Signed-in user context. The admin flag is decided *server-side*
- * (`services/app_permissions.py`, group `iot-admins` / `ADMIN_EMAILS`) and
+ * (`services/app_permissions.py`, group `<prefix>-admins` / `ADMIN_EMAILS`) and
  * surfaced per request as `Catalog.isAdmin` — there is no client-side role
  * override. `isAdmin` here is that server verdict, fetched once from the
  * industry catalog so the top bar can gate admin-only chrome (e.g. the
@@ -20,7 +20,7 @@ import { getCatalog } from "@/lib/industries-api";
 interface UserContextValue {
   email: string;
   loading: boolean;
-  /** Server-decided admin flag (`iot-admins` group / `ADMIN_EMAILS`). */
+  /** Server-decided admin flag (`<prefix>-admins` group / `ADMIN_EMAILS`). */
   isAdmin: boolean;
   /**
    * Given a per-page server `isAdmin` value, return the effective admin flag.

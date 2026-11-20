@@ -11,6 +11,8 @@
  * job) so the degraded styling + overall banner call-out are exercisable.
  */
 
+import { pipelineName, prefixIdent, sharedSecretScope, topicName } from "@/lib/resource-names";
+
 /** Health of a single resource. Ordered worst → best for banner rollup. */
 export type HealthStatus = "down" | "warning" | "idle" | "healthy";
 
@@ -59,12 +61,14 @@ export interface PipelineHealth {
   groups: ResourceGroup[];
 }
 
-/** The single mock pipeline this prototype renders. */
-export const PHARMA_HEALTH: PipelineHealth = {
+/** The single mock pipeline this prototype renders, named from the resource prefix. */
+export function pharmaHealth(prefix: string): PipelineHealth {
+  const catalog = `${prefixIdent(prefix)}_pharmaceutical`;
+  return {
   id: "pharmaceutical",
   name: "Pharmaceutical",
   industry: "Pharmaceutical",
-  catalog: "iot_pharmaceutical",
+  catalog,
   groups: [
     {
       id: "unity_catalog",
@@ -72,7 +76,7 @@ export const PHARMA_HEALTH: PipelineHealth = {
       brand: BRAND.unity,
       items: [
         {
-          label: "iot_pharmaceutical",
+          label: catalog,
           detail: "Catalog · bound to metastore ✓",
           status: "healthy",
           timestamp: "checked 30s ago",
@@ -123,7 +127,7 @@ export const PHARMA_HEALTH: PipelineHealth = {
         "ChronoTable partitions are current — the Partition Manager keeps a rolling 24h / 96-chunk forward window; the next chunk is created in ~8m.",
       items: [
         {
-          label: "iot-pipelines",
+          label: `${prefix}-pipelines`,
           detail: "Lakebase project",
           status: "healthy",
           mono: true,
@@ -171,13 +175,13 @@ export const PHARMA_HEALTH: PipelineHealth = {
       brand: BRAND.streaming,
       items: [
         {
-          label: "iot.pharmaceutical.realtime",
+          label: topicName(prefix, "pharmaceutical", "realtime"),
           detail: "6 partitions · RF 3",
           status: "healthy",
           mono: true,
         },
         {
-          label: "iot.pharmaceutical.microbatch",
+          label: topicName(prefix, "pharmaceutical", "microbatch"),
           detail: "6 partitions · RF 3",
           status: "healthy",
           mono: true,
@@ -189,21 +193,21 @@ export const PHARMA_HEALTH: PipelineHealth = {
       title: "Jobs (7)",
       items: [
         {
-          label: "iot-pharmaceutical-realtime",
+          label: pipelineName(prefix, "pharmaceutical", "realtime"),
           detail: "Continuous · Kafka → Spark → Lakebase + LakeTS",
           status: "healthy",
           timestamp: "RUNNING",
           mono: true,
         },
         {
-          label: "iot-pharmaceutical-microbatch",
+          label: pipelineName(prefix, "pharmaceutical", "microbatch"),
           detail: "Continuous · bounded consumer → Delta",
           status: "healthy",
           timestamp: "RUNNING",
           mono: true,
         },
         {
-          label: "iot-pharmaceutical-zerobus",
+          label: pipelineName(prefix, "pharmaceutical", "zerobus"),
           detail: "Serverless · on-demand producer",
           status: "idle",
           timestamp: "last run OK · 2h ago",
@@ -253,13 +257,13 @@ export const PHARMA_HEALTH: PipelineHealth = {
       title: "Identity & secrets",
       items: [
         {
-          label: "iot-sss-industries",
+          label: `${prefix}-sss-industries`,
           detail: "Service principal · shared across industries",
           status: "healthy",
           mono: true,
         },
         {
-          label: "iot-secrets",
+          label: sharedSecretScope(prefix),
           detail: "Secret scope · MSK + Lakebase credentials",
           status: "healthy",
           mono: true,
@@ -267,7 +271,8 @@ export const PHARMA_HEALTH: PipelineHealth = {
       ],
     },
   ],
-};
+  };
+}
 
 /** Roll a set of items up to a single worst-case status (idle is benign). */
 export function rollup(items: ResourceItem[]): HealthStatus {
