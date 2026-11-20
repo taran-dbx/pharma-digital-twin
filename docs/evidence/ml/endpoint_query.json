@@ -1,0 +1,58 @@
+{
+  "endpoint": "pharma-twin-spindle-risk",
+  "request": {
+    "dataframe_records": [
+      {
+        "hours_since_maintenance": 3260.016389,
+        "load_max": 54.565714,
+        "load_mean": 54.565714,
+        "load_slope": 0.0,
+        "power_max": 20.0,
+        "power_mean": 20.0,
+        "power_slope": 0.0,
+        "temp_last": 45.0,
+        "temp_margin_c": 15.0,
+        "temp_max": 45.5,
+        "temp_mean": 44.983333,
+        "temp_slope": 0.033898,
+        "vibration_max": 2.0,
+        "vibration_mean": 2.0,
+        "vibration_slope": 0.0
+      },
+      {
+        "hours_since_maintenance": 3260.016389,
+        "load_max": 60.022286,
+        "load_mean": 60.022286,
+        "load_slope": 0.0,
+        "power_max": 22.0,
+        "power_mean": 22.0,
+        "power_slope": 0.0,
+        "temp_last": 56.4,
+        "temp_margin_c": 3.6,
+        "temp_max": 56.4,
+        "temp_mean": 46.9,
+        "temp_slope": 8.932481,
+        "vibration_max": 4.95,
+        "vibration_mean": 3.475,
+        "vibration_slope": 3.0
+      }
+    ]
+  },
+  "request_labels": [
+    "calm 60 s window",
+    "heat ramp starting (+0.6 \u00b0C/s for 20 s, vibration rising)"
+  ],
+  "response": {
+    "predictions": [
+      {
+        "risk_score": 0.1633140423984633,
+        "top_features": "[{\"feature\": \"vibration_mean\", \"contribution\": -0.6177, \"value\": 2.0}, {\"feature\": \"power_max\", \"contribution\": 0.4623, \"value\": 20.0}, {\"feature\": \"vibration_slope\", \"contribution\": -0.3768, \"value\": 0.0}]"
+      },
+      {
+        "risk_score": 0.9017966061568232,
+        "top_features": "[{\"feature\": \"vibration_slope\", \"contribution\": 2.2238, \"value\": 3.0}, {\"feature\": \"vibration_mean\", \"contribution\": 0.2975, \"value\": 3.475}, {\"feature\": \"vibration_max\", \"contribution\": 0.2937, \"value\": 4.95}]"
+      }
+    ],
+    "served-model-name": "spindle_thermal_risk-2"
+  }
+}

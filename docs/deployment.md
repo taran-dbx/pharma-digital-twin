@@ -99,6 +99,10 @@ checked against `databricks.yml` by `tests/test_bundle_config.py`.
 | `zerobus_secret_key` | `ZEROBUS_SECRET_KEY` | Default `zerobus-client-secret` (the runtime default). `app.yaml` emits it empty, but the Apps API rejects empty env values in a bundle `config` |
 | `industries`, `admin_group` | `INDUSTRIES`, `ADMIN_GROUP` | Admin access is group based. The optional `ADMIN_EMAILS` (CSV) is **not** in the bundle; see below |
 | `usage_tracking_enabled` | `USAGE_TRACKING_ENABLED` | Default `"true"`; set `"false"` to opt out of dbdemos-tracker usage tracking (see README) |
+| `risk_model_schema`, `risk_model_short_name`, `risk_model_version` | UC model `<uc_catalog>.pharma_twin.spindle_thermal_risk`, `RISK_MODEL_NAME`, served version | Thermal-risk model; see [ml-risk-model.md](ml-risk-model.md) |
+| `risk_endpoint_name` | `risk-endpoint` serving resource (CAN_QUERY) → `RISK_ENDPOINT_NAME` via `value_from` | Default `pharma-twin-spindle-risk`. A new workspace needs one training run before the first deploy ([bootstrap](ml-risk-model.md#bootstrap-on-a-new-workspace)) |
+| `risk_job_name`, `risk_training_data_source` | Training job | Defaults `pharma-twin-risk-model-train`, `auto` |
+| `risk_alert_threshold` | `RISK_ALERT_THRESHOLD` | Predicted-alert cut-off, default `0.22` (the champion run's `decision_threshold`) |
 
 **Per-pipeline Genie spaces** need no extra bundle variable or app resource:
 after each deploy the app creates one Genie space per `(pipeline, mode)` for every
