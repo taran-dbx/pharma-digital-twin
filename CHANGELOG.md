@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Grounded AI action plan for an alert episode (`POST /api/alerts/{alert_id}/action-plan`).
+  It calls a Foundation Model endpoint (`GENAI_ENDPOINT`, default
+  `databricks-claude-sonnet-5-5`, as a `CAN_QUERY` app resource). Every claim cites its
+  rows, and a schema and grounding check validates citations, numbers and serials.
+  Every attempt is audited in Lakebase `genai_action_plan_audit` and mirrored to UC
+  `intelligence_genai_audit` for Genie. The incident panel has an "AI action plan" card
+  whose apply action pre-fills the signed response form. See
+  `docs/genai-action-plan.md`.
 - Declarative Automation Bundle (`databricks.yml`, `resources/app.yml`) with `dev` and
   `prod` targets and variable-driven configuration.
 - `client/` frontend source is tracked, so `static/dist` is reproducible.

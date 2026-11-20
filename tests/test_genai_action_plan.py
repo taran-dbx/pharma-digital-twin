@@ -36,7 +36,7 @@ class TestFmClient:
         call = client.serving_endpoints.calls[0]
         assert call["name"] == "databricks-claude-haiku-5-5"
         assert [m.role.value for m in call["messages"]] == ["system", "user"]
-        assert call["temperature"] == 0.0
+        assert "temperature" not in call  # Claude 5.x endpoints reject it
 
     async def test_endpoint_defaults_and_env_override(self, monkeypatch) -> None:
         monkeypatch.delenv(fm_client.ENDPOINT_ENV, raising=False)
@@ -67,6 +67,29 @@ class TestFmClient:
         with pytest.raises(fm_client.ModelCallError) as info:
             await fm_client.query_chat((), client=client, retries=3, sleep=_no_sleep)
         assert info.value.kind == "endpoint" and info.value.attempts == 1
+
+    async def test_describe_endpoint_reads_the_served_model_once(self, monkeypatch) -> None:
+        from types import SimpleNamespace
+
+        monkeypatch.setattr(fm_client, "_described", {})
+        foundation = SimpleNamespace(
+            name="system.ai.databricks-claude-sonnet-5-5", display_name="Claude Sonnet 5.5"
+        )
+        endpoint = SimpleNamespace(
+            config=SimpleNamespace(
+                served_entities=[SimpleNamespace(foundation_model=foundation, entity_version=None)]
+            )
+        )
+        calls = []
+        client = SimpleNamespace(
+            serving_endpoints=SimpleNamespace(get=lambda name: calls.append(name) or endpoint)
+        )
+        expected = ("system.ai.databricks-claude-sonnet-5-5", "Claude Sonnet 5.5")
+        assert await fm_client.describe_endpoint("ep", client) == expected
+        assert await fm_client.describe_endpoint("ep", client) == expected
+        assert calls == ["ep"]
+        broken = SimpleNamespace(serving_endpoints=SimpleNamespace())
+        assert await fm_client.describe_endpoint("other", broken) == (None, None)
 
     async def test_list_content_is_joined(self) -> None:
         answer = reply("")

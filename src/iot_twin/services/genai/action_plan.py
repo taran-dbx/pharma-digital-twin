@@ -199,10 +199,11 @@ async def generate_action_plan(
             raise ActionPlanModelError(str(exc), kind=exc.kind, record=entry) from exc
         latency = int((time.monotonic() - started) * 1000)
         response, check, status = _evaluate(reply.text, grounding, prompt.trusted_text)
+        served, version = await fm_client.describe_endpoint(endpoint, request.client)
         entry = AuditRecord(
             **base,
-            model=reply.model or endpoint,
-            model_version=reply.served_model_name,
+            model=reply.model or served or endpoint,
+            model_version=reply.served_model_name or version,
             response={**response, "attempts": reply.attempts},
             grounding_check=check.status,
             grounding_reasons=list(check.reasons),

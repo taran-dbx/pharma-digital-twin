@@ -9,7 +9,9 @@ apply to every call.
 
 Each attempt is bounded by ``GENAI_TIMEOUT_S``; transient failures (timeouts,
 429, 5xx) are retried up to ``GENAI_MAX_RETRIES`` times with backoff. Permission,
-not-found and bad-request errors are not retried.
+not-found and bad-request errors are not retried. No ``temperature`` is sent:
+Claude 5.x endpoints reject it, and determinism comes from the prompt, the
+schema and the grounding check rather than sampling settings.
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ TIMEOUT_ENV = "GENAI_TIMEOUT_S"
 RETRIES_ENV = "GENAI_MAX_RETRIES"
 DEFAULT_TIMEOUT_S = 60.0
 DEFAULT_RETRIES = 2
-MAX_TOKENS = 2500
+MAX_TOKENS = 6000
 BACKOFF_S = 1.0
 
 _TRANSIENT = (
@@ -60,6 +62,35 @@ class ModelReply:
     served_model_name: str | None
     usage: dict[str, int | None] = field(default_factory=dict)
     attempts: int = 1
+
+
+DESCRIBE_TIMEOUT_S = 5.0
+_described: dict[str, tuple[str | None, str | None]] = {}
+
+
+async def describe_endpoint(name: str, client: Any | None = None) -> tuple[str | None, str | None]:
+    """``(served model, version)`` from the endpoint config; best effort, cached per name.
+
+    Pay-per-token endpoints report e.g. ``system.ai.databricks-claude-sonnet-5-5`` and
+    the display name ``Claude Sonnet 5.5``; custom endpoints report entity name/version.
+    """
+    if name in _described:
+        return _described[name]
+    api = client or WorkspaceClient()
+    try:
+        endpoint = await asyncio.wait_for(
+            asyncio.to_thread(api.serving_endpoints.get, name), timeout=DESCRIBE_TIMEOUT_S
+        )
+        entity = (getattr(getattr(endpoint, "config", None), "served_entities", None) or [None])[0]
+        foundation = getattr(entity, "foundation_model", None)
+        model = getattr(foundation, "name", None) or getattr(entity, "entity_name", None)
+        version = getattr(entity, "entity_version", None) or getattr(
+            foundation, "display_name", None
+        )
+    except Exception:  # noqa: BLE001 - metadata only; never blocks a plan
+        return None, None
+    _described[name] = (model, version)
+    return model, version
 
 
 def endpoint_name() -> str:
@@ -135,7 +166,6 @@ async def query_chat(
                     name=name,
                     messages=payload,
                     max_tokens=MAX_TOKENS,
-                    temperature=0.0,
                 ),
                 timeout=limit,
             )

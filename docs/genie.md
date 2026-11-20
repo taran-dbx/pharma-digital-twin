@@ -331,7 +331,10 @@ return `available: false` with `supported: false`. An unknown setup returns 404.
 
 The list depends on the industry and mode. Manufacturing (Medical Devices) leads with medical-device
 quality questions: lots machined outside the validated limit, part serials to quarantine for the latest
-excursion, time to detect each excursion, and which excursions this shift need an NCR. Other industries get
+excursion, time to detect each excursion, and which excursions this shift need an NCR. Two more questions
+cover the AI action plan: why Spindle 3 was flagged and what the AI recommended, and which rows the AI used
+and whether its plan passed the grounding check. Both are answered from `intelligence_genai_audit`; see
+[genai-action-plan.md](genai-action-plan.md). Other industries get
 shared questions (health index, downtime, anomalies, faults, maintenance), per-sensor questions (average
 reading per hour of their first two sample sensors) and questions for the mode. The exact list per industry
 and mode is pinned by the golden files in `tests/golden/`.

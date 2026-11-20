@@ -47,6 +47,19 @@ Alert list, history, acknowledge, responses, evaluate.
 | POST | `/api/alerts/{alert_id}/responses` |
 | POST | `/api/alerts/evaluate` |
 
+`POST …/responses` accepts an optional `action_plan_id`: the signed decision then
+marks that AI action plan applied (who, when, which response).
+
+### `routes/genai.py`
+
+Grounded, audited AI action plans (advisory). See [genai-action-plan.md](genai-action-plan.md).
+
+| Method | Path |
+|---|---|
+| POST | `/api/alerts/{alert_id}/action-plan` |
+| GET | `/api/alerts/{alert_id}/action-plan` |
+| GET | `/api/genai/audit/{plan_id}` |
+
 ### `routes/cluster.py`
 
 Cluster helpers and source test.
