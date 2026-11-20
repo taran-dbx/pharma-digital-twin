@@ -86,7 +86,9 @@ class TestSnapshotDdl:
     def test_quotes_in_metadata_are_escaped(self) -> None:
         alert = {**PREDICTED, "metadata": {**PREDICTED["metadata"], "note": "it's hot"}}
         [row] = ics._alert_snapshot_rows([alert])
-        assert "it''s hot" in row
+        # Databricks SQL string literals escape quotes (and backslashes) with a backslash.
+        assert "it\\'s hot" in row
+        assert "it''s hot" not in row
 
     @pytest.mark.asyncio
     async def test_provision_migrates_an_old_snapshot_table(self) -> None:

@@ -67,7 +67,8 @@ class TestExpectedTables:
         assert "cat.pharma_twin_sch.intelligence_alert_snapshot" in tables
         assert "cat.pharma_twin_sch.manufacturing_realtime" not in tables
         assert list(tables) == sorted(tables)
-        assert len(tables) == 7
+        assert "cat.pharma_twin_sch.intelligence_genai_audit" in tables
+        assert len(tables) == 8
 
     def test_rejects_unknown_mode(self) -> None:
         with pytest.raises(ValueError):

@@ -10,6 +10,7 @@ Tables:
 - intelligence_maintenance_records
 - intelligence_alert_rules
 - intelligence_alert_snapshot  (read-only snapshot contract; Genie cannot mutate alerts)
+- intelligence_genai_audit     (read-only mirror of the AI action-plan audit trail)
 
 The snapshot carries the thermal-risk model's output on predicted alerts
 (``alert_kind``, ``risk_score``, ``model_name``, ``model_version``,
@@ -42,6 +43,7 @@ TABLE_NAMES: tuple[str, ...] = (
     "intelligence_maintenance_records",
     "intelligence_alert_rules",
     "intelligence_alert_snapshot",
+    "intelligence_genai_audit",
 )
 
 # Snapshot columns, in insert order. The first eleven are the original contract;
@@ -113,6 +115,33 @@ fault_code STRING
     "intelligence_alert_snapshot": ",\n".join(
         f"{name} {sql_type}" for name, sql_type in ALERT_SNAPSHOT_COLUMNS
     ),
+    "intelligence_genai_audit": """
+plan_id STRING,
+alert_id STRING,
+industry STRING,
+requested_by STRING,
+requested_at STRING,
+endpoint STRING,
+model STRING,
+model_version STRING,
+prompt_template_version STRING,
+prompt_hash STRING,
+grounding_hash STRING,
+grounding_check STRING,
+grounding_reasons STRING,
+status STRING,
+citation_ids STRING,
+grounding_rows STRING,
+plan_summary STRING,
+plan STRING,
+risk_score DOUBLE,
+risk_model STRING,
+risk_model_version STRING,
+latency_ms BIGINT,
+total_tokens BIGINT,
+applied_by STRING,
+applied_at STRING
+""",
 }
 
 _KIND_BY_NAME: dict[str, str] = {
@@ -121,6 +150,7 @@ _KIND_BY_NAME: dict[str, str] = {
     "intelligence_maintenance_records": "maintenance_records",
     "intelligence_alert_rules": "alert_rules",
     "intelligence_alert_snapshot": "alert_snapshot",
+    "intelligence_genai_audit": "genai_audit",
 }
 
 
@@ -193,9 +223,16 @@ def alert_snapshot_contract(syncer: Any | None = None) -> dict[str, Any]:
 
 
 def _sql_str(value: Any) -> str:
+    """A Databricks SQL string literal for ``value``.
+
+    Databricks SQL treats ``\\`` as the escape character inside string literals, so
+    both backslashes and single quotes are backslash-escaped. Doubling quotes
+    alone is not enough: a value ending in ``\\`` or containing ``\\'`` would
+    end the literal early and break (or inject into) the statement.
+    """
     if value is None:
         return "NULL"
-    escaped = str(value).replace("'", "''")
+    escaped = str(value).replace("\\", "\\\\").replace("'", "\\'")
     return f"'{escaped}'"
 
 

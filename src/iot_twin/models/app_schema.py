@@ -286,6 +286,130 @@ PRODUCTION_EVENT_INDEXES = (
     "ON production_event (industry, created_at DESC)",
 )
 
+# Part 11-style trace of every AI action plan: who asked, when, which endpoint and
+# model answered, the exact prompt (template version + hash), the exact rows it was
+# given (grounding_rows, with citation ids), the answer and its grounding check.
+# Like alert_response, the FK is ON DELETE RESTRICT: an alert with audited AI
+# plans cannot be deleted, so the trace always outlives (and points at) its alert.
+GENAI_AUDIT_ALERT_FK = "genai_action_plan_audit_alert_id_fkey"
+GENAI_ACTION_PLAN_AUDIT_DDL = f"""
+CREATE TABLE IF NOT EXISTS genai_action_plan_audit (
+    id UUID PRIMARY KEY,
+    alert_id UUID NOT NULL
+        CONSTRAINT {GENAI_AUDIT_ALERT_FK} REFERENCES alert(id) ON DELETE RESTRICT,
+    industry TEXT,
+    requested_by TEXT NOT NULL,
+    requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    endpoint TEXT NOT NULL,
+    model TEXT,
+    model_version TEXT,
+    prompt_template_version TEXT NOT NULL,
+    prompt_hash TEXT NOT NULL,
+    grounding_hash TEXT NOT NULL,
+    grounding_rows JSONB NOT NULL DEFAULT '[]'::jsonb,
+    response JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+    grounding_check TEXT NOT NULL CHECK (grounding_check IN ('pass', 'fail')),
+    grounding_reasons JSONB NOT NULL DEFAULT '[]'::jsonb,
+    status TEXT NOT NULL CHECK (status IN ('generated', 'rejected', 'error')),
+    error TEXT,
+    latency_ms INTEGER,
+    prompt_tokens INTEGER,
+    completion_tokens INTEGER,
+    total_tokens INTEGER,
+    applied_by TEXT,
+    applied_at TIMESTAMPTZ,
+    applied_response_id UUID
+        REFERENCES alert_response(id) ON DELETE RESTRICT,
+    applied_override_reason TEXT
+)
+"""
+
+GENAI_AUDIT_APPLIED_COLUMNS: tuple[str, ...] = (
+    "applied_by",
+    "applied_at",
+    "applied_response_id",
+    "applied_override_reason",
+)
+GENAI_AUDIT_TRIGGER = "genai_action_plan_audit_append_only"
+_GENAI_MUTABLE = " ".join(f"- '{column}'" for column in GENAI_AUDIT_APPLIED_COLUMNS)
+
+# Added after the first build of this table; guarded so a non-owner boot is a no-op.
+GENAI_AUDIT_COLUMN_MIGRATION = """
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'genai_action_plan_audit'
+          AND column_name = 'applied_override_reason'
+    ) THEN
+        ALTER TABLE genai_action_plan_audit ADD COLUMN IF NOT EXISTS applied_override_reason TEXT;
+    END IF;
+END
+$$
+"""
+
+# Append-only: DELETE and TRUNCATE are refused, and an UPDATE may only set the
+# applied_* columns, once (while applied_at is NULL). Created only when missing,
+# so boots by a non-owner role never need ownership.
+GENAI_AUDIT_APPEND_ONLY_MIGRATION = f"""
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE p.proname = '{GENAI_AUDIT_TRIGGER}' AND n.nspname = current_schema()
+    ) THEN
+        EXECUTE $create$
+        CREATE FUNCTION {GENAI_AUDIT_TRIGGER}() RETURNS trigger LANGUAGE plpgsql AS $fn$
+        BEGIN
+            IF TG_OP IN ('DELETE', 'TRUNCATE') THEN
+                RAISE EXCEPTION 'genai_action_plan_audit is append-only (% refused)', TG_OP;
+            END IF;
+            IF OLD.applied_at IS NOT NULL THEN
+                RAISE EXCEPTION 'genai_action_plan_audit row % is already applied', OLD.id;
+            END IF;
+            IF (to_jsonb(NEW) {_GENAI_MUTABLE}) IS DISTINCT FROM (to_jsonb(OLD) {_GENAI_MUTABLE}) THEN
+                RAISE EXCEPTION 'genai_action_plan_audit is append-only: only applied_* may be set';
+            END IF;
+            RETURN NEW;
+        END
+        $fn$
+        $create$;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgrelid = 'genai_action_plan_audit'::regclass AND tgname = '{GENAI_AUDIT_TRIGGER}'
+    ) THEN
+        CREATE TRIGGER {GENAI_AUDIT_TRIGGER} BEFORE UPDATE OR DELETE ON genai_action_plan_audit
+            FOR EACH ROW EXECUTE FUNCTION {GENAI_AUDIT_TRIGGER}();
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgrelid = 'genai_action_plan_audit'::regclass
+          AND tgname = '{GENAI_AUDIT_TRIGGER}_truncate'
+    ) THEN
+        CREATE TRIGGER {GENAI_AUDIT_TRIGGER}_truncate BEFORE TRUNCATE ON genai_action_plan_audit
+            FOR EACH STATEMENT EXECUTE FUNCTION {GENAI_AUDIT_TRIGGER}();
+    END IF;
+END
+$$
+"""
+
+# App-generated GenAI settings, e.g. the pseudonym HMAC key used when no
+# GENAI_PSEUDONYM_SALT secret is bound (services/genai/redact.py).
+GENAI_SETTINGS_DDL = """
+CREATE TABLE IF NOT EXISTS genai_settings (
+    name TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)
+"""
+
+GENAI_ACTION_PLAN_AUDIT_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_genai_audit_alert_requested "
+    "ON genai_action_plan_audit (alert_id, requested_at DESC)",
+)
+
 ALERT_INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_alert_status_updated ON alert (status, updated_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_alert_industry ON alert (industry)",
@@ -402,6 +526,31 @@ async def ensure_production_tables(db: _Executor) -> None:
     await _ensure_indexes(db, PRODUCTION_EVENT_INDEXES)
 
 
+async def ensure_genai_action_plan_audit_table(db: _Executor) -> None:
+    """Create the AI action-plan audit table, index, late column and append-only trigger.
+
+    ``CREATE TABLE IF NOT EXISTS`` is a no-op for a non-owner when the table
+    exists; the index step tolerates the ownership error Postgres raises before
+    its IF-NOT-EXISTS skip (see :func:`ensure_provisioned_resource_table`).
+    """
+    await db.execute(GENAI_ACTION_PLAN_AUDIT_DDL)
+    await _ensure_indexes(db, GENAI_ACTION_PLAN_AUDIT_INDEXES)
+    for step, sql in (
+        ("override column", GENAI_AUDIT_COLUMN_MIGRATION),
+        ("append-only trigger", GENAI_AUDIT_APPEND_ONLY_MIGRATION),
+    ):
+        try:
+            await db.execute(sql)
+        except Exception as exc:  # noqa: BLE001
+            if not _is_ownership_error(exc):
+                raise
+            logger.warning(
+                "genai_action_plan_audit %s not applied: the table is owned by another role (%s)",
+                step,
+                exc,
+            )
+
+
 async def ensure_app_schema(db: _Executor) -> None:
     """Create all app-backend tables in FK-dependency order.
 
@@ -417,3 +566,5 @@ async def ensure_app_schema(db: _Executor) -> None:
     await ensure_alert_event_table(db)
     await ensure_alert_response_table(db)
     await ensure_production_tables(db)
+    await ensure_genai_action_plan_audit_table(db)
+    await db.execute(GENAI_SETTINGS_DDL)

@@ -132,7 +132,9 @@ def test_dev_target_does_not_prefix_resource_names() -> None:
     assert _targets()["dev"].get("mode") == "development"
     app = yaml.safe_load((ROOT / "resources" / "app.yml").read_text(encoding="utf-8"))
     serving = [
-        r for r in app["resources"]["apps"]["pharma_twin"]["resources"] if "serving_endpoint" in r
+        r
+        for r in app["resources"]["apps"]["pharma_twin"]["resources"]
+        if "serving_endpoint" in r and r["name"] == "risk-endpoint"
     ]
     assert [r["serving_endpoint"]["name"] for r in serving] == [ENDPOINT_REF]
     env = {e["name"]: e for e in app["resources"]["apps"]["pharma_twin"]["config"]["env"]}
@@ -166,7 +168,36 @@ def test_risk_resources_resolve_to_owned_pharma_twin_names() -> None:
     serving = [
         r["serving_endpoint"]["name"]
         for r in app["resources"]["apps"]["pharma_twin"]["resources"]
-        if "serving_endpoint" in r
+        if "serving_endpoint" in r and r["name"] == "risk-endpoint"
     ]
     # The app queries the bundle's endpoint resource, i.e. pharma-twin-spindle-risk.
     assert serving == ["${resources.model_serving_endpoints.spindle_risk.name}"]
+
+
+def test_genai_endpoint_is_a_can_query_resource_injected_as_env() -> None:
+    data = yaml.safe_load((ROOT / "resources" / "app.yml").read_text(encoding="utf-8"))
+    app = data["resources"]["apps"]["pharma_twin"]
+    resource = next(r for r in app["resources"] if r["name"] == "genai-endpoint")
+    assert resource["serving_endpoint"] == {
+        "name": "${var.genai_endpoint}",
+        "permission": "CAN_QUERY",
+    }
+    env = {e["name"]: e for e in app["config"]["env"]}
+    assert env["GENAI_ENDPOINT"] == {"name": "GENAI_ENDPOINT", "value_from": "genai-endpoint"}
+    assert _bundle_variables()["genai_endpoint"]["default"] == "databricks-claude-sonnet-5-5"
+
+
+def test_pseudonym_key_is_a_read_secret_resource_injected_as_env() -> None:
+    data = yaml.safe_load((ROOT / "resources" / "app.yml").read_text(encoding="utf-8"))
+    app = data["resources"]["apps"]["pharma_twin"]
+    resource = next(r for r in app["resources"] if r["name"] == "genai-pseudonym-salt")
+    assert resource["secret"] == {
+        "scope": "${var.secret_scope}",
+        "key": "${var.genai_pseudonym_salt_key}",
+        "permission": "READ",
+    }
+    env = {e["name"]: e for e in app["config"]["env"]}
+    assert env["GENAI_PSEUDONYM_SALT"]["value_from"] == "genai-pseudonym-salt"
+    variables = _bundle_variables()
+    assert variables["secret_scope"]["default"] == "pharma-twin-secrets"
+    assert variables["genai_pseudonym_salt_key"]["default"] == "genai-pseudonym-salt"

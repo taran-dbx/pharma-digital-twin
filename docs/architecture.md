@@ -198,12 +198,23 @@ allowlist on the Genie space, not prompt text: `allowed_uc_tables()` returns onl
 intelligence reference tables, never industry telemetry, and `space_table_allowlist_status`
 compares the space against that set.
 
+## AI action plan
+
+`routes/genai.py` and `services/genai/` generate an advisory action plan for one alert
+episode. The plan is grounded in cited Lakebase, DBSQL and catalog rows and comes from the
+Foundation Model endpoint in `GENAI_ENDPOINT`, injected from the `genai-endpoint` app
+resource with `CAN_QUERY`. Every attempt is logged to the Lakebase
+`genai_action_plan_audit` table and mirrored to `intelligence_genai_audit` for Genie. The
+plan never changes alerts. A person applies it through the signed response workflow. See
+[genai-action-plan.md](genai-action-plan.md).
+
 ## Intelligence catalog
 
 `services/intelligence_catalog_service.py` provisions and syncs shared Delta reference tables
 in `{UC_CATALOG}.{UC_SCHEMA}`: `intelligence_assets`, `intelligence_sensor_bindings`,
-`intelligence_maintenance_records`, `intelligence_alert_rules` and `intelligence_alert_snapshot`
-(a read-only snapshot of alerts). Admins inspect and trigger a full sync through
+`intelligence_maintenance_records`, `intelligence_alert_rules`, `intelligence_alert_snapshot`
+(a read-only snapshot of alerts) and `intelligence_genai_audit` (a read-only mirror of the AI
+action-plan audit, synced by `services/genai/audit_sync.py`). Admins inspect and trigger a full sync through
 `GET /api/admin/intelligence/status` and `POST /api/admin/intelligence/sync`
 (`routes/intelligence.py`).
 

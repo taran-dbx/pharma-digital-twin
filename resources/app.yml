@@ -46,6 +46,10 @@ resources:
             value: ${var.admin_group}
           - name: GENIE_SPACE_ID
             value_from: genie-space
+          - name: GENAI_ENDPOINT
+            value_from: genai-endpoint
+          - name: GENAI_PSEUDONYM_SALT
+            value_from: genai-pseudonym-salt
           - name: USAGE_TRACKING_ENABLED
             value: ${var.usage_tracking_enabled}
           - name: RISK_ENDPOINT_NAME
@@ -68,6 +72,15 @@ resources:
           serving_endpoint:
             name: ${resources.model_serving_endpoints.spindle_risk.name}
             permission: CAN_QUERY
+        - name: genai-endpoint
+          serving_endpoint:
+            name: ${var.genai_endpoint}
+            permission: CAN_QUERY
+        - name: genai-pseudonym-salt
+          secret:
+            scope: ${var.secret_scope}
+            key: ${var.genai_pseudonym_salt_key}
+            permission: READ
         - name: lakebase
           postgres:
             branch: projects/${var.lakebase_project}/branches/${var.lakebase_branch}

@@ -101,6 +101,8 @@ checked against `databricks.yml` by `tests/test_bundle_config.py`.
 | `uc_catalog`, `uc_schema` | `UC_CATALOG`, `UC_SCHEMA` | |
 | `warehouse_id` | `sql-warehouse` resource (CAN_USE) → `DATABRICKS_SQL_WAREHOUSE_ID` via `value_from` | |
 | `genie_space_id` | `genie-space` resource (CAN_VIEW) → `GENIE_SPACE_ID` via `value_from` | |
+| `genai_endpoint` | `genai-endpoint` serving-endpoint resource (CAN_QUERY) → `GENAI_ENDPOINT` via `value_from` | Default `databricks-claude-sonnet-5-5`; any READY chat endpoint works. Upgrading adds the UC table `intelligence_genai_audit` to the Genie allowlist. Re-provision existing Genie spaces afterwards. See [genai-action-plan.md](genai-action-plan.md#genie-upgrade) |
+| `secret_scope`, `genai_pseudonym_salt_key` | `genai-pseudonym-salt` secret resource (READ) → `GENAI_PSEUDONYM_SALT` via `value_from` | Defaults `pharma-twin-secrets` / `genai-pseudonym-salt`. **Required for bundle deploys:** the resource is always declared, so create the secret before deploying (see *Fresh app prerequisites*). The Lakebase-persisted fallback key applies only to local or non-bundle runs. See [genai-action-plan.md](genai-action-plan.md#people-and-free-text-pii) |
 | `lakebase_project`, `lakebase_branch`, `lakebase_database` | `lakebase` Postgres resource (CAN_CONNECT_AND_CREATE), `LAKEBASE_PROJECT`, `LAKEBASE_ENDPOINT` | |
 | `pghost` | `PGHOST` | Not injected by the Postgres resource; keep as a variable |
 | `pipelines_lakebase_project` | `PIPELINES_LAKEBASE_PROJECT` | |
@@ -293,6 +295,25 @@ Add the external location and service credential grants listed under
 **Genie.** Per-pipeline spaces also need the permission to create Genie spaces and
 `CAN_USE` on the warehouse (already granted by the `sql-warehouse` resource). See
 [genie.md](genie.md).
+
+**AI action-plan pseudonym key.** `resources/app.yml` always declares the
+`genai-pseudonym-salt` secret resource (scope `${var.secret_scope}`, key
+`${var.genai_pseudonym_salt_key}`, `READ`). A DAB app resource cannot be made
+optional, so a deploy fails when the scope or key does not exist. Create both
+before the first deploy, and before redeploying an app that predates this
+resource:
+
+```bash
+databricks secrets create-scope pharma-twin-secrets --profile <profile>
+databricks secrets put-secret pharma-twin-secrets genai-pseudonym-salt \
+  --string-value "$(openssl rand -hex 32)" --profile <profile>
+```
+
+The resource grants the app SP `READ` on the scope. The fallback to a random
+key persisted in Lakebase (`genai_settings`) applies only to runs without the
+bundle resource, such as local runs or an app deployed without
+`resources/app.yml`. `GET /api/genai/status` (admin) shows the key source in
+use. See [genai-action-plan.md](genai-action-plan.md#people-and-free-text-pii).
 
 Workspace group membership in `admin_group` is for users, not the SP.
 

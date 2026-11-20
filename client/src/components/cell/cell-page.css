@@ -1199,3 +1199,132 @@
   margin: 0;
   font-weight: 600;
 }
+/* ---------- AI action plan (advisory) ---------- */
+.cell-plan {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--db-border);
+  border-radius: 10px;
+  background: var(--db-background);
+  font-size: 12.5px;
+}
+.cell-plan__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.cell-plan__head .cellops-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: auto;
+}
+.cell-plan__head svg,
+.cell-plan__badge svg {
+  width: 14px;
+  height: 14px;
+}
+.cell-plan__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  border: 1px solid var(--db-border);
+}
+.cell-plan__badge.is-pass {
+  color: var(--cell-ok, #1a7f37);
+  border-color: color-mix(in srgb, var(--cell-ok, #1a7f37) 45%, var(--db-border));
+}
+.cell-plan__badge.is-fail,
+.cell-plan__badge.is-rejected,
+.cell-plan__badge.is-error {
+  color: var(--cell-warn, #b35900);
+  border-color: color-mix(in srgb, var(--cell-warn, #b35900) 45%, var(--db-border));
+}
+.cell-plan__meta,
+.cell-plan__note,
+.cell-plan__empty {
+  margin: 0;
+  color: var(--db-muted-foreground);
+  font-size: 11.5px;
+}
+.cell-plan__body {
+  display: grid;
+  gap: 6px;
+}
+.cell-plan__claim {
+  margin: 0;
+}
+.cell-plan__claim > span:first-child {
+  display: block;
+  color: var(--db-muted-foreground);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.cell-plan__cites {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.cell-plan__cite {
+  padding: 0 6px;
+  border: 1px solid var(--db-border);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.cell-plan__cite.is-missing {
+  border-style: dashed;
+  color: var(--cell-warn, #b35900);
+}
+.cell-plan__steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.cell-plan__steps li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+.cell-plan__owner {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--db-border) 50%, transparent);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.cell-plan__row {
+  margin: 0;
+  padding: 8px;
+  border: 1px dashed var(--db-border);
+  border-radius: 6px;
+}
+.cell-plan__row pre {
+  margin: 4px 0 0;
+  max-height: 220px;
+  overflow: auto;
+  font-size: 11px;
+}
+.cell-plan__reasons {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--cell-warn, #b35900);
+  font-size: 11.5px;
+}
+.cell-signoff__prefill {
+  margin: 0;
+  color: var(--db-muted-foreground);
+  font-size: 11.5px;
+}

@@ -172,6 +172,7 @@ export function ManufacturingCellPage({
       controllable={controllable}
       onRecorded={onRecorded}
       onExplain={onExplain}
+      mode={mode}
     />
   );
 

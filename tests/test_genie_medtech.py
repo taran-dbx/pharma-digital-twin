@@ -173,3 +173,36 @@ class TestTrustedPrompt:
         prompt = self._prompt(industry)
         assert "industrial investigation copilot" in prompt
         assert "medical-device" not in prompt
+
+
+class TestGenaiAudit:
+    @pytest.mark.parametrize("mode", MODES)
+    def test_genie_can_trace_ai_plans_and_narrate_the_risk_score(self, mode: str) -> None:
+        """[qa] Genie knows the AI audit mirror and how to narrate a model risk score."""
+        text = _instructions("manufacturing", mode)
+        assert "intelligence_genai_audit" in text
+        assert "citation_ids lists the exact rows the AI was given" in text
+        assert "never invent a score when risk_score is NULL" in text
+        assert content.RISK_MODEL_RULE in text
+        assert "cat.pharma_twin_sch.intelligence_genai_audit" in gss.expected_tables(
+            "manufacturing", mode
+        )
+
+    def test_explain_starter_has_an_example_query(self) -> None:
+        """[qa] 'Explain why Spindle 3 was flagged…' ships with a curated SQL answer."""
+        space = _space("manufacturing", "microbatch")
+        starters = [q["question"][0] for q in space["config"]["sample_questions"]]
+        assert content.EXPLAIN_FLAG_STARTER in starters
+        examples = {
+            e["question"][0]: e["sql"][0] for e in space["instructions"]["example_question_sqls"]
+        }
+        sql = examples[content.EXPLAIN_FLAG_STARTER]
+        assert (
+            "LEFT JOIN cat.pharma_twin_sch.intelligence_genai_audit a ON a.alert_id = s.alert_id"
+            in sql
+        )
+        assert "a.risk_score" in sql and "a.plan_summary" in sql
+
+    def test_other_industries_do_not_mention_the_ai_plan(self) -> None:
+        for industry in OTHERS:
+            assert "intelligence_genai_audit" not in _instructions(industry, "microbatch")

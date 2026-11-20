@@ -179,6 +179,12 @@ def render_app_yaml(profile: dict[str, str]) -> str:
         # Injected by the Apps runtime from the genie-space resource (CAN_VIEW).
         # Never hardcode a Genie space id in profiles or source.
         _env_from_resource("GENIE_SPACE_ID", "genie-space"),
+        # Injected from the genai-endpoint resource (serving endpoint, CAN_QUERY);
+        # the endpoint name is the bundle variable genai_endpoint.
+        _env_from_resource("GENAI_ENDPOINT", "genai-endpoint"),
+        # Pseudonym HMAC key from the genai-pseudonym-salt secret resource (READ,
+        # scope pharma-twin-secrets). Without it the app persists a random key in Lakebase.
+        _env_from_resource("GENAI_PSEUDONYM_SALT", "genai-pseudonym-salt"),
         # Usage tracking (dbdemos-tracker) opt-out flag; on unless the profile says otherwise.
         _env_entry(
             "USAGE_TRACKING_ENABLED",

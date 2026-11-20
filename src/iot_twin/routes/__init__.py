@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from iot_twin.routes.alerts import router as alerts_router
 from iot_twin.routes.cluster import router as cluster_router
 from iot_twin.routes.deployment import router as deployment_router
+from iot_twin.routes.genai import router as genai_router
 from iot_twin.routes.genie import router as genie_router
 from iot_twin.routes.genie_pipelines import router as genie_pipelines_router
 from iot_twin.routes.health import router as health_router
@@ -61,6 +62,7 @@ def create_api_router() -> APIRouter:
     api.include_router(pipeline_deploy_router)
     api.include_router(streaming_latency_router)
     api.include_router(alerts_router)
+    api.include_router(genai_router)
     api.include_router(production_router)
     api.include_router(value_router)
     api.include_router(genie_router)

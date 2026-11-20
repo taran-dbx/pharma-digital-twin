@@ -150,6 +150,8 @@ _pre_mock_sdk()
 from iot_twin.core.state import AppState
 from iot_twin.domain.catalog import list_alert_rules
 from tests._fakes import fake_credential
+from tests._genai_fixtures import keyed  # noqa: F401 - shared fixture
+from tests._genai_pg import pg, pg_server  # noqa: F401 - shared fixtures
 
 
 @pytest.fixture()

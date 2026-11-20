@@ -4,7 +4,7 @@
    {
     "id": "3eff188fc4da3b6152dfc807842d9f51",
     "question": [
-     "What is the end-to-end p99 latency of the real-time stream over the last hour?"
+     "Which rows did the AI use for the latest Spindle 3 alert, and did its plan pass the grounding check?"
     ]
    },
    {
@@ -28,7 +28,7 @@
    {
     "id": "ab1675b99ffae16504bf66b0cd077b9c",
     "question": [
-     "Which sensors are faulting right now (last 5 minutes)?"
+     "Explain why Spindle 3 was flagged and what the AI recommended"
     ]
    },
    {
@@ -68,6 +68,18 @@
     ]
    },
    {
+    "id": "da22c1ea653ee4c1edcb910eefdcb30d",
+    "question": [
+     "Which sensors are faulting right now (last 5 minutes)?"
+    ]
+   },
+   {
+    "id": "f4084012463fe99fa3350372ec933967",
+    "question": [
+     "What is the end-to-end p99 latency of the real-time stream over the last hour?"
+    ]
+   },
+   {
     "id": "fbe81ba99bab0f3ac1b82ed04c852ee1",
     "question": [
      "Which part serials should be quarantined for the latest Spindle 3 excursion?"
@@ -85,6 +97,9 @@
    },
    {
     "identifier": "cat.pharma_twin_sch.intelligence_assets"
+   },
+   {
+    "identifier": "cat.pharma_twin_sch.intelligence_genai_audit"
    },
    {
     "identifier": "cat.pharma_twin_sch.intelligence_maintenance_records"
@@ -212,6 +227,15 @@
  "instructions": {
   "example_question_sqls": [
    {
+    "id": "69a91646d1b45a1de1e0ff8c4c199d9b",
+    "question": [
+     "What is the streaming throughput and p99 latency over the last hour?"
+    ],
+    "sql": [
+     "SELECT date_trunc('minute', timestamp) AS minute, AVG(processed_rps) AS processed_rps, MAX(e2e_p99) AS e2e_p99_ms FROM cat.pharma_twin_sch.manufacturing_metrics WHERE mode = 'realtime' AND timestamp >= current_timestamp() - INTERVAL 1 HOUR GROUP BY 1 ORDER BY 1"
+    ]
+   },
+   {
     "id": "69dcc902d9813c3f6cc8336e2cb4e67d",
     "question": [
      "Which lots were machined while Spindle 3 was outside its validated limit?"
@@ -259,10 +283,10 @@
    {
     "id": "deb9692f391f664a0aa7fc1ee299dc17",
     "question": [
-     "What is the streaming throughput and p99 latency over the last hour?"
+     "Explain why Spindle 3 was flagged and what the AI recommended"
     ],
     "sql": [
-     "SELECT date_trunc('minute', timestamp) AS minute, AVG(processed_rps) AS processed_rps, MAX(e2e_p99) AS e2e_p99_ms FROM cat.pharma_twin_sch.manufacturing_metrics WHERE mode = 'realtime' AND timestamp >= current_timestamp() - INTERVAL 1 HOUR GROUP BY 1 ORDER BY 1"
+     "SELECT s.alert_id, s.rule_id, s.fault_code, s.status, s.value, s.threshold, s.opened_at, a.risk_score, a.risk_model, a.risk_model_version, a.plan_summary, a.grounding_check, a.citation_ids, a.model, a.requested_at, a.applied_by, a.applied_at FROM cat.pharma_twin_sch.intelligence_alert_snapshot s LEFT JOIN cat.pharma_twin_sch.intelligence_genai_audit a ON a.alert_id = s.alert_id AND a.industry = 'manufacturing' WHERE s.industry = 'manufacturing' AND s.rule_id IN ('mfg-alert-spindle-temp', 'medtech-model-spindle-risk') QUALIFY ROW_NUMBER() OVER (PARTITION BY s.alert_id ORDER BY a.requested_at DESC) = 1 ORDER BY s.opened_at DESC LIMIT 10"
     ]
    },
    {
@@ -374,6 +398,9 @@
      "Time to detect = intelligence_alert_snapshot.opened_at minus the first reading above the validated limit in the same excursion. MTTR = cleared/updated time minus opened_at.\n",
      "First-pass yield / right-first-time means ONLY this: Projected right-first-time = (parts started - parts at risk) / parts started, over the lots an excursion touched. Parts at risk are the parts whose cut overlapped the time Spindle 3 was outside its validated limit. Projected: no CMM results exist yet. Parts started = distinct lb__shadow_manufacturing_sensor_readings_history.metadata:part_serial::string values on cnc_1_* readings in the lot. Never call the process health index first-pass yield.\n",
      "NCRs, QA holds (quarantine_lot), CMM inspection requests and their Part 11-style audit fields (actor, timestamp, reason, comment, signature meaning) are recorded in the app's decision log, not in these tables. For NCR numbers or dispositions, list the VPP-SPINDLE3-TEMP alert episodes and lots at risk, and say the NCR record lives in the app's decision log.\n",
+     "AI action plans: intelligence_genai_audit has one row per AI action plan (plan_id; alert_id = intelligence_alert_snapshot.alert_id). citation_ids lists the exact rows the AI was given (alert:, alert_event:, alert_response:, readings:, lot:, alert_rule:, maintenance:, risk_score: ids) and grounding_rows holds those rows as JSON; plan is the advisory plan JSON and plan_summary its summary; grounding_check is 'pass' or 'fail' (reasons in grounding_reasons); endpoint, model, model_version, prompt_template_version and prompt_hash identify the model call; applied_by / applied_at show who applied it through the signed response workflow (NULL = not applied). An AI plan is a recommendation, never a decision.\n",
+     "Risk score: when a model scored the alert, intelligence_genai_audit.risk_score (0 to 1), risk_model and risk_model_version carry it; alerts with rule_id 'medtech-model-spindle-risk' in intelligence_alert_snapshot are model-flagged risk alerts (value = the score). Narrate it in plain language (higher = more likely the spindle is drifting toward an excursion), say it is a model estimate, name the model and version, and never invent a score when risk_score is NULL.\n",
+     "To explain why Spindle 3 was flagged and what the AI recommended: take the alert's value vs threshold from intelligence_alert_snapshot, LEFT JOIN intelligence_genai_audit on alert_id (latest requested_at), and report the risk score, plan_summary, grounding_check and applied_by.\n",
      "You recommend; you never release or quarantine lots, open NCRs or sign records. Those require a qualified person's electronic signature in the app.\n",
      "Downtime = time intervals where lb__shadow_manufacturing_sensor_readings_history.fault_active is TRUE. Approximate downtime minutes as the count of distinct minutes (date_trunc('minute', lb__shadow_manufacturing_sensor_readings_history.event_time)) with at least one fault_active reading.\n",
      "Availability = 1 - (fault minutes / observed minutes), where observed minutes are distinct minutes with any reading. Report as a percentage.\n",
