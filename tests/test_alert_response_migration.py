@@ -340,7 +340,9 @@ class TestSignedRecordsOnStaleTable:
             "AND contype = 'f'"
         )
         assert rule == "r"
-        with pytest.raises(asyncpg.RestrictViolationError):
+        # Postgres reports RESTRICT as 23001 (RestrictViolationError) on recent servers and
+        # as 23503 (ForeignKeyViolationError) on older ones; confdeltype above is the real check.
+        with pytest.raises((asyncpg.RestrictViolationError, asyncpg.ForeignKeyViolationError)):
             await conn.execute("DELETE FROM alert WHERE id = $1::uuid", alert_id)
         assert await conn.fetchval("SELECT count(*) FROM alert_response") == 3
 
