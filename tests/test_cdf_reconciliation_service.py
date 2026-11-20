@@ -70,7 +70,7 @@ async def test_reconcile_updates_metadata_and_deduplicates_ledger_c7237(monkeypa
     """Successful reconciliation persists one exact binding [C7237][regression]."""
     monkeypatch.setenv("UC_CATALOG", "example-catalog")
     monkeypatch.setenv("UC_SCHEMA", "rtm_lakets_zb")
-    monkeypatch.setenv("PIPELINES_LAKEBASE_PROJECT", "iot-pipelines-example")
+    monkeypatch.setenv("PIPELINES_LAKEBASE_PROJECT", "pharma-twin-pipelines-example")
     db = MagicMock()
     migration_conn = MagicMock()
     migration_conn.close = AsyncMock()
@@ -165,7 +165,7 @@ async def test_failure_closes_connections_and_preserves_deployed_status_c7248(
     """Failed polling clears CDF only on deployed jobs [C7248][defect][regression]."""
     monkeypatch.setenv("UC_CATALOG", "example-catalog")
     monkeypatch.setenv("UC_SCHEMA", "rtm_lakets_zb")
-    monkeypatch.setenv("PIPELINES_LAKEBASE_PROJECT", "iot-pipelines-example")
+    monkeypatch.setenv("PIPELINES_LAKEBASE_PROJECT", "pharma-twin-pipelines-example")
     db = MagicMock()
     deployment = {
         "id": "d1",

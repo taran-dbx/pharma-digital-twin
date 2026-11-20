@@ -46,10 +46,10 @@ AUTH_FAILURE = (
 CONSUMER_CONFIG = {
     "industry": "manufacturing",
     "mode": "realtime",
-    "topic": "iot.manufacturing.realtime",
+    "topic": "pharma-twin.manufacturing.realtime",
     "bootstrapServers": "b-1.example:9198",
     "checkpointLocation": "/Volumes/cat/sch/stream_checkpoints/manufacturing/realtime",
-    "lakebaseProjectId": "iot-pipelines",
+    "lakebaseProjectId": "pharma-twin-pipelines",
     "lakebaseBranch": "manufacturing",
     "metricsTableFqn": "cat.sch.manufacturing_metrics",
 }

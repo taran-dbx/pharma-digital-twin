@@ -749,6 +749,7 @@ class TestLifecycle:
 # ---------------------------------------------------------------------------
 # Live deploy — integration (skipped unless explicitly enabled)
 # ---------------------------------------------------------------------------
+@pytest.mark.integration
 @pytest.mark.skipif(
     os.getenv("RUN_DEPLOY_INTEGRATION") != "1",
     reason="live deploy integration test — set RUN_DEPLOY_INTEGRATION=1 to run",

@@ -730,7 +730,7 @@ class TestGatherChecks:
 
         sql = "\n".join(queries)
         assert "example_eu_catalog.information_schema" in sql
-        assert "iot_pharmaceutical" not in sql
+        assert "pharma_twin_pharmaceutical" not in sql
         assert "pharmaceutical_zerobus" in sql or any(
             check["name"] == hc.DELTA_TABLES_CHECK and check["status"] == hc.PASS
             for check in result["checks"]

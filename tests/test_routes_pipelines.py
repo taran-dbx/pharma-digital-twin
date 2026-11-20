@@ -256,9 +256,7 @@ class TestHealLakebase:
             patch("iot_twin.routes.pipelines.provision_lakebase_role", provision_mock),
             patch("iot_twin.routes.pipelines.install_lakets_if_missing", lakets_mock),
             patch("iot_twin.routes.pipelines.grant_app_can_use", grant_mock),
-            patch(
-                "iot_twin.routes.pipelines._app_name", MagicMock(return_value="iot-digital-twin")
-            ),
+            patch("iot_twin.routes.pipelines._app_name", MagicMock(return_value="pharma-twin")),
             patch("iot_twin.routes.pipelines.deploy_lakets_ops_jobs", ops_jobs_mock),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -282,7 +280,7 @@ class TestHealLakebase:
         grant_mock.assert_called_once()
         g_args = grant_mock.call_args
         assert g_args.args[0] is ws or g_args.kwargs.get("w") is ws
-        assert "iot-digital-twin" in g_args.args or "iot-digital-twin" in g_args.kwargs.values()
+        assert "pharma-twin" in g_args.args or "pharma-twin" in g_args.kwargs.values()
         assert "sp-uuid-123" in g_args.args or "sp-uuid-123" in g_args.kwargs.values()
 
         # LakeTS ops jobs deployed for the pipeline's project/branch/database
@@ -383,9 +381,7 @@ class TestHealLakebase:
             patch("iot_twin.routes.pipelines.provision_lakebase_role", provision_mock),
             patch("iot_twin.routes.pipelines.install_lakets_if_missing", lakets_mock),
             patch("iot_twin.routes.pipelines.grant_app_can_use", MagicMock()),
-            patch(
-                "iot_twin.routes.pipelines._app_name", MagicMock(return_value="iot-digital-twin")
-            ),
+            patch("iot_twin.routes.pipelines._app_name", MagicMock(return_value="pharma-twin")),
             patch("iot_twin.routes.pipelines.deploy_lakets_ops_jobs", MagicMock(return_value=[])),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:

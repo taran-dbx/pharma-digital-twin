@@ -64,7 +64,7 @@ def test_flags_literal_credential_assignments(checker, line, name):
         _assign("credentials", "include", _COLON),
         _assign("credentials", "same-origin"),
         _assign("password", ""),
-        "SCOPE_NAME = " + _Q + "iot-secrets" + _Q,
+        "SCOPE_NAME = " + _Q + "pharma-twin-secrets" + _Q,
     ],
 )
 def test_ignores_non_literals_and_allowlisted_shapes(checker, line):

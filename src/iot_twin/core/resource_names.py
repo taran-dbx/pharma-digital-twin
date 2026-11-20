@@ -162,6 +162,14 @@ def run_name(*parts: str) -> str:
     return prefixed(*parts)
 
 
+def lakets_job_name(kind: str, project_id: str, branch_id: str) -> str:
+    """LakeTS ops job display name, e.g. ``pharma-twin LakeTS Retention — <project>/<branch>``.
+
+    Prefixed so the by-name lookup can never match an upstream LakeTS job.
+    """
+    return f"{get_resource_prefix()} LakeTS {kind} — {project_id}/{branch_id}"
+
+
 def resource_tags(component: str, **extra: str) -> dict[str, str]:
     """Tags stamped on every job the app creates (``app`` = :func:`app_name`)."""
     return {"app": app_name(), "component": component, **extra}

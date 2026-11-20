@@ -31,6 +31,7 @@ import os
 from typing import Any
 
 from iot_twin.core import resource_names
+from iot_twin.core.config import owned_env
 
 logger = logging.getLogger("pharma_twin.services.app_permissions")
 
@@ -48,7 +49,7 @@ def _app_name() -> str:
 
 def _admin_group() -> str:
     """Return the admin group display name from env, falling back to the default."""
-    name = (os.getenv("ADMIN_GROUP") or "").strip()
+    name = owned_env("ADMIN_GROUP", what="ADMIN_GROUP")
     return name or resource_names.admin_group()
 
 

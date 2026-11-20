@@ -93,6 +93,7 @@ import os
 import socket
 from typing import Any
 
+from iot_twin.core.config import get_resource_prefix_ident
 from iot_twin.models.sensor_schema import field_by_record
 
 __all__ = [
@@ -465,9 +466,7 @@ def produce(
 
     # Derive industry from catalog name (<prefix_ident>_<industry>).
     catalog_part = table_fqn.split(".")[0]
-    industry = (
-        catalog_part.removeprefix("iot_") if catalog_part.startswith("iot_") else catalog_part
-    )
+    industry = catalog_part.removeprefix(f"{get_resource_prefix_ident()}_")
 
     try:
         table_props = TableProperties(table_fqn)

@@ -41,6 +41,7 @@ from typing import Any
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.core import Config
 
+from iot_twin.core.config import owned_env
 from iot_twin.core.lakebase import LakebaseConnectionManager
 from iot_twin.core.state import AppState
 from iot_twin.core.workspace_config import get_pipelines_project
@@ -158,7 +159,7 @@ async def get_pipeline_lakebase(state: AppState, pipeline_id: str) -> PipelineLa
         if sc is None:
             return None
 
-        project_id = sc.get("lb_project_id") or os.getenv("LAKEBASE_PROJECT_ID", "")
+        project_id = sc.get("lb_project_id") or owned_env("LAKEBASE_PROJECT_ID")
         branch_id = sc.get("lb_branch_id") or "production"
         database = sc.get("lb_database") or os.getenv("PGDATABASE", "databricks_postgres")
         endpoint_name = f"projects/{project_id}/branches/{branch_id}/endpoints/primary"

@@ -74,7 +74,7 @@ async def _post_provision_secrets(w: MagicMock, scope: str = "iot_scope") -> dic
         ),
         patch("databricks.sdk.WorkspaceClient", return_value=w),
         patch("iot_twin.routes.settings.grant_app_can_use") as grant_mock,
-        patch("iot_twin.routes.settings._app_name", return_value="iot-digital-twin"),
+        patch("iot_twin.routes.settings._app_name", return_value="pharma-twin"),
     ):
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post("/api/settings/provision/secrets", json=body)
@@ -94,7 +94,7 @@ class TestProvisionSecretsAppGrant:
         args = out["grant"].call_args.args
         # (w, app_name, application_id)
         assert args[0] is w
-        assert args[1] == "iot-digital-twin"
+        assert args[1] == "pharma-twin"
         assert args[2] == "fresh-app-id"
 
         provisioned = out["resp"].json()["provisioned"]
@@ -125,7 +125,7 @@ class TestProvisionSecretsAppGrant:
         out["grant"].assert_called_once()
         args = out["grant"].call_args.args
         assert args[0] is w
-        assert args[1] == "iot-digital-twin"
+        assert args[1] == "pharma-twin"
         assert args[2] == "existing-app-id"
 
         provisioned = out["resp"].json()["provisioned"]

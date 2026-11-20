@@ -29,7 +29,7 @@ from tests._fakes import fake_credential
 # ---------------------------------------------------------------------------
 
 # Secret scope *name* used by the setup payload (not a secret).
-SCOPE_NAME = "iot-secrets"
+SCOPE_NAME = "pharma-twin-secrets"
 
 
 def _make_state() -> MagicMock:

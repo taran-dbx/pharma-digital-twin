@@ -56,7 +56,7 @@ _MINIMAL_PROFILE = {
     "PIPELINES_LAKEBASE_PROJECT": "",
     "MSK_BOOTSTRAP_SERVERS": "",
     "INDUSTRIES": "pharmaceutical",
-    "ADMIN_GROUP": "iot-admins",
+    "ADMIN_GROUP": "pharma-twin-admins",
 }
 
 
@@ -177,7 +177,7 @@ def test_us_example_render_uses_blank_zerobus_secret_env(renderer) -> None:
 
     assert 'name: ZEROBUS_SECRET_SCOPE\n    value: ""' in rendered
     assert 'name: ZEROBUS_SECRET_KEY\n    value: ""' in rendered
-    assert "iot-secrets" not in rendered
+    assert "pharma-twin-secrets" not in rendered
 
 
 def test_eu_example_render_uses_blank_zerobus_secret_env(renderer) -> None:
@@ -186,7 +186,7 @@ def test_eu_example_render_uses_blank_zerobus_secret_env(renderer) -> None:
 
     assert 'name: ZEROBUS_SECRET_SCOPE\n    value: ""' in rendered
     assert 'name: ZEROBUS_SECRET_KEY\n    value: ""' in rendered
-    assert "iot-secrets" not in rendered
+    assert "pharma-twin-secrets" not in rendered
 
 
 def test_committed_app_yaml_matches_example_profile(renderer) -> None:

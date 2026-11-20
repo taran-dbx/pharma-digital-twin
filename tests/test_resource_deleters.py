@@ -145,7 +145,7 @@ async def test_metrics_table_drops_table_and_deletes_s3_prefix() -> None:
         run_sql=run_sql,
         delete_s3_prefix=delete_s3,
     )
-    loc = "s3://example-shared-bucket/iot-digital-twin/iot_p/metrics/streaming_metrics/"
+    loc = "s3://example-shared-bucket/pharma-twin/iot_p/metrics/streaming_metrics/"
     await reg["metrics_table"](
         {
             "identifier": "iot_p.metrics.streaming_metrics",
@@ -203,7 +203,7 @@ async def test_cdf_sync_is_deleted_via_postgres_api_c7205() -> None:
     """Automated CDF is removed before its Lakebase branch [C7205][regression]."""
     ws = MagicMock()
     reg = make_all_deleters(ws=ws, warehouse_id="wh")
-    parent = "projects/iot-pipelines/branches/pharma/databases/databricks_postgres"
+    parent = "projects/pharma-twin-pipelines/branches/pharma/databases/databricks_postgres"
 
     await reg["cdf_sync"](
         {
@@ -230,7 +230,7 @@ async def test_shared_service_principal_skipped() -> None:
     reg = make_all_deleters(ws=ws, warehouse_id="wh")
     with pytest.raises(SkipResource):
         await reg["service_principal"](
-            {"identifier": "iot-sss-industries", "metadata": {"shared": True}}
+            {"identifier": "pharma-twin-sss-industries", "metadata": {"shared": True}}
         )
     ws.service_principals.delete.assert_not_called()
 
@@ -239,7 +239,9 @@ async def test_shared_secret_scope_skipped() -> None:
     ws = MagicMock()
     reg = make_all_deleters(ws=ws, warehouse_id="wh")
     with pytest.raises(SkipResource):
-        await reg["secret_scope"]({"identifier": "iot-secrets", "metadata": {"shared": True}})
+        await reg["secret_scope"](
+            {"identifier": "pharma-twin-secrets", "metadata": {"shared": True}}
+        )
     ws.secrets.delete_scope.assert_not_called()
 
 
@@ -248,7 +250,7 @@ async def test_shared_lakebase_project_skipped() -> None:
     reg = make_all_deleters(ws=ws, warehouse_id="wh")
     with pytest.raises(SkipResource):
         await reg["lakebase_project"](
-            {"identifier": "projects/iot-pipelines", "metadata": {"shared": True}}
+            {"identifier": "projects/pharma-twin-pipelines", "metadata": {"shared": True}}
         )
 
 
@@ -261,7 +263,7 @@ async def test_primary_endpoint_skipped_removed_with_branch() -> None:
     with pytest.raises(SkipResource):
         await reg["lakebase_endpoint"](
             {
-                "identifier": "projects/iot-pipelines/branches/pharma/endpoints/primary",
+                "identifier": "projects/pharma-twin-pipelines/branches/pharma/endpoints/primary",
                 "metadata": {"endpoint_type": "READ_WRITE"},
             }
         )
@@ -271,7 +273,7 @@ async def test_primary_endpoint_skipped_removed_with_branch() -> None:
 async def test_read_replica_endpoint_deleted() -> None:
     ws = MagicMock()
     reg = make_all_deleters(ws=ws, warehouse_id="wh")
-    name = "projects/iot-pipelines/branches/pharma/endpoints/replica"
+    name = "projects/pharma-twin-pipelines/branches/pharma/endpoints/replica"
     await reg["lakebase_read_replica"](
         {"identifier": name, "metadata": {"endpoint_type": "READ_ONLY"}}
     )
@@ -281,7 +283,7 @@ async def test_read_replica_endpoint_deleted() -> None:
 async def test_lakebase_branch_deleted() -> None:
     ws = MagicMock()
     reg = make_all_deleters(ws=ws, warehouse_id="wh")
-    name = "projects/iot-pipelines/branches/pharma"
+    name = "projects/pharma-twin-pipelines/branches/pharma"
     await reg["lakebase_branch"]({"identifier": name, "metadata": {}})
     ws.postgres.delete_branch.assert_called_once_with(name=name)
 

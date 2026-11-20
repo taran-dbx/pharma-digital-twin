@@ -1,7 +1,7 @@
 """Tests: single Lakebase OAuth connection at boot; no demo loops.
 
 Asserts that after lifespan startup:
-  - Exactly ONE AppBackendConnectionManager is created (OAuth, iot-app-backend).
+  - Exactly ONE AppBackendConnectionManager is created (OAuth, pharma-twin-backend).
   - That manager is assigned to both state.db and state.app_backend_db (same
     object identity — callers that read either field get the same pool).
   - The four schema ensure_* calls are made: ensure_app_schema,

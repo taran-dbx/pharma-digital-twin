@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 
 from iot_twin.core import resource_names
 from iot_twin.core.auth import get_current_user
+from iot_twin.core.config import owned_env
 from iot_twin.core.state import AppState, get_app_state
 from iot_twin.models.sql_ddl import (
     MATVIEW_1M_DDL,
@@ -700,7 +701,7 @@ async def provision_lakebase_table(
             project_id = body.get("project_id", "")
             branch_id = body.get("branch_id") or "production"
             if not project_id:
-                lb_endpoint = os.getenv("LAKEBASE_ENDPOINT", "")
+                lb_endpoint = owned_env("LAKEBASE_ENDPOINT")
                 parts = lb_endpoint.split("/")
                 if len(parts) >= 4 and parts[0] == "projects" and parts[2] == "branches":
                     project_id = parts[1]
@@ -769,7 +770,7 @@ async def provision_lakebase_table(
             branch_id = body.get("branch_id", "")
 
             if not project_id or not branch_id:
-                lb_endpoint = os.getenv("LAKEBASE_ENDPOINT", "")
+                lb_endpoint = owned_env("LAKEBASE_ENDPOINT")
                 parts = lb_endpoint.split("/")
                 if len(parts) >= 4 and parts[0] == "projects" and parts[2] == "branches":
                     project_id = project_id or parts[1]

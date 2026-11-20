@@ -76,6 +76,56 @@ def get_resource_prefix_ident() -> str:
     return get_resource_prefix().replace("-", "_")
 
 
+def _owned_leaf(name: str) -> str:
+    """Return the part of ``name`` that must carry the prefix.
+
+    Lakebase paths (``projects/<project>/branches/...``) are owned by their
+    project segment; anything else is checked as-is.
+    """
+    parts = name.split("/")
+    if len(parts) >= 2 and parts[0] == "projects":
+        return parts[1]
+    return name
+
+
+def is_owned_name(name: str) -> bool:
+    """Return True when ``name`` belongs to this deployment's prefix namespace."""
+    leaf = _owned_leaf((name or "").strip())
+    if not leaf or _LEGACY_NAMESPACE_RE.match(leaf.lower()):
+        return False
+    prefix = get_resource_prefix()
+    ident = get_resource_prefix_ident()
+    return leaf == prefix or any(
+        leaf.startswith(head) for head in (f"{prefix}-", f"{prefix}.", f"{prefix}_", f"{ident}_")
+    )
+
+
+def assert_owned_name(name: str, *, what: str = "resource name") -> str:
+    """Return ``name`` unchanged, or raise ``ValueError`` if this app does not own it.
+
+    A name is owned when it (or, for ``projects/<p>/...`` Lakebase paths, its
+    project segment) starts with the resource prefix in its hyphen, dot or
+    underscore form and is not in the upstream ``iot`` namespace. Call this on
+    every externally supplied name (env overrides, script inputs, rows read
+    back from a database) before creating, updating or deleting anything.
+    """
+    if not is_owned_name(name):
+        raise ValueError(
+            f"{what} {name!r} is not owned by this deployment: it must start with "
+            f"{get_resource_prefix()!r} (or {get_resource_prefix_ident()!r}) and must not be "
+            "in the upstream 'iot' namespace"
+        )
+    return name
+
+
+def owned_env(var: str, *, what: str | None = None) -> str:
+    """Read env ``var``; when set, require it to be an owned name. Blank returns ``""``."""
+    value = os.getenv(var, "").strip()
+    if value:
+        assert_owned_name(value, what=what or var)
+    return value
+
+
 def get_uc_service_credential() -> str:
     """Return the UC service credential name, defaulting to the shared credential."""
     return os.getenv("UC_SERVICE_CREDENTIAL", "").strip() or SHARED_MSK_IAM_UC_NAME
