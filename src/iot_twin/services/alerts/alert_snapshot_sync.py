@@ -73,7 +73,7 @@ async def sync_alert_snapshot(
         ics._quoted_table("intelligence_alert_snapshot"),
         ics._warehouse(ws, warehouse_id),
         rows,
-        "alert_id, industry, rule_id, sensor_id, status, severity, fault_code, value, threshold, opened_at, updated_at",
+        ics.ALERT_SNAPSHOT_COLUMN_LIST,
     )
     return {"rows": count, "skipped": False}
 

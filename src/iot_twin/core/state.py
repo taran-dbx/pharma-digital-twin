@@ -51,6 +51,8 @@ class AppState:
     # Operator decisions per alert episode (services/alerts/alert_responses.py)
     alert_response_store: Any = None
     production_control: Any = None
+    # Spindle 3 thermal-risk scorer (services/ml/risk_scorer.py); False = disabled
+    risk_scorer: Any = None
 
     # Genie conversation ownership — process-local, fail-closed after restart
     genie_conversations: dict[str, dict[str, str]] = field(default_factory=dict)

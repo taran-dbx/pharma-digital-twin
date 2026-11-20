@@ -20,6 +20,17 @@ from iot_twin.domain.catalog import (
     to_record_industry,
 )
 from iot_twin.domain.lot_context import carries_lot_context, lot_context_at, lot_fields
+from iot_twin.ml.risk_contract import (
+    ALERT_KIND_PREDICTED,
+    DEFAULT_HYSTERESIS,
+    DEFAULT_THRESHOLD,
+    MODEL_RULE_ID,
+    RISK_METADATA_KEYS,
+    RISK_SENSOR_IDS,
+    alert_kind_for,
+    risk_alert_rule,
+    risk_score_of,
+)
 from iot_twin.services.alerts.alert_sse import (
     EVENT_ACKNOWLEDGED,
     EVENT_CLEARED,
@@ -101,6 +112,8 @@ class AlertRecord:
             "cleared_at": self.cleared_at.isoformat() if self.cleared_at else None,
             "metadata": dict(self.metadata),
             "version": int(self.version or 0),
+            "alert_kind": alert_kind_for(self.rule_id, self.metadata),
+            "risk_score": risk_score_of(self.rule_id, self.metadata),
         }
 
 
@@ -223,6 +236,24 @@ def open_metadata(
         return metadata
     lot = lot_fields(_reading_metadata(reading)) or lot_context_at(at)
     return {**metadata, **lot}
+
+
+def _risk_metadata(raw: Mapping[str, Any], score: float, threshold: float) -> dict[str, Any]:
+    """The documented model-alert metadata (docs/ml-risk-model.md)."""
+    top = raw.get("top_features")
+    values: dict[str, Any] = {
+        "alert_kind": ALERT_KIND_PREDICTED,
+        "risk_score": round(score, 4),
+        "risk_threshold": float(threshold),
+        "model_name": raw.get("model_name"),
+        "model_version": None if raw.get("model_version") is None else str(raw["model_version"]),
+        "top_features": [dict(item) for item in top if isinstance(item, Mapping)]
+        if isinstance(top, list | tuple)
+        else [],
+        "horizon_s": _to_float(raw.get("horizon_s")),
+        "scored_at": raw.get("scored_at"),
+    }
+    return {key: values[key] for key in RISK_METADATA_KEYS}
 
 
 def _configured_sensor_ids(rule: AlertRule) -> list[str]:
@@ -518,6 +549,29 @@ class AlertEngine:
                     transitions.append(transition)
             return transitions
 
+    async def ingest_model_scores(
+        self,
+        scores: Sequence[Mapping[str, Any]] | None,
+        *,
+        db: Any | None = None,
+    ) -> list[AlertTransition]:
+        """Turn thermal-risk scores into ``medtech-model-spindle-risk`` alerts.
+
+        Same state machine as a threshold rule: one fingerprint per rule ×
+        Spindle 3 × pipeline, open at ``risk >= threshold``, clear only once the
+        risk falls to ``threshold - hysteresis``. Repeated scores update the
+        open alert instead of opening new ones.
+        """
+        async with self._lock:
+            transitions: list[AlertTransition] = []
+            for raw in list(scores or [])[:200]:
+                if not isinstance(raw, Mapping):
+                    continue
+                transition = await self._ingest_score(raw, db=db)
+                if transition is not None:
+                    transitions.append(transition)
+            return transitions
+
     async def acknowledge(
         self,
         alert_id: str,
@@ -561,12 +615,17 @@ class AlertEngine:
         force_open: bool = False,
         forced_value: float | None = None,
         forced_sensor_ids: list[str] | None = None,
+        live_metadata: Mapping[str, Any] | None = None,
+        sensor_ids_override: list[str] | None = None,
     ) -> AlertTransition | None:
         violated, value, sensor_ids = _rule_state(rule, index)
         if force_open:
             violated = True
             value = forced_value if forced_value is not None else value
             sensor_ids = forced_sensor_ids or sensor_ids or [rule.sensor_id]
+        if sensor_ids_override:
+            sensor_ids = list(sensor_ids_override)
+        live = dict(live_metadata or {})
         fp = fingerprint_for(rule.rule_id, _configured_sensor_ids(rule), pipeline_id)
         existing = await self._lookup_fingerprint(fp, db)
         now = self._now_dt()
@@ -597,7 +656,13 @@ class AlertEngine:
                     metadata={
                         **open_metadata(rule, index.get(rule.sensor_id), industry, now),
                         # First over-limit reading seen; excursion windows start here.
-                        EXCURSION_STARTED_KEY: started.isoformat(),
+                        # A predicted alert has no excursion yet, so it never sets it.
+                        **(
+                            {}
+                            if rule.rule_id == MODEL_RULE_ID
+                            else {EXCURSION_STARTED_KEY: started.isoformat()}
+                        ),
+                        **live,
                     },
                 )
                 if existing is not None:
@@ -618,6 +683,7 @@ class AlertEngine:
                     updated_at=now,
                     threshold=float(rule.threshold),
                     sensor_ids=list(sensor_ids or existing.sensor_ids),
+                    metadata={**existing.metadata, **live},
                 )
                 self._store(alert)
                 transition = AlertTransition(event_type=EVENT_UPDATED, alert=alert, extra=extra)
@@ -642,6 +708,7 @@ class AlertEngine:
             value=clear_value,
             updated_at=now,
             cleared_at=now,
+            metadata={**existing.metadata, **live},
         )
         self._store(alert)
         transition = AlertTransition(event_type=EVENT_CLEARED, alert=alert, extra=extra)
@@ -701,6 +768,36 @@ class AlertEngine:
             forced_sensor_ids=[sensor_id],
         )
 
+    async def _ingest_score(
+        self, raw: Mapping[str, Any], *, db: Any | None
+    ) -> AlertTransition | None:
+        score = _to_float(raw.get("risk_score"))
+        if score is None:
+            return None
+        threshold = _to_float(raw.get("threshold"))
+        hysteresis = _to_float(raw.get("hysteresis"))
+        rule = risk_alert_rule(
+            threshold=DEFAULT_THRESHOLD if threshold is None else threshold,
+            hysteresis=DEFAULT_HYSTERESIS if hysteresis is None else hysteresis,
+            duration_s=_to_float(raw.get("duration_s")) or 0.0,
+        )
+        value = round(score, 2)
+        metadata = {
+            **_risk_metadata(raw, score, rule.threshold),
+            **lot_fields(raw.get("lot") if isinstance(raw.get("lot"), Mapping) else None),
+        }
+        pipeline_id = raw.get("pipeline_id")
+        return await self._evaluate_rule(
+            rule,
+            {rule.sensor_id: {"sensor_id": rule.sensor_id, "value": value}},
+            industry=_catalog_industry(str(raw.get("industry") or "manufacturing")),
+            pipeline_id=str(pipeline_id) if pipeline_id is not None else None,
+            db=db,
+            extra={"alert_kind": metadata["alert_kind"], "risk_score": metadata["risk_score"]},
+            live_metadata=metadata,
+            sensor_ids_override=list(RISK_SENSOR_IDS),
+        )
+
     async def _persist_transition(self, transition: AlertTransition, db: Any | None) -> bool:
         if db is None:
             return True
@@ -741,6 +838,10 @@ class AlertEngine:
                         cleared_at = EXCLUDED.cleared_at,
                         pipeline_id = EXCLUDED.pipeline_id,
                         industry = EXCLUDED.industry,
+                        metadata = CASE
+                            WHEN alert.status = 'cleared' THEN EXCLUDED.metadata
+                            ELSE COALESCE(alert.metadata, '{}'::jsonb) || EXCLUDED.metadata
+                        END,
                         version = alert.version + 1
                     WHERE
                         EXCLUDED.status = 'cleared'
@@ -862,4 +963,20 @@ async def evaluate_and_emit(
         syncer = getattr(state, "alert_snapshot_synchronizer", None)
         if syncer is not None:
             syncer.mark_dirty()
+    _observe_for_risk_model(state, readings, resolved_industry, pipeline_id)
     return transitions
+
+
+def _observe_for_risk_model(
+    state: Any,
+    readings: Sequence[Mapping[str, Any]],
+    industry: str | None,
+    pipeline_id: str | None,
+) -> None:
+    """Feed the thermal-risk scorer; scoring runs in the background."""
+    from iot_twin.services.ml.risk_scorer import observe_and_score
+
+    try:
+        observe_and_score(state, readings, industry=industry, pipeline_id=pipeline_id)
+    except Exception:
+        logger.exception("risk scorer observe failed")
