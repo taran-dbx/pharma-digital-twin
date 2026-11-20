@@ -228,7 +228,13 @@ class TestEnsureSpace:
 
 
 class TestWordingLeaks:
-    MFG_ONLY = ("machine/sensor", "production counts")
+    MFG_ONLY = (
+        "machine/sensor",
+        "dhr lot-release records",
+        "validated process-parameter",
+        "21 cfr 820",
+        "quarantine",
+    )
 
     @pytest.mark.parametrize("mode", MODES)
     @pytest.mark.parametrize("industry", [i for i in CURATED_INDUSTRIES if i != "manufacturing"])

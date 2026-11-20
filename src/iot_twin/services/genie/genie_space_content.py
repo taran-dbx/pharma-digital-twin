@@ -29,8 +29,32 @@ def _common_starters(profile: IndustryProfile) -> tuple[str, ...]:
     )
 
 
+# Medical-device quality questions (Trinity Medical orthopaedic implant cell).
+# Every one is answerable from telemetry lot metadata + intelligence_* tables;
+# NCR numbers and dispositions live in the app's decision log (see instructions).
+MEDTECH_STARTERS: tuple[str, ...] = (
+    "Which lots were machined while Spindle 3 was outside its validated limit?",
+    "Which part serials should be quarantined for the latest Spindle 3 excursion?",
+    "How long did it take to detect each Spindle 3 excursion this week?",
+    "Which Spindle 3 validated-limit excursions this shift need an NCR, and what is each alert's status?",
+)
+
+SPINDLE_TEMP_SENSOR = "cnc_1_spindle_temp"
+SPINDLE_TEMP_RULE = "mfg-alert-spindle-temp"
+LOT_KEYS: tuple[str, ...] = (
+    "lot_id",
+    "part_serial",
+    "work_order",
+    "part_number",
+    "udi_di",
+    "dhr_ref",
+)
+
+
 def _industry_starters(profile: IndustryProfile) -> tuple[str, ...]:
     """Questions about this industry's own sensors (derived industries only)."""
+    if profile.medtech:
+        return MEDTECH_STARTERS
     if not profile.derived:
         return ()
     return tuple(
@@ -97,6 +121,18 @@ def _filter_sql(condition: str, row_filter: str | None) -> str:
 def _guard(expr: str, row_filter: str | None) -> str:
     """Restrict an aggregate's input rows: non-matching rows become NULL (ignored)."""
     return f"CASE WHEN {row_filter} THEN {expr} END" if row_filter else expr
+
+
+def metadata_key(mode: str, key: str, qualifier: str = "") -> str:
+    """SQL that reads ``key`` from the telemetry ``metadata`` column.
+
+    Delta tables (microbatch, zerobus) store metadata as MAP<STRING, STRING>;
+    the realtime Lakehouse Sync mirror carries the Lakebase JSONB, read with
+    the ``:`` path operator (works on JSON STRING and VARIANT alike).
+    """
+    if mode == "realtime":
+        return f"{qualifier}metadata:{key}::string"
+    return f"{qualifier}metadata[{_literal(key)}]"
 
 
 def _literal(value: str) -> str:
@@ -170,6 +206,22 @@ def _sensor_column_configs(profile: IndustryProfile) -> list[dict[str, Any]]:
             ],
             "synonyms": ["fault", "down", "stopped", "alarm"],
         },
+        *(_medtech_column_configs() if profile.medtech else []),
+    ]
+
+
+def _medtech_column_configs() -> list[dict[str, Any]]:
+    return [
+        {
+            "column_name": "metadata",
+            "description": [
+                "Reading context. On cnc_1_* (CNC-1 5-axis mill) readings it carries the "
+                "lot / device history record context: "
+                + ", ".join(LOT_KEYS)
+                + ". part_serial identifies the hip stem or acetabular cup being cut."
+            ],
+            "synonyms": ["lot", "batch", "serial", "work order", "UDI", "DHR"],
+        },
     ]
 
 
@@ -194,6 +246,39 @@ def _scope_line(telemetry: str, metrics: str | None, mode: str, profile: Industr
         "Asset, sensor-binding, maintenance, alert-rule and alert-snapshot "
         "reference data is in the intelligence_* tables."
     )
+
+
+def _medtech_context_lines(t: str, mode: str, lit: str) -> list[str]:
+    """Medical-device quality grounding for the orthopaedic implant cell."""
+    lot = metadata_key(mode, "lot_id", f"{t}.")
+    serial = metadata_key(mode, "part_serial", f"{t}.")
+    return [
+        "Context: Trinity Medical orthopaedic implants plant (Warsaw, IN), regulated under "
+        "21 CFR 820 (QMSR) and ISO 13485. Spindle 3 on CNC-1 (5-axis mill) machines "
+        "Ti-6Al-4V femoral hip stems (part_number HS-TI64-12) and acetabular cups. "
+        "Line: MILL -> CMM INSPECT -> CLEAN / PASSIVATE -> STERILE PACK.",
+        f"Spindle 3 temperature ({t}.sensor_name = '{SPINDLE_TEMP_SENSOR}') has a VALIDATED "
+        "process-parameter limit (OQ-TM-CNC1-014, PQ-TM-HS12-022, process spec "
+        "PS-TM-MILL-HS-003 rev C): take the threshold from intelligence_alert_rules where "
+        f"rule_id = '{SPINDLE_TEMP_RULE}' (fault code VPP-SPINDLE3-TEMP). A reading above it "
+        "is an excursion outside the validated state and a dimensional nonconformance risk.",
+        f"Lot context: {lot} is the lot, {serial} the part serial; work_order, part_number, "
+        "udi_di (UDI device identifier) and dhr_ref (device history record) are in the same "
+        f"{t}.metadata column. Parts at risk for an excursion = distinct part_serial values "
+        f"on '{SPINDLE_TEMP_SENSOR}' readings above the validated limit; the rest of the lot "
+        "is a release candidate pending QA review.",
+        "Time to detect = intelligence_alert_snapshot.opened_at minus the first reading above "
+        "the validated limit in the same excursion. MTTR = cleared/updated time minus opened_at.",
+        "First-pass yield / right-first-time here is a telemetry proxy (share of in-range "
+        "readings), not CMM or lot-release data; say so.",
+        "NCRs, QA holds (quarantine_lot), CMM inspection requests and their Part 11-style "
+        "audit fields (actor, timestamp, reason, comment, signature meaning) are recorded in "
+        "the app's decision log, not in these tables. For NCR numbers or dispositions, list the "
+        "VPP-SPINDLE3-TEMP alert episodes and lots at risk, and say the NCR record lives in "
+        "the app's decision log.",
+        "You recommend; you never release or quarantine lots, open NCRs or sign records. "
+        "Those require a qualified person's electronic signature in the app.",
+    ]
 
 
 def _industry_context_lines(profile: IndustryProfile) -> list[str]:
@@ -233,6 +318,7 @@ def _instruction_lines(
     return [
         _scope_line(telemetry, metrics, mode, profile),
         *_industry_context_lines(profile),
+        *(_medtech_context_lines(t, mode, lit) if profile.medtech else []),
         f"Downtime = time intervals where {t}.fault_active is TRUE. Approximate "
         "downtime minutes as the count of distinct minutes "
         f"(date_trunc('minute', {t}.event_time)) with at least one fault_active reading.",
@@ -325,6 +411,26 @@ def _maintenance_sql(
     )
 
 
+def _excursion_lots_sql(tel: str, refs: dict[str, str], industry: str, mode: str) -> str:
+    """Lots (and parts at risk) machined while Spindle 3 exceeded its validated limit."""
+    rules = _quoted(refs["alert_rules"])
+    lot = metadata_key(mode, "lot_id", "t.")
+    serial = metadata_key(mode, "part_serial", "t.")
+    wo = metadata_key(mode, "work_order", "t.")
+    dhr = metadata_key(mode, "dhr_ref", "t.")
+    where = _cdc_where(telemetry_row_filter(mode, industry, "t."))
+    return (
+        f"SELECT {lot} AS lot_id, MAX({wo}) AS work_order, MAX({dhr}) AS dhr_ref, "
+        f"COUNT(DISTINCT {serial}) AS parts_at_risk, MIN(t.event_time) AS first_excursion, "
+        "MAX(t.event_time) AS last_excursion, ROUND(MAX(t.value), 1) AS peak_temp_c, "
+        f"MAX(r.threshold) AS validated_limit_c FROM {tel} t JOIN {rules} r "
+        f"ON r.rule_id = '{SPINDLE_TEMP_RULE}' AND r.industry = {_literal(industry)} "
+        f"WHERE {where}t.sensor_name = '{SPINDLE_TEMP_SENSOR}' AND t.value > r.threshold "
+        "AND t.event_time >= current_timestamp() - INTERVAL 24 HOURS "
+        f"AND {lot} IS NOT NULL GROUP BY 1 ORDER BY first_excursion DESC"
+    )
+
+
 def _mode_sql(tel: str, metrics: str | None, mode: str) -> tuple[str, str]:
     if metrics is None:
         return (
@@ -365,6 +471,16 @@ def example_sqls(
         (
             "Which assets had the most faults this week and when were they last maintained?",
             _maintenance_sql(tel, refs, industry, rf),
+        ),
+        *(
+            [
+                (
+                    MEDTECH_STARTERS[0],
+                    _excursion_lots_sql(tel, refs, industry, mode),
+                )
+            ]
+            if profile.medtech
+            else []
         ),
         _mode_sql(tel, _quoted(metrics) if metrics else None, mode),
     ]

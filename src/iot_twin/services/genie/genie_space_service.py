@@ -10,9 +10,10 @@ successful deploy.  The space contains only tables that exist for the mode:
 - the dedicated ``intelligence_*`` reference tables.
 
 Wording and examples are generated from the industry catalog
-(:mod:`genie_industry_profile`); KPIs (downtime / availability / health index
-or OEE / anomalies) are answered through Genie text instructions, example SQL
-and SQL snippets — no new tables.
+(:mod:`genie_industry_profile`); KPIs (downtime / availability / health index,
+which is a first-pass-yield proxy for the medical-device cell / anomalies) are
+answered through Genie text instructions, example SQL and SQL snippets — no new
+tables.
 
 **Persistence**: the space id lives in the ``provisioned_resource`` ledger
 (``resource_type='genie_space'``, ``metadata.mode``).  The ledger is already

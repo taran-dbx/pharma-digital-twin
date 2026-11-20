@@ -113,7 +113,9 @@ class TestBuildSerializedSpace:
         assert HEX32.match(texts[0]["id"])
         body = " ".join(texts[0]["content"]).lower()
         assert "downtime" in body and "fault_active" in body
-        assert "availability" in body and "oee" in body
+        assert "availability" in body and "first-pass yield" in body
+        assert "oee" not in body
+        assert "validated process-parameter limit" in body
         assert "anomaly" in body and "min_value" in body and "max_value" in body
         assert "nominal_value" in body
         assert "lb__shadow_manufacturing_sensor_readings_history" in body
@@ -167,8 +169,9 @@ class TestStarterQuestions:
     def test_manufacturing_topics_per_mode(self, mode: str) -> None:
         questions = gss.starter_questions("manufacturing", mode)
         blob = " ".join(questions).lower()
-        for topic in ("oee", "downtime", "anomal", "fault", "maintenance"):
+        for topic in ("first-pass yield", "downtime", "anomal", "fault", "maintenance"):
             assert topic in blob, (mode, topic)
+        assert "oee" not in blob
         assert len(questions) == len(set(questions))
 
     def test_mode_aware(self) -> None:
