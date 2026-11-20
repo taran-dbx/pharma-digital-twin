@@ -39,15 +39,22 @@ DEFAULT_MODEL_SCHEMA = "pharma_twin"
 DEFAULT_MODEL_SHORT_NAME = "spindle_thermal_risk"
 CHAMPION_ALIAS = "champion"
 
-# Cut-off the champion training run chose on validation (decision_threshold metric).
-DEFAULT_THRESHOLD = 0.22
-DEFAULT_HYSTERESIS = 0.15
+# Fallback cut-off: what the champion run chose on validation (decision_threshold).
+# The served model ships its own; this only applies to responses without it.
+DEFAULT_THRESHOLD = 0.47
+# Clear band below the cut-off. Validation scores in calm running have median
+# 0.11 and p90 0.17 (worn spindle: up to ~0.27), so a predicted alert clears at
+# 0.42 once the risk is gone.
+# The served model ships its own cut-off and clear level (decision_threshold,
+# clear_threshold); these are fallbacks.
+DEFAULT_HYSTERESIS = 0.05
 TOP_FEATURES_K = 3
 
 RISK_METADATA_KEYS: tuple[str, ...] = (
     "alert_kind",
     "risk_score",
     "risk_threshold",
+    "risk_clear_threshold",
     "model_name",
     "model_version",
     "top_features",

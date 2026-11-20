@@ -10,6 +10,8 @@ import pytest
 from iot_twin.ml.risk_contract import (
     ALERT_KIND_BREACHED,
     ALERT_KIND_PREDICTED,
+    DEFAULT_HYSTERESIS,
+    DEFAULT_THRESHOLD,
     MODEL_FAULT_CODE,
     MODEL_RULE_ID,
     RISK_METADATA_KEYS,
@@ -104,15 +106,18 @@ async def test_repeated_scores_update_instead_of_duplicating() -> None:
     assert len(await engine.list_alerts()) == 1
 
 
-async def test_hysteresis_band_holds_then_clears_then_reopens() -> None:
+async def test_hysteresis_band_refreshes_then_clears_then_reopens() -> None:
     clock = Clock()
     engine = AlertEngine(now_fn=clock)
     [opened] = await engine.ingest_model_scores([_score(0.8)])
     clock.tick()
-    # 0.5 is under the cut-off but inside the 0.15 band: no event, still open.
-    assert await engine.ingest_model_scores([_score(0.5)]) == []
-    [still_open] = await engine.list_alerts()
-    assert still_open.status == "open"
+    # 0.5 is under the 0.6 cut-off but inside the 0.15 band: still open, and the
+    # alert shows the current score instead of the stale 0.8.
+    [held] = await engine.ingest_model_scores([_score(0.5)])
+    assert held.event_type == EVENT_UPDATED and held.alert.status == "open"
+    assert held.alert.value == 0.5 and held.alert.metadata["risk_score"] == 0.5
+    clock.tick()
+    assert await engine.ingest_model_scores([_score(0.501)]) == []  # same rounded value
     clock.tick()
     [cleared] = await engine.ingest_model_scores([_score(0.44)])
     assert cleared.event_type == EVENT_CLEARED
@@ -121,6 +126,47 @@ async def test_hysteresis_band_holds_then_clears_then_reopens() -> None:
     [reopened] = await engine.ingest_model_scores([_score(0.75)])
     assert reopened.event_type == EVENT_OPENED
     assert reopened.alert.id == opened.alert.id  # same fingerprint, new episode
+
+
+async def test_evidenced_calm_score_clears_with_the_shipped_defaults() -> None:
+    """The live endpoint scored a calm window 0.163; with the shipped cut-off
+    (0.47) and the default 0.05 band the predicted alert must clear on it."""
+    clock = Clock()
+    engine = AlertEngine(now_fn=clock)
+    calm = {"threshold": DEFAULT_THRESHOLD, "hysteresis": DEFAULT_HYSTERESIS}
+    [opened] = await engine.ingest_model_scores([_score(0.9, **calm)])
+    assert opened.alert.metadata["risk_clear_threshold"] == 0.42
+    clock.tick()
+    [held] = await engine.ingest_model_scores([_score(0.45, **calm)])
+    assert held.event_type == EVENT_UPDATED and held.alert.value == 0.45
+    clock.tick()
+    [cleared] = await engine.ingest_model_scores([_score(0.163, **calm)])
+    assert cleared.event_type == EVENT_CLEARED and cleared.alert.status == "cleared"
+
+    # The highest calm score the v4 endpoint returned (worn spindle) also clears.
+    clock.tick()
+    await engine.ingest_model_scores([_score(0.9, **calm)])
+    clock.tick()
+    [cleared_worn] = await engine.ingest_model_scores([_score(0.267, **calm)])
+    assert cleared_worn.event_type == EVENT_CLEARED
+
+
+async def test_updates_keep_the_lot_the_episode_opened_on() -> None:
+    clock = Clock()
+    engine = AlertEngine(now_fn=clock)
+    [opened] = await engine.ingest_model_scores([_score(0.8)])
+    clock.tick()
+    later = {"lot_id": "TM-HS12-261120-002", "part_serial": "TM-HS12-261120-002-01"}
+    [updated] = await engine.ingest_model_scores([_score(0.9, lot=later)])
+    assert updated.alert.metadata["lot_id"] == LOT["lot_id"]
+    assert updated.alert.metadata["part_serial"] == LOT["part_serial"]
+    assert updated.alert.metadata["risk_score"] == 0.9
+    clock.tick()
+    [cleared] = await engine.ingest_model_scores([_score(0.1, lot=later)])
+    assert cleared.alert.metadata["lot_id"] == LOT["lot_id"]
+    clock.tick()
+    [reopened] = await engine.ingest_model_scores([_score(0.9, lot=later)])
+    assert reopened.alert.metadata["lot_id"] == later["lot_id"]  # a new episode, a new lot
 
 
 async def test_model_and_threshold_alerts_do_not_share_a_fingerprint() -> None:
@@ -161,7 +207,7 @@ async def test_defaults_apply_when_threshold_missing() -> None:
     [opened] = await engine.ingest_model_scores(
         [_score(0.65, threshold=None, hysteresis=None, top_features="bad", lot=None)]
     )
-    assert opened.alert.threshold == 0.22  # DEFAULT_THRESHOLD
+    assert opened.alert.threshold == 0.47  # DEFAULT_THRESHOLD
     assert opened.alert.metadata["top_features"] == []
     # Without lot context on the score, the lot comes from the cell's lot clock.
     assert opened.alert.metadata["lot_id"].startswith("TM-HS12-")

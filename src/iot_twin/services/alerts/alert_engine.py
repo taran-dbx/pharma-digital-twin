@@ -19,7 +19,12 @@ from iot_twin.domain.catalog import (
     sensor_by_name,
     to_record_industry,
 )
-from iot_twin.domain.lot_context import carries_lot_context, lot_context_at, lot_fields
+from iot_twin.domain.lot_context import (
+    LOT_METADATA_KEYS,
+    carries_lot_context,
+    lot_context_at,
+    lot_fields,
+)
 from iot_twin.ml.risk_contract import (
     ALERT_KIND_PREDICTED,
     DEFAULT_HYSTERESIS,
@@ -241,13 +246,21 @@ def open_metadata(
     return {**metadata, **lot}
 
 
-def _risk_metadata(raw: Mapping[str, Any], score: float, threshold: float) -> dict[str, Any]:
+def _episode_update(live: Mapping[str, Any]) -> dict[str, Any]:
+    """Live metadata for an update: the episode keeps the lot it opened on."""
+    return {key: value for key, value in live.items() if key not in LOT_METADATA_KEYS}
+
+
+def _risk_metadata(
+    raw: Mapping[str, Any], score: float, threshold: float, hysteresis: float
+) -> dict[str, Any]:
     """The documented model-alert metadata (docs/ml-risk-model.md)."""
     top = raw.get("top_features")
     values: dict[str, Any] = {
         "alert_kind": ALERT_KIND_PREDICTED,
         "risk_score": round(score, 4),
         "risk_threshold": float(threshold),
+        "risk_clear_threshold": round(float(threshold) - float(hysteresis), 4),
         "model_name": raw.get("model_name"),
         "model_version": None if raw.get("model_version") is None else str(raw["model_version"]),
         "top_features": [dict(item) for item in top if isinstance(item, Mapping)]
@@ -668,6 +681,7 @@ class AlertEngine:
         forced_sensor_ids: list[str] | None = None,
         live_metadata: Mapping[str, Any] | None = None,
         sensor_ids_override: list[str] | None = None,
+        refresh_in_band: bool = False,
     ) -> AlertTransition | None:
         violated, value, sensor_ids = _rule_state(rule, index)
         if force_open:
@@ -744,7 +758,7 @@ class AlertEngine:
                     updated_at=now,
                     threshold=float(rule.threshold),
                     sensor_ids=list(sensor_ids or existing.sensor_ids),
-                    metadata={**existing.metadata, **live},
+                    metadata={**existing.metadata, **_episode_update(live)},
                 )
                 self._store(alert)
                 transition = AlertTransition(event_type=EVENT_UPDATED, alert=alert, extra=extra)
@@ -762,6 +776,20 @@ class AlertEngine:
         if existing is None or existing.status == "cleared":
             return None
         recovered, clear_value = _any_required_recovered(rule, index)
+        if clear_value is not None and not recovered and refresh_in_band:
+            # Inside the clear band: still open, but show the current score.
+            if existing.value == clear_value:
+                return None
+            alert = replace(
+                existing,
+                value=clear_value,
+                updated_at=now,
+                metadata={**existing.metadata, **_episode_update(live)},
+            )
+            self._store(alert)
+            transition = AlertTransition(event_type=EVENT_UPDATED, alert=alert, extra=extra)
+            applied = await self._persist_transition(transition, db)
+            return transition if applied else None
         if not recovered or clear_value is None:
             return None
         alert = replace(
@@ -770,7 +798,7 @@ class AlertEngine:
             value=clear_value,
             updated_at=now,
             cleared_at=now,
-            metadata={**existing.metadata, **live},
+            metadata={**existing.metadata, **_episode_update(live)},
         )
         self._store(alert)
         transition = AlertTransition(event_type=EVENT_CLEARED, alert=alert, extra=extra)
@@ -845,7 +873,7 @@ class AlertEngine:
         )
         value = round(score, 2)
         metadata = {
-            **_risk_metadata(raw, score, rule.threshold),
+            **_risk_metadata(raw, score, rule.threshold, rule.hysteresis),
             **lot_fields(raw.get("lot") if isinstance(raw.get("lot"), Mapping) else None),
         }
         pipeline_id = raw.get("pipeline_id")
@@ -858,6 +886,7 @@ class AlertEngine:
             extra={"alert_kind": metadata["alert_kind"], "risk_score": metadata["risk_score"]},
             live_metadata=metadata,
             sensor_ids_override=list(RISK_SENSOR_IDS),
+            refresh_in_band=True,
         )
 
     async def _persist_transition(self, transition: AlertTransition, db: Any | None) -> bool:
