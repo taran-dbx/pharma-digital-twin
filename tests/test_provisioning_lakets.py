@@ -11,6 +11,22 @@ from iot_twin.services import provisioning_service
 from tests._fakes import fake_credential
 
 
+class _AnyHost(set):
+    """Endpoint-host stub: every test host counts as resolved from the owned project."""
+
+    def __contains__(self, _host: object) -> bool:
+        return True
+
+
+@pytest.fixture(autouse=True)
+def _allow_direct_lakebase(monkeypatch):
+    """These tests exercise direct mode: enable it and resolve hosts as owned."""
+    from iot_twin.services import ownership
+
+    monkeypatch.setenv(ownership.ALLOW_DIRECT_LAKEBASE_ENV, "true")
+    monkeypatch.setattr(ownership, "owned_endpoint_hosts", lambda *_a, **_k: _AnyHost())
+
+
 def _stub_conn() -> MagicMock:
     """Return a mocked asyncpg connection."""
     conn = MagicMock()
@@ -36,6 +52,7 @@ class TestProvisionLakebaseTableInstallsLakeTs:
             result = await provisioning_service.provision_lakebase_table(
                 {
                     "mode": "direct",
+                    "project_id": "pharma-twin-direct",
                     "host": "pg.example",
                     "user": "u",
                     "password": fake_credential("lakebase"),
@@ -63,6 +80,7 @@ class TestProvisionLakebaseTableInstallsLakeTs:
             result = await provisioning_service.provision_lakebase_table(
                 {
                     "mode": "direct",
+                    "project_id": "pharma-twin-direct",
                     "host": "pg.example",
                     "user": "u",
                     "password": fake_credential("lakebase"),
@@ -88,6 +106,7 @@ class TestProvisionLakebaseTableInstallsLakeTs:
             result = await provisioning_service.provision_lakebase_table(
                 {
                     "mode": "direct",
+                    "project_id": "pharma-twin-direct",
                     "host": "pg.example",
                     "user": "u",
                     "password": fake_credential("lakebase"),
@@ -120,6 +139,7 @@ class TestProvisionLakebaseTableAppliesTiering:
             result = await provisioning_service.provision_lakebase_table(
                 {
                     "mode": "direct",
+                    "project_id": "pharma-twin-direct",
                     "host": "pg.example",
                     "user": "u",
                     "password": fake_credential("lakebase"),
@@ -154,6 +174,7 @@ class TestProvisionLakebaseTableAppliesTiering:
             result = await provisioning_service.provision_lakebase_table(
                 {
                     "mode": "direct",
+                    "project_id": "pharma-twin-direct",
                     "host": "pg.example",
                     "user": "u",
                     "password": fake_credential("lakebase"),
@@ -180,6 +201,7 @@ class TestProvisionLakebaseTableAppliesTiering:
             result = await provisioning_service.provision_lakebase_table(
                 {
                     "mode": "direct",
+                    "project_id": "pharma-twin-direct",
                     "host": "pg.example",
                     "user": "u",
                     "password": fake_credential("lakebase"),
@@ -235,6 +257,7 @@ class TestProvisionLakebaseTableEnablesSync:
             result = await provisioning_service.provision_lakebase_table(
                 {
                     "mode": "direct",
+                    "project_id": "pharma-twin-direct",
                     "host": "pg.example",
                     "user": "u",
                     "password": fake_credential("lakebase"),
@@ -274,6 +297,7 @@ class TestProvisionLakebaseTableEnablesSync:
             result = await provisioning_service.provision_lakebase_table(
                 {
                     "mode": "direct",
+                    "project_id": "pharma-twin-direct",
                     "host": "pg.example",
                     "user": "u",
                     "password": fake_credential("lakebase"),
@@ -311,6 +335,7 @@ class TestProvisionLakebaseTableEnablesSync:
             result = await provisioning_service.provision_lakebase_table(
                 {
                     "mode": "direct",
+                    "project_id": "pharma-twin-direct",
                     "host": "pg.example",
                     "user": "u",
                     "password": fake_credential("lakebase"),
@@ -343,6 +368,7 @@ class TestProvisionLakebaseTableEnablesSync:
             result = await provisioning_service.provision_lakebase_table(
                 {
                     "mode": "direct",
+                    "project_id": "pharma-twin-direct",
                     "host": "pg.example",
                     "user": "u",
                     "password": fake_credential("lakebase"),

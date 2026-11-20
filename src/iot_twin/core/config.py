@@ -94,6 +94,10 @@ class NotOwnedError(ValueError):
     """Raised when a name is outside this deployment's prefix namespace."""
 
 
+class IsolationMisconfiguredError(NotOwnedError):
+    """A configured (env) name is not owned: a deployment error, not a bad request."""
+
+
 # Owned names are plain lower-case identifiers / Lakebase paths: no spaces,
 # quotes, shell or SQL metacharacters, and no path traversal.
 _OWNED_CHARS_RE = re.compile(r"^[a-z0-9_./-]+$")
@@ -143,7 +147,12 @@ def assert_owned_name(name: str, *, what: str = "resource name") -> str:
 def owned_env(var: str, *, what: str | None = None) -> str:
     """Read env ``var``; when set, require it to be an owned name. Blank returns ``""``."""
     value = os.getenv(var, "").strip()
-    return assert_owned_name(value, what=what or var) if value else ""
+    if not value:
+        return ""
+    try:
+        return assert_owned_name(value, what=what or var)
+    except NotOwnedError as exc:
+        raise IsolationMisconfiguredError(str(exc)) from exc
 
 
 def get_uc_service_credential() -> str:

@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from iot_twin.core.config import assert_owned_name
 from iot_twin.core.workspace_config import get_secret_scope
 from iot_twin.services.lakets import lakets_service
 from iot_twin.services.provisioning_service import (
@@ -144,6 +145,9 @@ async def setup_pipeline_lakebase(state: Any, params: dict) -> dict:
     lb_database = (params.get("lb_database") or "databricks_postgres").strip()
     table_name = (params.get("table_name") or "sensor_readings").strip()
     secret_scope = (params.get("secret_scope") or get_secret_scope()).strip()
+    if secret_scope:
+        # Fail the whole setup (no workspace call yet) on a non-owned scope.
+        secret_scope = assert_owned_name(secret_scope, what="secret scope")
     tiering = params.get("tiering")
     # ``params["retention"]`` (the UI drop-after interval) is intentionally not
     # read here: no plain-retention LakeTS policy is wired up yet. Hot-store

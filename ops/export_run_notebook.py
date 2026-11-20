@@ -116,7 +116,7 @@ SNAPSHOT_GUARD_ID = "snapshot-guard"
 SNAPSHOT_GUARD_SOURCE = (
     "# Snapshot only: this is a stored record of a past run, not a runnable notebook.\n"
     "# Re-run ops/notebooks/pipeline_health_check.ipynb instead.\n"
-    'raise SystemExit("snapshot only: do not execute stored run notebooks")'
+    'raise RuntimeError("snapshot only: do not execute stored run notebooks")'
 )
 
 

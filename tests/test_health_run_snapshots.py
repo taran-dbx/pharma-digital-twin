@@ -72,7 +72,9 @@ def test_snapshot_is_valid_labelled_and_clean(path, checker):
     code = [c for c in notebook.cells if c.cell_type == "code"]
     guard = code[0]
     assert guard.id == "snapshot-guard" and not guard.outputs, "first code cell must be the guard"
-    assert 'raise SystemExit("snapshot only' in guard.source, "snapshots must not be runnable"
+    assert 'raise RuntimeError("snapshot only' in guard.source, "snapshots must not be runnable"
+    with pytest.raises(RuntimeError, match="snapshot only"):
+        exec(compile(guard.source, f"<{path.name}:guard>", "exec"), {})  # noqa: S102
     assert sum(1 for c in code if c.outputs) >= 8, "outputs must be kept"
     for cell in code:
         assert all(o.output_type != "error" for o in cell.outputs), cell.id

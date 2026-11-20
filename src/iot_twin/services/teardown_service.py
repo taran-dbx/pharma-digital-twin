@@ -19,8 +19,10 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from iot_twin.core.workspace_config import get_uc_catalog
 from iot_twin.services import resource_ledger
 from iot_twin.services.db.app_repo_common import DBExecutor
+from iot_twin.services.ownership import assert_owned_ledger
 from iot_twin.services.pipelines import pipeline_setup_repo
 
 logger = logging.getLogger("pharma_twin.services.teardown")
@@ -103,6 +105,9 @@ async def teardown_setup(
     steps: list[dict] = []
 
     resources = await resource_ledger.resources_in_teardown_order(db, setup_id)
+    # Refuse the whole teardown (before any deleter runs) if a ledger row names
+    # a resource outside this deployment's prefix namespace. Raises NotOwnedError.
+    assert_owned_ledger(resources, shared_catalog=get_uc_catalog())
     for res in resources:
         rtype = res.get("resource_type")
         identifier = res.get("identifier")

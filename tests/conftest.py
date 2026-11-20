@@ -298,6 +298,23 @@ async def app_backend_conn():
 
 
 @pytest.fixture(autouse=True)
+def _route_admin_by_default(request, monkeypatch):
+    """Route tests run as an app admin unless marked ``non_admin``.
+
+    Workspace-writing routes are gated by ``routes._admin.require_admin``. Only
+    that module's reference is replaced, so tests of ``app_permissions.is_admin``
+    itself are unaffected. Tests of the gate use ``@pytest.mark.non_admin``.
+    """
+    from types import SimpleNamespace
+
+    from iot_twin.routes import _admin
+
+    admin = "non_admin" not in request.keywords
+    monkeypatch.setattr(_admin, "app_permissions", SimpleNamespace(is_admin=lambda _r: admin))
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _reset_genie_allowlist_cache():
     """Per-pipeline Genie allowlist verifications are process-cached; isolate tests."""
     from iot_twin.services import genie_service

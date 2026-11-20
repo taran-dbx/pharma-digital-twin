@@ -14,8 +14,15 @@ import logging
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
+from iot_twin.core.config import NotOwnedError
 from iot_twin.core.state import AppState, get_app_state
 from iot_twin.core.workspace_config import get_secret_scope
+from iot_twin.routes._admin import ADMIN_ONLY
+from iot_twin.routes._ownership import (
+    not_owned_response,
+    reject_foreign_project,
+    reject_foreign_scope,
+)
 from iot_twin.services.pipelines.pipeline_setup_service import setup_pipeline_lakebase
 
 logger = logging.getLogger("pharma_twin.routes.setup")
@@ -23,7 +30,7 @@ logger = logging.getLogger("pharma_twin.routes.setup")
 router = APIRouter(tags=["setup"])
 
 
-@router.post("/api/setup/pipeline-lakebase")
+@router.post("/api/setup/pipeline-lakebase", dependencies=ADMIN_ONLY)
 async def post_setup_pipeline_lakebase(
     request: Request,
     state: AppState = Depends(get_app_state),
@@ -79,8 +86,15 @@ async def post_setup_pipeline_lakebase(
         "rollups": rollups,
     }
 
+    if rejected := reject_foreign_scope(params["secret_scope"]) or reject_foreign_project(
+        params["lb_project_id"]
+    ):
+        return rejected
+
     try:
         result = await setup_pipeline_lakebase(state, params)
+    except NotOwnedError as exc:
+        return not_owned_response(exc)
     except Exception as exc:  # pragma: no cover - orchestrator is non-raising
         logger.exception("pipeline-lakebase setup raised unexpectedly")
         return JSONResponse(status_code=500, content={"error": str(exc)[:300]})

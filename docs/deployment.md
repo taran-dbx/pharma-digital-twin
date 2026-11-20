@@ -173,6 +173,39 @@ deleted by this app): the SQL warehouse, the MSK cluster, the UC service credent
 (`uc_service_credential`), the catalog (`uc_catalog`) and its external location.
 Everything the app creates inside them is prefixed.
 
+## Resource isolation at runtime
+
+Besides the naming prefix, the app refuses at runtime to touch anything outside its
+own namespace:
+
+* **Ownership checks.** Every Lakebase project, endpoint, secret scope, UC catalog /
+  schema, Kafka topic and ledger row that comes from a request body, an env override
+  or the database must start with `RESOURCE_PREFIX` (or its underscore form), and must
+  not be in the upstream `iot` namespace. A UC target may also be the shared
+  `UC_CATALOG`, but then its schema must be owned.
+  * A rejected **request** gets `403`.
+  * A non-owned **env** value (e.g. `UC_SCHEMA=rtm_lakets_zb`) is an
+    `isolation misconfiguration` (`500`), and the app refuses to start.
+  * Teardown refuses the whole setup before any deleter runs if one ledger row is
+    foreign.
+* **Admin-only write routes.** `/api/settings/provision*`, `/api/provision/*`,
+  `POST /api/pipelines/{id}/secrets`, `/api/lakets/sync/check`,
+  `/api/lakets/retention/deploy` and `/api/setup/pipeline-lakebase` now need an app
+  admin. That is the same check as the industry admin API: `ADMIN_EMAILS`, membership
+  of `ADMIN_GROUP` (default `<prefix>-admins`), or the app owner.
+  * The Settings page's provision buttons therefore work for admins only.
+  * The industry setup → provision → validate → deploy flow already used
+    `/api/admin/...` and is unchanged.
+* **Direct-mode Lakebase is off.** Direct mode means connecting with a request-supplied
+  host/user/password; a host name does not reveal its project. Set
+  `ALLOW_DIRECT_LAKEBASE=true` (env) to allow it. Even then:
+  * the route is admin-only;
+  * the body must name an owned `project_id`;
+  * the host must be one of that project's endpoint hosts.
+  * Autoscale (OAuth) mode is unaffected. The Settings flow that switches to direct
+    mode after setting a role password resolves the host from the owned project
+    itself, so it keeps working.
+
 ## Fresh app prerequisites
 
 A new app gets a new service principal (SP) with **no grants**. Until it is granted
