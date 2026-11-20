@@ -3,7 +3,7 @@
  * Pure functions so the copy and the numbers are unit-tested together.
  */
 import { PROJECTED_RFT_LABEL } from "@/lib/manufacturing-quality";
-import type { Actuals, OpsSummary, Projection, ValueSummary } from "@/lib/value-api";
+import type { Actuals, OpsSummary, Projection, SummaryMeta, ValueSummary } from "@/lib/value-api";
 
 export const EMPTY = "—";
 
@@ -127,7 +127,9 @@ export function opsTiles(ops: OpsSummary): TileView[] {
       id: "ttdisp",
       label: "Time to disposition",
       value: formatDuration(ops.time_to_disposition.p50),
-      foot: `median · ${ops.caught_in_time} of ${plural(ops.episodes, "excursion")} contained in time`,
+      foot:
+        `median · ${ops.caught_in_time} of ${plural(ops.episodes, "excursion")} contained in time` +
+        (ops.deadline_before_alert ? ` · ${ops.deadline_before_alert} with the lot gone before the alert` : ""),
     },
     {
       id: "inspections",
@@ -148,6 +150,12 @@ export function opsTiles(ops: OpsSummary): TileView[] {
       foot: ops.mttr.count ? `Mean over ${plural(ops.mttr.count, "cleared excursion")}` : "No excursion cleared yet",
     },
   ];
+}
+
+/** Banner text when the distributions or the table are sampled; null when nothing is. */
+export function samplingNote(meta: SummaryMeta): string | null {
+  if (!meta.truncated) return null;
+  return `Totals use all ${plural(meta.episodes_total, "excursion")} in the window. The distributions show the latest ${meta.samples_shown} and the table the latest ${meta.recent_shown}.`;
 }
 
 export interface DurationBin {

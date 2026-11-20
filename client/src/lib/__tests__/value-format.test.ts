@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { summaryQuery, type Actuals, type OpsSummary, type Projection, type ValueSummary } from "@/lib/value-api";
+import { envelopeError, summaryQuery, type Actuals, type OpsSummary, type Projection, type SummaryMeta, type ValueSummary } from "@/lib/value-api";
 import {
   binDurations,
   compactUsd,
@@ -9,6 +9,7 @@ import {
   formatDuration,
   formatPct,
   opsTiles,
+  samplingNote,
   whatThisMeans,
 } from "@/lib/value-format";
 
@@ -29,6 +30,7 @@ const actuals = (over: Partial<Actuals> = {}): Actuals => ({
   excursion_events_detected: 4,
   caught_in_time: 3,
   not_caught_in_time: 1,
+  deadline_before_alert: 0,
   capture_rate_observed: 0.75,
   lots_protected: 3,
   lots_quarantined: 4,
@@ -137,7 +139,8 @@ describe("operations tiles and bins", () => {
     maintenance_requests: 0,
     production_stops: 1,
     caught_in_time: 1,
-    projected_rft: { label: "projected RFT", pct: 80, parts_started: 15, parts_at_risk: 3 },
+    deadline_before_alert: 1,
+    projected_rft: { label: "Projected right-first-time", pct: 80, parts_started: 15, parts_at_risk: 3, lots: 1 },
     recent_events: [],
     ...over,
   });
@@ -152,6 +155,7 @@ describe("operations tiles and bins", () => {
     expect(byId.ttd.foot).toContain("1 of 2 from the first reading");
     expect(byId.inspections.value).toBe("1 · 2");
     expect(byId.mttr.value).toBe("1.6 min");
+    expect(byId.ttdisp.foot).toContain("1 with the lot gone before the alert");
   });
 
   it("shows dashes, not zeros, before the first excursion", () => {
@@ -160,7 +164,7 @@ describe("operations tiles and bins", () => {
         episodes: 0,
         time_to_detect: { count: 0, mean: null, p50: null, p90: null, max: null, from_first_reading: 0, from_rule_duration: 0, samples: [] },
         mttr: { count: 0, mean: null, p50: null, p90: null, max: null },
-        projected_rft: { label: "projected RFT", pct: null, parts_started: 0, parts_at_risk: 0 },
+        projected_rft: { label: "Projected right-first-time", pct: null, parts_started: 0, parts_at_risk: 0, lots: 0 },
       }),
     );
     const byId = Object.fromEntries(empty.map((t) => [t.id, t]));
@@ -190,5 +194,37 @@ describe("summary query", () => {
     expect(q.get("window")).toBe("7d");
     expect(q.get("capture_rate")).toBe("0.5");
     expect(q.has("inspection_cost")).toBe(false);
+  });
+});
+
+describe("sampling and errors", () => {
+  const meta = (over: Partial<SummaryMeta> = {}): SummaryMeta => ({
+    pipeline_id: "p",
+    window: "30d",
+    window_start: "",
+    window_end: "",
+    data_available: true,
+    parts_per_lot: 15,
+    episodes_total: 250,
+    truncated: true,
+    recent_shown: 20,
+    samples_shown: 200,
+    ...over,
+  });
+
+  it("says when the distributions and the table are sampled", () => {
+    expect(samplingNote(meta())).toBe(
+      "Totals use all 250 excursions in the window. The distributions show the latest 200 and the table the latest 20.",
+    );
+    expect(samplingNote(meta({ truncated: false }))).toBeNull();
+  });
+
+  it("prefers field details, then error, then FastAPI detail", () => {
+    expect(envelopeError({ meta: { ...meta(), details: [{ field: "window", message: "is bad" }] } }, 422)).toBe(
+      "window is bad",
+    );
+    expect(envelopeError({ error: "value data is unavailable right now" }, 503)).toBe("value data is unavailable right now");
+    expect(envelopeError({ detail: "identity required" }, 401)).toBe("identity required");
+    expect(envelopeError(null, 500)).toBe("Request failed: 500");
   });
 });

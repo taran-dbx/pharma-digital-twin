@@ -6,7 +6,7 @@ import { DurationHistogram } from "@/components/value/duration-histogram";
 import { StatTiles, TilesSkeleton } from "@/components/value/stat-tiles";
 import { useOpsSummary } from "@/components/value/use-value-data";
 import type { RecentEvent, SummaryScope } from "@/lib/value-api";
-import { decisionsText, formatDuration, formatEventTime, opsTiles } from "@/lib/value-format";
+import { decisionsText, formatDuration, formatEventTime, opsTiles, samplingNote } from "@/lib/value-format";
 
 export function OperationsView({ scope, nonce }: { scope: SummaryScope; nonce: number }) {
   const { result, error, loading, refreshing } = useOpsSummary(scope, nonce);
@@ -36,6 +36,11 @@ export function OperationsView({ scope, nonce }: { scope: SummaryScope; nonce: n
       {error && (
         <p className="value-error" role="alert">
           {error}
+        </p>
+      )}
+      {samplingNote(meta) && (
+        <p className="value-sampled" role="note" data-testid="value-sampled">
+          {samplingNote(meta)}
         </p>
       )}
       <StatTiles tiles={opsTiles(data)} label="Operations metrics" dim={refreshing} />

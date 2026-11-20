@@ -88,6 +88,7 @@
   color: var(--db-foreground);
 }
 .value-empty,
+.value-sampled,
 .value-error,
 .value-warning {
   margin: 0;

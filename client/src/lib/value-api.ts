@@ -61,6 +61,7 @@ export interface Actuals {
   excursion_events_detected: number;
   caught_in_time: number;
   not_caught_in_time: number;
+  deadline_before_alert: number;
   capture_rate_observed: number | null;
   lots_protected: number;
   lots_quarantined: number;
@@ -80,6 +81,13 @@ export interface SummaryMeta {
   window_end: string;
   data_available: boolean;
   parts_per_lot: number;
+  /** Every excursion in the window; totals always use all of them. */
+  episodes_total: number;
+  /** True when the recent table or the distributions show only the latest excursions. */
+  truncated: boolean;
+  recent_shown: number;
+  samples_shown: number;
+  alias_since?: string | null;
 }
 
 export interface ValueSummary {
@@ -116,6 +124,8 @@ export interface RecentEvent {
   time_to_disposition_s: number | null;
   parts_at_risk: number;
   caught_in_time: boolean;
+  deadline: string;
+  deadline_before_alert: boolean;
   decisions: string[];
 }
 
@@ -132,15 +142,34 @@ export interface OpsSummary {
   maintenance_requests: number;
   production_stops: number;
   caught_in_time: number;
-  projected_rft: { label: string; definition?: string; pct: number | null; parts_started: number; parts_at_risk: number };
+  deadline_before_alert: number;
+  projected_rft: {
+    label: string;
+    definition?: string;
+    pct: number | null;
+    parts_started: number;
+    parts_at_risk: number;
+    lots: number;
+  };
   recent_events: RecentEvent[];
 }
 
 interface Envelope<T> {
-  success: boolean;
-  data: T | null;
-  error: string | null;
-  meta: SummaryMeta & { details?: { field: string; message: string }[] };
+  success?: boolean;
+  data?: T | null;
+  error?: string | null;
+  /** FastAPI's own error body, e.g. from a dependency that fails before the route. */
+  detail?: unknown;
+  meta?: SummaryMeta & { details?: { field: string; message: string }[] };
+}
+
+/** The message to show for a failed summary request. */
+export function envelopeError(body: Envelope<unknown> | null, status: number): string {
+  const fields = body?.meta?.details?.map((d) => `${d.field} ${d.message}`).join("; ");
+  if (fields) return fields;
+  if (typeof body?.error === "string" && body.error) return body.error;
+  if (typeof body?.detail === "string" && body.detail) return body.detail;
+  return `Request failed: ${status}`;
 }
 
 export interface Enveloped<T> {
@@ -165,9 +194,8 @@ export function summaryQuery(scope: SummaryScope, overrides: Partial<Record<Assu
 async function getEnveloped<T>(path: string, signal?: AbortSignal): Promise<Enveloped<T>> {
   const res = await fetch(`/api${path}`, { credentials: "include", signal });
   const body = (await res.json().catch(() => null)) as Envelope<T> | null;
-  if (!res.ok || !body?.success || body.data === null) {
-    const detail = body?.meta?.details?.map((d) => `${d.field} ${d.message}`).join("; ");
-    throw new ApiError(detail || body?.error || `Request failed: ${res.status}`, res.status);
+  if (!res.ok || !body?.success || !body.data || !body.meta) {
+    throw new ApiError(envelopeError(body, res.status), res.status);
   }
   return { data: body.data, meta: body.meta };
 }
