@@ -146,14 +146,22 @@ package (`iot_twin.core.paths`). The env var still overrides it.
 
 ## Dev vs prod
 
-* `dev` (default, deliberately **not** `mode: development`): creates its own app
-  with a distinct name, in a per-user workspace folder, with schedules paused.
-  Safe to `destroy`. Development mode would prefix resource names with
-  `[dev <user>]` / `dev_<user>_`, which would rename the `pharma-twin-*`
-  risk-model job and create a second, untrained `dev_<user>_pharma-twin-spindle-risk`
-  endpoint. Resource names come from variables instead (`app_name`,
-  `risk_job_name`, `risk_endpoint_name`), so override them per developer if
-  several people deploy to one workspace.
+* `dev` (`mode: development`, default): creates its own app with a distinct name
+  and a per-user workspace folder.
+  * Development mode decorates the other resource names, so each developer gets
+    their own copies:
+    * the risk job is `[dev <user>] pharma-twin-risk-model-train`;
+    * the endpoint is `dev_<user>_pharma-twin-spindle-risk`.
+  * The dev endpoint serves the same registered UC model version
+    (`risk_model_version`, currently 4). The app and the job follow it through
+    `${resources.model_serving_endpoints.spindle_risk.name}`, so nothing
+    hardcodes the endpoint name.
+  * A resource-isolation guard that requires `pharma-twin*` names (RESOURCE_PREFIX)
+    must allowlist exactly this dev-mode decoration: a `[dev <user>] ` prefix on
+    jobs and a `dev_<user>_` prefix on serving endpoints.
+  * **Safe to `destroy`.** It removes the dev app, the dev job and the dev endpoint.
+    It does not touch the UC model (not a bundle resource) or an endpoint created
+    outside the bundle, such as the script-created `pharma-twin-spindle-risk`.
 * `prod` (`mode: production`): explicit `root_path`, fixed app name
   `iot-digital-twin`, `CAN_MANAGE` for the deployer and `admin_group`.
 
@@ -173,6 +181,22 @@ After binding, the next deploy applies the bundle's `resources` and `config` to
 the existing app, replacing its current resources and env. Review
 `databricks bundle plan -t prod` first. `bundle destroy` on a bound `prod` app
 deletes it; do not use it there.
+
+### Adopting the script-created risk endpoint
+
+`scripts/submit_risk_model_training.py --create-endpoint` creates
+`pharma-twin-spindle-risk` outside the bundle. Only a **non-development** target
+that owns the unprefixed name (`prod`, or a future staging target) should adopt it,
+before its first deploy:
+
+```bash
+databricks bundle deployment bind spindle_risk pharma-twin-spindle-risk -t prod --profile <profile>
+databricks bundle deploy -t prod --var risk_model_version=4 --profile <profile>
+```
+
+Never bind it from `dev`. The dev endpoint name is `dev_<user>_…`, so a bind there
+would plan a rename of an immutable endpoint name. In dev the bundle creates its
+own prefixed endpoint, and the script-created one stays as it is.
 
 ## Fresh app prerequisites
 

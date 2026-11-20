@@ -33,8 +33,8 @@ RISK_SENSOR_IDS: tuple[str, ...] = (
     "mfg-sns-cnc_1_spindle_speed",
 )
 
-# Names consistent with RESOURCE_PREFIX (default pharma-twin / pharma_twin).
-DEFAULT_ENDPOINT_NAME = "pharma-twin-spindle-risk"
+# Names consistent with RESOURCE_PREFIX (default pharma-twin / pharma_twin). The
+# endpoint name is never defaulted in code: it always comes from RISK_ENDPOINT_NAME.
 DEFAULT_MODEL_SCHEMA = "pharma_twin"
 DEFAULT_MODEL_SHORT_NAME = "spindle_thermal_risk"
 CHAMPION_ALIAS = "champion"
@@ -103,7 +103,3 @@ def risk_alert_rule(
             ("validated_limit", "60 °C"),
         ),
     )
-
-
-def model_full_name(catalog: str, schema: str = DEFAULT_MODEL_SCHEMA) -> str:
-    return f"{catalog}.{schema}.{DEFAULT_MODEL_SHORT_NAME}"

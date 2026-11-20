@@ -95,14 +95,31 @@ def _targets() -> dict[str, Any]:
     return data["targets"]
 
 
+ENDPOINT_REF = "${resources.model_serving_endpoints.spindle_risk.name}"
+
+
 def test_dev_target_does_not_prefix_resource_names() -> None:
-    """Development mode renames jobs to "[dev <user>] ..." and endpoints to
-    "dev_<user>_...": the risk endpoint name is immutable and the app must query
-    the trained pharma-twin-spindle-risk endpoint, not a second, prefixed one."""
-    dev = _targets()["dev"]
-    assert dev.get("mode") != "development"
-    assert not (dev.get("presets") or {}).get("name_prefix")
-    assert (dev.get("presets") or {}).get("trigger_pause_status") == "PAUSED"
+    """Dev mode decorates names ("[dev <user>] " / "dev_<user>_"), so nothing may
+    hardcode the endpoint name: the app's serving resource and the training job's
+    --endpoint-name both follow the bundle endpoint resource, whatever its name."""
+    assert _targets()["dev"].get("mode") == "development"
+    app = yaml.safe_load((ROOT / "resources" / "app.yml").read_text(encoding="utf-8"))
+    serving = [
+        r for r in app["resources"]["apps"]["iot_twin"]["resources"] if "serving_endpoint" in r
+    ]
+    assert [r["serving_endpoint"]["name"] for r in serving] == [ENDPOINT_REF]
+    env = {e["name"]: e for e in app["resources"]["apps"]["iot_twin"]["config"]["env"]}
+    assert env["RISK_ENDPOINT_NAME"].get("value_from") == serving[0]["name"]
+    risk = yaml.safe_load((ROOT / "resources" / "risk_model.yml").read_text(encoding="utf-8"))
+    params = risk["resources"]["jobs"]["risk_model_train"]["tasks"][0]["spark_python_task"][
+        "parameters"
+    ]
+    assert params[params.index("--endpoint-name") + 1] == ENDPOINT_REF
+    entity = risk["resources"]["model_serving_endpoints"]["spindle_risk"]["config"][
+        "served_entities"
+    ][0]
+    # The dev-prefixed endpoint serves the same registered version as any other target.
+    assert entity["entity_version"] == "${var.risk_model_version}"
 
 
 def test_risk_resources_resolve_to_owned_pharma_twin_names() -> None:
