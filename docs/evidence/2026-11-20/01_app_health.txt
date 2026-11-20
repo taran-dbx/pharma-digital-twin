@@ -17,5 +17,5 @@ $ GET /api/app-defaults (subset)
   "uc_schema": "pharma_twin",
   "lakebase_project_id": "pharma-twin-backend",
   "pipelines_project": "pharma-twin-pipelines",
-  "service_credential": "iot-rtm-sc"
+  "service_credential (UC service-credential NAME, shown unquoted here; not a secret)": iot-rtm-sc
 }
