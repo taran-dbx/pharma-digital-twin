@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends
 from iot_twin.core.config import get_resource_prefix
 from iot_twin.core.state import AppState, get_app_state
 from iot_twin.core.workspace_config import (
+    get_lakebase_endpoint,
     get_pipelines_project,
     get_secret_scope,
     get_service_credential,
@@ -41,7 +42,7 @@ async def app_defaults():
     # Parse the app's Lakebase endpoint so the wizard can pre-populate new
     # pipelines with the same project (ops can override per pipeline).
     # Format: "projects/<project_id>/branches/<branch_id>/endpoints/<endpoint_id>"
-    lakebase_endpoint = os.getenv("LAKEBASE_ENDPOINT", "")
+    lakebase_endpoint = get_lakebase_endpoint()
     lakebase_project_id = ""
     lakebase_branch_id = ""
     parts = lakebase_endpoint.split("/")

@@ -65,7 +65,7 @@ anywhere, including a laptop, from a synthetic dataset bannered **SAMPLE DATA**.
 
 | Surface | Needed |
 |---|---|
-| App control plane (Lakebase project `iot-app-backend*`, branch `production`) | A Postgres role for your user with `SELECT` on `pipeline_setup`, `pipeline_deployment`, `provisioned_resource`, `alert`, `alert_event`, `production_event` |
+| App control plane (Lakebase project `pharma-twin-backend*` (`<RESOURCE_PREFIX>-backend`), branch `production`) | A Postgres role for your user with `SELECT` on `pipeline_setup`, `pipeline_deployment`, `provisioned_resource`, `alert`, `alert_event`, `production_event` |
 | Pipeline Lakebase (branch = `manufacturing`, real-time mode only) | `SELECT` on `public.sensor_readings` and the `lakets` registry tables |
 | Unity Catalog | `USE CATALOG`, `USE SCHEMA`, `SELECT` on the telemetry table (`lb__shadow_manufacturing_sensor_readings_history`, or `manufacturing_<mode>`) and `manufacturing_metrics` |
 | Compute | Serverless notebook compute (Spark is used for Unity Catalog), or `CAN USE` on the setup's SQL warehouse |

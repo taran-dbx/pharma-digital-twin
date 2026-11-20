@@ -1,4 +1,4 @@
-"""Tests for the shared ``iot-pipelines`` Lakebase project provisioning.
+"""Tests for the shared ``pharma-twin-pipelines`` Lakebase project provisioning.
 
 Covers Phase 2 Task 2.3 (plan) / spec §2.1–2.2:
 - ``ensure_pipelines_project`` — idempotent shared-project creation.
@@ -8,23 +8,24 @@ Covers Phase 2 Task 2.3 (plan) / spec §2.1–2.2:
   writes to the primary endpoint.
 
 Unit tests mock the Databricks ``WorkspaceClient``.  A single integration test
-runs against a *throwaway* branch on the real ``iot-pipelines`` project and
+runs against a *throwaway* branch on the real ``pharma-twin-pipelines`` project and
 ``pytest.skip``s when the project is unreachable.
 """
 
 from __future__ import annotations
 
-import os
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from iot_twin.core import resource_names
+from iot_twin.core.config import assert_owned_name
 from iot_twin.core.workspace_config import get_pipelines_project
 from iot_twin.services.pipelines import pipeline_project_service as pps
 
 # The test suite sets this env var so get_pipelines_project() returns a known value.
-_TEST_PIPELINES_PROJECT = "iot-pipelines"
+_TEST_PIPELINES_PROJECT = resource_names.pipelines_project()
 
 
 @pytest.fixture(autouse=True)
@@ -275,8 +276,9 @@ class TestConnResolution:
 
 
 # ---------------------------------------------------------------------------
-# Integration — throwaway branch on the real iot-pipelines project
+# Integration — throwaway branch on this deployment's pipelines project (opt-in)
 # ---------------------------------------------------------------------------
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_integration_branch_primary_write_replica_read() -> None:
     """Create a throwaway branch, write to primary, read from replica, verify
@@ -287,13 +289,15 @@ async def test_integration_branch_primary_write_replica_read() -> None:
     except Exception as exc:  # pragma: no cover - deps missing
         pytest.skip(f"integration deps unavailable: {exc}")
 
-    profile = os.getenv("DATABRICKS_CONFIG_PROFILE", "example-us-east")
-    os.environ.setdefault("DATABRICKS_CONFIG_PROFILE", profile)
+    from tests.conftest import require_live_tests
+
+    profile = require_live_tests()
+    assert_owned_name(get_pipelines_project(), what="PIPELINES_LAKEBASE_PROJECT")
     try:
         ws = WorkspaceClient(profile=profile)
         pps.ensure_pipelines_project(ws=ws)
     except Exception as exc:  # pragma: no cover - offline / no creds
-        pytest.skip(f"iot-pipelines not reachable: {exc}")
+        pytest.skip(f"pipelines project not reachable: {exc}")
 
     branch = f"itest{uuid.uuid4().hex[:8]}"
     write_mgr = None
@@ -301,7 +305,7 @@ async def test_integration_branch_primary_write_replica_read() -> None:
     try:
         info = await pps.provision_industry_branch(branch, ws=ws)  # type: ignore[assignment]
     except Exception as exc:  # pragma: no cover - project unreachable/zombie
-        pytest.skip(f"iot-pipelines project not operational: {exc}")
+        pytest.skip(f"pipelines project not operational: {exc}")
     try:
         assert info["primary_host"]
         assert info["replica_host"]

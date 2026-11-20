@@ -13,6 +13,7 @@ import logging
 from typing import Any
 
 from iot_twin.core import resource_names
+from iot_twin.core.config import assert_owned_name
 
 logger = logging.getLogger("pharma_twin.services.lakets_deploy")
 
@@ -606,7 +607,18 @@ def _notebook_source_bytes() -> bytes:
 
 
 def _job_display_name(project_id: str, branch_id: str) -> str:
-    return f"LakeTS Retention — {project_id}/{branch_id}"
+    return resource_names.lakets_job_name("Retention", project_id, branch_id)
+
+
+def _require_owned_project(project_id: str) -> None:
+    """Reject a missing or non-owned Lakebase project before touching any job.
+
+    Jobs are looked up and reset by display name, so a foreign project id
+    (e.g. an upstream LakeTS project) must never reach that lookup.
+    """
+    if not project_id:
+        raise ValueError("project_id is required")
+    assert_owned_name(project_id, what="LakeTS project_id")
 
 
 def deploy_retention_job(
@@ -621,8 +633,7 @@ def deploy_retention_job(
 
     Returns a dict with ``{job_id, notebook_path, schedule, created_or_updated}``.
     """
-    if not project_id:
-        raise ValueError("project_id is required")
+    _require_owned_project(project_id)
 
     from databricks.sdk import WorkspaceClient
     from databricks.sdk.service import jobs as dj
@@ -791,8 +802,7 @@ def _deploy_ops_job(
 
     Returns ``{"job": <name>, "job_id": <id>, "status": "created"|"updated"}``.
     """
-    if not project_id:
-        raise ValueError("project_id is required")
+    _require_owned_project(project_id)
 
     from databricks.sdk.service import jobs as dj
     from databricks.sdk.service import workspace as dw
@@ -888,7 +898,7 @@ def deploy_partition_manager_job(
     """
     return _deploy_ops_job(
         w,
-        job_name=f"LakeTS Partition Manager — {project_id}/{branch_id}",
+        job_name=resource_names.lakets_job_name("Partition Manager", project_id, branch_id),
         task_key="lakets_partition_manager",
         component="lakets-partition-manager",
         notebook_source=_PARTITION_MANAGER_NOTEBOOK_SOURCE,
@@ -913,7 +923,7 @@ def deploy_rollup_refresh_job(
     """
     return _deploy_ops_job(
         w,
-        job_name=f"LakeTS Rollup Refresh — {project_id}/{branch_id}",
+        job_name=resource_names.lakets_job_name("Rollup Refresh", project_id, branch_id),
         task_key="lakets_rollup_refresh",
         component="lakets-rollup-refresh",
         notebook_source=_ROLLUP_REFRESH_NOTEBOOK_SOURCE,
@@ -939,7 +949,7 @@ def deploy_tiering_job(
     """
     return _deploy_ops_job(
         w,
-        job_name=f"LakeTS Tiering — {project_id}/{branch_id}",
+        job_name=resource_names.lakets_job_name("Tiering", project_id, branch_id),
         task_key="lakets_tiering",
         component="lakets-tiering",
         notebook_source=_TIERING_NOTEBOOK_SOURCE,
@@ -968,8 +978,7 @@ def deploy_lakets_ops_jobs(
     retention, and cold-tiering jobs (each gated by its flag) and returns one
     ``{"job", "job_id", "status"}`` entry per deployed job.
     """
-    if not project_id:
-        raise ValueError("project_id is required")
+    _require_owned_project(project_id)
 
     results: list[dict] = []
 

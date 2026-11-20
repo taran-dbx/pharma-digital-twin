@@ -28,7 +28,7 @@ import logging
 import os
 
 from iot_twin.core import resource_names
-from iot_twin.core.config import LAKEBASE_SYNC_DATABASE
+from iot_twin.core.config import LAKEBASE_SYNC_DATABASE, owned_env
 from iot_twin.core.lakebase import LakebaseConnectionManager, _get_lakebase_credentials
 
 logger = logging.getLogger("pharma_twin.services.app_backend_db")
@@ -36,11 +36,8 @@ logger = logging.getLogger("pharma_twin.services.app_backend_db")
 # ---------------------------------------------------------------------------
 # app-backend project coordinates (overridable via env, but never via PGHOST)
 # ---------------------------------------------------------------------------
-APP_BACKEND_PROJECT = os.getenv("LAKEBASE_PROJECT") or resource_names.app_backend_project()
-APP_BACKEND_ENDPOINT = os.getenv(
-    "APP_BACKEND_LAKEBASE_ENDPOINT",
-    os.getenv("LAKEBASE_ENDPOINT", ""),
-)
+APP_BACKEND_PROJECT = owned_env("LAKEBASE_PROJECT") or resource_names.app_backend_project()
+APP_BACKEND_ENDPOINT = owned_env("APP_BACKEND_LAKEBASE_ENDPOINT") or owned_env("LAKEBASE_ENDPOINT")
 # Host resolved from APP_BACKEND_PGHOST; falls back to PGHOST but never to a
 # workspace-specific literal — missing host causes initialize() to raise clearly.
 APP_BACKEND_HOST = os.getenv("APP_BACKEND_PGHOST") or os.getenv("PGHOST", "")

@@ -1,11 +1,15 @@
 /**
  * Client mirror of `src/iot_twin/core/resource_names.py`.
  *
- * Every resource name is derived from the backend's `RESOURCE_PREFIX`
- * (served as `resource_prefix` by `GET /api/app-defaults`), so this app never
- * builds a name in the upstream `iot` namespace. Deploy payloads must read the
- * prefix from app-defaults directly (no fallback); display-only UI may use
- * `useResourcePrefix()`, which shows the default until the fetch resolves.
+ * Every resource name is derived from the backend's `RESOURCE_PREFIX`, served
+ * as `resource_prefix` by `GET /api/app-defaults`.
+ *
+ * - Anything that creates or addresses a resource (deploy payloads) must read
+ *   `resource_prefix` from app-defaults itself and fail when it is missing; see
+ *   `requireAppDefault` in `industry-deploy-config.ts`. There is no fallback.
+ * - Display-only UI (labels, previews, placeholders, best-effort name matching)
+ *   uses `useResourcePrefix()` / `fetchDisplayPrefix()`. These show
+ *   `DEFAULT_RESOURCE_PREFIX` until app-defaults resolves, or if it fails.
  */
 import { useEffect, useState } from "react";
 
@@ -16,8 +20,8 @@ export const DEFAULT_RESOURCE_PREFIX = "pharma-twin";
 
 let prefixPromise: Promise<string> | null = null;
 
-/** Fetch (once) the backend resource prefix; falls back to the default on error. */
-export function fetchResourcePrefix(): Promise<string> {
+/** Fetch (once) the prefix for DISPLAY. Falls back to the default on error; never use for deploys. */
+export function fetchDisplayPrefix(): Promise<string> {
   if (!prefixPromise) {
     prefixPromise = api
       .getAppDefaults()
@@ -30,12 +34,12 @@ export function fetchResourcePrefix(): Promise<string> {
   return prefixPromise;
 }
 
-/** React hook returning the resource prefix for display-only names. */
+/** React hook returning the resource prefix for display-only names (see header). */
 export function useResourcePrefix(): string {
   const [prefix, setPrefix] = useState(DEFAULT_RESOURCE_PREFIX);
   useEffect(() => {
     let cancelled = false;
-    void fetchResourcePrefix().then((p) => {
+    void fetchDisplayPrefix().then((p) => {
       if (!cancelled) setPrefix(p);
     });
     return () => {
@@ -65,7 +69,12 @@ export function sharedSecretScope(prefix: string): string {
   return `${prefix}-secrets`;
 }
 
+/** UC / Postgres identifier form of the prefix (`pharma-twin` -> `pharma_twin`). */
+export function prefixIdent(prefix: string): string {
+  return prefix.replace(/-/g, "_");
+}
+
 /** UC catalog pattern `<prefix_ident>_{name}`. */
 export function catalogPattern(prefix: string): string {
-  return `${prefix.replace(/-/g, "_")}_{name}`;
+  return `${prefixIdent(prefix)}_{name}`;
 }

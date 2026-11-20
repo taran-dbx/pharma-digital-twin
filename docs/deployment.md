@@ -62,12 +62,15 @@ validation. Copy `deploy/variable-overrides.json.example` (placeholders only) to
 gitignored `.databricks/bundle/<target>/variable-overrides.json` and fill in real
 values (or use `--var name=value` / `BUNDLE_VAR_<name>`). `make bundle-validate`
 stops with a clear message when the file for `BUNDLE_TARGET` is missing.
-Variables with defaults are not workspace-specific: `resource_prefix`
-(`pharma-twin`), `app_name` (dev default `pharma-twin-dev`, fixed to `pharma-twin`
-in `prod`), `uc_schema` (`pharma_twin`), `lakebase_project` (`pharma-twin-backend`),
-`pipelines_lakebase_project` (`pharma-twin-pipelines`), `lakebase_branch`,
-`lakebase_database`, `industries`, `admin_group` (`pharma-twin-admins`) and
-`zerobus_secret_key`. `uc_catalog` has **no** default.
+Variables with defaults are not workspace-specific. `resource_prefix` (`pharma-twin`)
+drives the defaults of `app_name` (`<prefix>-dev`, the bare `<prefix>` in `prod`),
+`lakebase_project` (`<prefix>-backend`), `pipelines_lakebase_project`
+(`<prefix>-pipelines`), `admin_group` (`<prefix>-admins`) and the Genie resource label
+(`<prefix>-genie`). DABs has no string replace, so the underscore form is a separate
+variable: `resource_prefix_ident` (`pharma_twin`) drives `uc_schema`. **Override
+`resource_prefix` and `resource_prefix_ident` together** (e.g. `acme-lab` / `acme_lab`).
+`lakebase_branch`, `lakebase_database`, `industries` and `zerobus_secret_key` also have
+defaults. `uc_catalog` has **no** default.
 
 ### Required variables (no default)
 
@@ -93,6 +96,7 @@ checked against `databricks.yml` by `tests/test_bundle_config.py`.
 | Variable | Env var / resource it feeds | Notes |
 | --- | --- | --- |
 | `resource_prefix` | `RESOURCE_PREFIX` | Prefix of every runtime-created resource name (default `pharma-twin`). Must not be in the upstream `iot` namespace |
+| `resource_prefix_ident` | `uc_schema` default | Underscore form of `resource_prefix` (default `pharma_twin`); override together with it |
 | `app_name` | App name | Workspace-global, max 30 chars. Dev default is the fixed `pharma-twin-dev`, so override it per developer (e.g. `pharma-twin-dev-<initials>`, check `bundle validate --output json`); `prod` is fixed to `pharma-twin` |
 | `uc_catalog`, `uc_schema` | `UC_CATALOG`, `UC_SCHEMA` | |
 | `warehouse_id` | `sql-warehouse` resource (CAN_USE) → `DATABRICKS_SQL_WAREHOUSE_ID` via `value_from` | |

@@ -460,7 +460,7 @@ class TestRetentionDeployRoute:
         ):
             resp = await deploy_client.post(
                 "/api/lakets/retention/deploy",
-                json={"lakebase": {"project_id": "iot-lakets-demo"}},
+                json={"lakebase": {"project_id": "pharma-twin-lakets-demo"}},
             )
 
         assert resp.status_code == 200

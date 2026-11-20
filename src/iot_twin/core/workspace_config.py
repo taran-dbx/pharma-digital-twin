@@ -47,6 +47,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from iot_twin.core.config import owned_env
+
 _REQUIRED_ENV: tuple[str, ...] = (
     "UC_CATALOG",
     "UC_SCHEMA",
@@ -98,7 +100,7 @@ def get_secret_scope() -> str:
     Checks ``SECRET_SCOPE`` first (future canonical name), then falls back to
     ``ZEROBUS_SECRET_SCOPE`` (legacy name).  Returns ``""`` when neither is set.
     """
-    return os.getenv("SECRET_SCOPE") or os.getenv("ZEROBUS_SECRET_SCOPE") or ""
+    return owned_env("SECRET_SCOPE") or owned_env("ZEROBUS_SECRET_SCOPE")
 
 
 def get_service_credential() -> str:
@@ -116,7 +118,17 @@ def get_pipelines_project() -> str:
     Returns ``""`` when the env var is not set — the project is provisioned in
     a later task.
     """
-    return os.getenv("PIPELINES_LAKEBASE_PROJECT", "")
+    return owned_env("PIPELINES_LAKEBASE_PROJECT")
+
+
+def get_lakebase_project() -> str:
+    """Return the app-backend Lakebase project (``LAKEBASE_PROJECT``); must be owned."""
+    return owned_env("LAKEBASE_PROJECT")
+
+
+def get_lakebase_endpoint() -> str:
+    """Return the app-backend endpoint path (``LAKEBASE_ENDPOINT``); its project must be owned."""
+    return owned_env("LAKEBASE_ENDPOINT")
 
 
 def get_uc_catalog() -> str:
@@ -164,8 +176,8 @@ def get_config() -> WorkspaceConfig:
     return WorkspaceConfig(
         uc_catalog=os.environ["UC_CATALOG"],
         uc_schema=os.environ["UC_SCHEMA"],
-        lakebase_project=os.environ["LAKEBASE_PROJECT"],
-        lakebase_endpoint=os.environ["LAKEBASE_ENDPOINT"],
+        lakebase_project=get_lakebase_project(),
+        lakebase_endpoint=get_lakebase_endpoint(),
         pg_host=os.getenv("PGHOST", ""),
         warehouse_id=os.environ["DATABRICKS_SQL_WAREHOUSE_ID"],
         zerobus_endpoint=os.environ["ZEROBUS_SERVER_ENDPOINT"],

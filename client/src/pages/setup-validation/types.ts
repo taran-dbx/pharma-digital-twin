@@ -77,7 +77,7 @@ export function computeWorkers(partitions: number): number {
 }
 
 /** Default UC service credential *name* (an identifier, not a secret). */
-const DEFAULT_UC_SC_NAME = "iot-msk-service-cred";
+const DEFAULT_UC_SC_NAME = "<UC_SERVICE_CREDENTIAL>";
 
 /** Fixed prototype source config (Kafka / MSK). */
 export const SOURCE_DEFAULTS = {
@@ -163,7 +163,7 @@ export interface ValidationStep {
 export const COMMON_STEPS: ValidationStep[] = [
   { id: "provision_cluster", label: "Provision interactive cluster", detail: "general-purpose · on-demand (no spot) · non-Photon · DBR 18.2 (Spark 4.1)" },
   { id: "source_connectivity", label: "Source connectivity", detail: "DNS → TCP → TLS → auth (UC service credential)" },
-  { id: "topics_created", label: "Topics created", detail: "iot.pharmaceutical.realtime + .microbatch · 6 partitions · RF 3" },
+  { id: "topics_created", label: "Topics created", detail: "<prefix>.<industry>.realtime + .microbatch · 6 partitions · RF 3" },
   { id: "schema_conformance", label: "Schema conformance gate", detail: "sample records → SSOT columns line up" },
 ];
 

@@ -244,7 +244,18 @@ def test_shared_service_credential_is_configurable(monkeypatch) -> None:
 
 # --- 2. Legacy-literal grep ----------------------------------------------------
 
-SCAN_PATHS = ("src", "scripts", "deploy", "resources", "databricks.yml", "app.yaml")
+SCAN_PATHS = (
+    "src",
+    "scripts",
+    "deploy",
+    "resources",
+    "databricks.yml",
+    "app.yaml",
+    "tests",
+    "client/src",
+    "ops",
+    "usecases",
+)
 
 LEGACY_PATTERNS = re.compile(
     r"iot-\{|iot\.\{|iot_\{"  # f-string name builders in the upstream namespace
@@ -252,6 +263,7 @@ LEGACY_PATTERNS = re.compile(
     r"|iot-secrets|iot-digital-twin|iot-twin-dev|iot-app-backend|iot-pipelines"
     r"|iot-sss|iot-app-user|iot_app_user|iot-admins|iot-lakets"
     r"|iot[-._](?:pharmaceutical|manufacturing)"  # literal upstream jobs/topics/catalogs
+    r"|iot_[\"']"  # a bare "iot_" prefix literal (e.g. removeprefix("iot_"))
 )
 
 # path -> justification. Whole files, so keep entries to files whose purpose is
@@ -261,6 +273,15 @@ ALLOWLIST: dict[str, str] = {
     "src/iot_twin/core/config.py": "documents the rejected upstream namespace",
     # Isolation-guard comment naming what the bundle must never touch.
     "databricks.yml": "isolation guard comment lists the upstream names",
+    # This file: the pattern itself and the known-legacy fixtures that prove it matches.
+    "tests/test_resource_isolation.py": "guard pattern + legacy-form fixtures",
+    # Redacted LIVE-RUN snapshots captured from the upstream deployment before the
+    # fork (immutable records, regenerated only by re-running the notebook here).
+    "ops/notebooks/runs/README.md": "describes the upstream live-run snapshots",
+    "ops/notebooks/runs/manufacturing_realtime_2026-11-20.html": "upstream live-run snapshot",
+    "ops/notebooks/runs/manufacturing_realtime_2026-11-20.ipynb": "upstream live-run snapshot",
+    "ops/notebooks/runs/pharmaceutical_realtime_2026-11-20.html": "upstream live-run snapshot",
+    "ops/notebooks/runs/pharmaceutical_realtime_2026-11-20.ipynb": "upstream live-run snapshot",
 }
 
 
@@ -322,6 +343,7 @@ def test_allowlist_entries_are_still_needed() -> None:
         'sp = "iot-sss-industries"',
         'ROLE = "iot_app_user"',
         'jn = "iot-pharmaceutical-realtime"',
+        'industry = name.removeprefix("iot_")',
     ],
 )
 def test_pattern_catches_known_legacy_forms(line: str) -> None:
@@ -339,3 +361,162 @@ def test_pattern_catches_known_legacy_forms(line: str) -> None:
 )
 def test_pattern_ignores_product_strings(line: str) -> None:
     assert not LEGACY_PATTERNS.search(line)
+
+
+def test_scan_covers_tests_client_ops_and_usecases() -> None:
+    files = _tracked_files()
+    for head in ("tests/", "client/src/", "ops/", "usecases/"):
+        assert any(f.startswith(head) for f in files), head
+
+
+# --- 3. Ownership guard ----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "pharma-twin",
+        "pharma-twin-backend",
+        "pharma-twin.pharmaceutical.realtime",
+        "pharma_twin_pharmaceutical",
+        "projects/pharma-twin-pipelines/branches/pharmaceutical",
+        "projects/pharma-twin-backend/branches/production/endpoints/primary",
+    ],
+)
+def test_owned_names_accepted(monkeypatch, name: str) -> None:
+    monkeypatch.delenv(config.RESOURCE_PREFIX_ENV, raising=False)
+    assert config.assert_owned_name(name) == name
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "",
+        "iot-pipelines",
+        "iot-app-backend",
+        "iot-lakets-demo",
+        "iot_pharmaceutical",
+        "projects/iot-pipelines/branches/pharmaceutical",
+        "projects/iot-app-backend/branches/production/endpoints/primary",
+        "pharma-twinx",
+        "other-project",
+        "projects/other/branches/pharma-twin",
+    ],
+)
+def test_foreign_names_rejected(monkeypatch, name: str) -> None:
+    monkeypatch.delenv(config.RESOURCE_PREFIX_ENV, raising=False)
+    with pytest.raises(ValueError):
+        config.assert_owned_name(name)
+
+
+def test_ownership_follows_prefix_override(monkeypatch) -> None:
+    monkeypatch.setenv(config.RESOURCE_PREFIX_ENV, "acme-lab")
+    assert config.is_owned_name("acme-lab-pipelines")
+    assert not config.is_owned_name("pharma-twin-pipelines")
+
+
+@pytest.mark.parametrize(
+    ("var", "getter"),
+    [
+        ("PIPELINES_LAKEBASE_PROJECT", "get_pipelines_project"),
+        ("SECRET_SCOPE", "get_secret_scope"),
+        ("ZEROBUS_SECRET_SCOPE", "get_secret_scope"),
+        ("LAKEBASE_PROJECT", "get_lakebase_project"),
+        ("LAKEBASE_ENDPOINT", "get_lakebase_endpoint"),
+    ],
+)
+def test_workspace_getters_reject_foreign_overrides(monkeypatch, var: str, getter: str) -> None:
+    from iot_twin.core import workspace_config
+
+    for other in ("SECRET_SCOPE", "ZEROBUS_SECRET_SCOPE"):
+        monkeypatch.delenv(other, raising=False)
+    monkeypatch.setenv(var, "projects/iot-app-backend/x" if "ENDPOINT" in var else "iot-secrets")
+    with pytest.raises(ValueError):
+        getattr(workspace_config, getter)()
+
+
+def test_admin_group_rejects_foreign_override(monkeypatch) -> None:
+    from iot_twin.services import app_permissions
+
+    monkeypatch.setenv("ADMIN_GROUP", "iot-admins")
+    with pytest.raises(ValueError):
+        app_permissions._admin_group()
+
+
+@pytest.mark.parametrize("project", ["iot-lakets-demo", "other", ""])
+def test_lakets_deploy_rejects_foreign_project(project: str) -> None:
+    from unittest.mock import MagicMock
+
+    from iot_twin.services.lakets import lakets_deploy_service as lds
+
+    w = MagicMock()
+    with pytest.raises(ValueError):
+        lds.deploy_lakets_ops_jobs(w, project)
+    with pytest.raises(ValueError):
+        lds.deploy_retention_job(project)
+    w.jobs.list.assert_not_called()
+
+
+def test_lakets_job_names_are_prefixed(monkeypatch) -> None:
+    from iot_twin.services.lakets import lakets_deploy_service as lds
+
+    monkeypatch.delenv(config.RESOURCE_PREFIX_ENV, raising=False)
+    name = lds._job_display_name("pharma-twin-lakets-demo", "production")
+    assert name == "pharma-twin LakeTS Retention — pharma-twin-lakets-demo/production"
+
+
+# --- 4. Live-test gate / bundle / scripts ----------------------------------------
+
+
+def test_live_workspace_client_is_blocked_by_default() -> None:
+    from tests.conftest import LiveWorkspaceBlocked, live_tests_enabled
+
+    if live_tests_enabled():
+        pytest.skip("live tests opted in")
+    sdk = pytest.importorskip("databricks.sdk")
+    if not isinstance(sdk.WorkspaceClient, type):
+        pytest.skip("databricks.sdk is stubbed")
+    with pytest.raises(LiveWorkspaceBlocked):
+        sdk.WorkspaceClient(profile="any-real-profile")
+
+
+def test_app_backend_test_endpoint_is_owned(monkeypatch) -> None:
+    from tests.conftest import app_backend_endpoint
+
+    monkeypatch.delenv("APP_BACKEND_LAKEBASE_ENDPOINT", raising=False)
+    monkeypatch.delenv(config.RESOURCE_PREFIX_ENV, raising=False)
+    assert app_backend_endpoint().startswith("projects/pharma-twin-backend/")
+    monkeypatch.setenv(
+        "APP_BACKEND_LAKEBASE_ENDPOINT",
+        "projects/iot-app-backend/branches/production/endpoints/primary",
+    )
+    with pytest.raises(ValueError):
+        app_backend_endpoint()
+
+
+def _bundle_variables() -> dict:
+    import yaml
+
+    return yaml.safe_load((ROOT / "databricks.yml").read_text())["variables"]
+
+
+def test_bundle_defaults_derive_from_resource_prefix() -> None:
+    variables = _bundle_variables()
+    prefix = variables["resource_prefix"]["default"]
+    assert prefix == config.DEFAULT_RESOURCE_PREFIX
+    assert variables["resource_prefix_ident"]["default"] == prefix.replace("-", "_")
+    assert variables["app_name"]["default"] == "${var.resource_prefix}-dev"
+    assert variables["lakebase_project"]["default"] == "${var.resource_prefix}-backend"
+    assert variables["pipelines_lakebase_project"]["default"] == "${var.resource_prefix}-pipelines"
+    assert variables["admin_group"]["default"] == "${var.resource_prefix}-admins"
+    assert variables["uc_schema"]["default"] == "${var.resource_prefix_ident}"
+
+
+def test_e2e_script_guards_destructive_stages() -> None:
+    source = (ROOT / "scripts" / "e2e" / "pharma_e2e.py").read_text()
+    assert "pharma_e2e_state.json" not in source
+    assert 'f"/tmp/{get_resource_prefix()}_e2e_state.json"' in source
+    teardown = source[source.index("async def stage_teardown") :]
+    teardown = teardown[: teardown.index("async def stage_cleanup_cloud")]
+    assert teardown.index("_assert_owned_setup(") < teardown.index("teardown_setup(")
+    assert "= build_app_backend_manager(" not in source  # env-sourced host is not trusted

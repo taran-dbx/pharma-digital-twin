@@ -71,13 +71,13 @@ class TestIsAdmin:
     def test_is_admin_true_for_group_member(self, monkeypatch) -> None:
         from iot_twin.services import app_permissions as ap
 
-        monkeypatch.setenv("ADMIN_GROUP", "iot-admins")
-        monkeypatch.setattr(ap, "_user_groups", lambda req: {"iot-admins", "users"})
+        monkeypatch.setenv("ADMIN_GROUP", "pharma-twin-admins")
+        monkeypatch.setattr(ap, "_user_groups", lambda req: {"pharma-twin-admins", "users"})
         assert ap.is_admin(object()) is True
 
     def test_is_admin_false_for_non_member(self, monkeypatch) -> None:
         from iot_twin.services import app_permissions as ap
 
-        monkeypatch.setenv("ADMIN_GROUP", "iot-admins")
+        monkeypatch.setenv("ADMIN_GROUP", "pharma-twin-admins")
         monkeypatch.setattr(ap, "_user_groups", lambda req: {"users"})
         assert ap.is_admin(object()) is False

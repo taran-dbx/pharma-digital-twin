@@ -29,6 +29,7 @@ skip_live = pytest.mark.skipif(
 )
 
 
+@pytest.mark.integration
 @skip_live
 @pytest.mark.asyncio
 async def test_provision_cluster_live(app_backend_conn):

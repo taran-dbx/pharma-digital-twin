@@ -7,7 +7,7 @@ Asserts:
      ``example_eu_catalog.rtm_lakets_zb.{industry}_metrics``
      and the streaming-latency SQL filters by ``mode``.
   3. pipeline_freshness._dbsql_flowing targets the prefixed one-schema FQN,
-     NOT the old ``iot_<industry>.<schema>.<table>`` path.
+     NOT the old ``pharma_twin_<industry>.<schema>.<table>`` path.
 """
 
 from __future__ import annotations
@@ -77,7 +77,7 @@ class TestFreshnessTableResolution:
     @pytest.mark.asyncio
     async def test_microbatch_freshness_queries_prefixed_table(self) -> None:
         """After Task 5 _dbsql_flowing must target {industry}_microbatch, not
-        iot_{industry}.microbatch.sensor_data."""
+        pharma_twin_{industry}.microbatch.sensor_data."""
         from iot_twin.services.pipelines import pipeline_freshness as pf
 
         pf.clear_cache()
@@ -91,12 +91,12 @@ class TestFreshnessTableResolution:
         assert flowing is True
         assert f"{UC_CATALOG}.{UC_SCHEMA}.pharmaceutical_microbatch" in seen["sql"]
         # Must NOT use the old per-catalog schema path.
-        assert "iot_pharmaceutical.microbatch.sensor_data" not in seen["sql"]
+        assert "pharma_twin_pharmaceutical.microbatch.sensor_data" not in seen["sql"]
 
     @pytest.mark.asyncio
     async def test_zerobus_freshness_queries_prefixed_table(self) -> None:
         """After Task 5 _dbsql_flowing must target {industry}_zerobus, not
-        iot_{industry}.zerobus.iot_sensor_data."""
+        pharma_twin_{industry}.zerobus.iot_sensor_data."""
         from iot_twin.services.pipelines import pipeline_freshness as pf
 
         pf.clear_cache()
@@ -131,7 +131,7 @@ class TestFreshnessTableResolution:
 class TestMetricsTableResolution:
     def test_metrics_fqn_is_prefixed_one_schema(self) -> None:
         """The managed metrics table lives in the shared catalog/schema, NOT in
-        per-industry iot_<industry>.metrics.streaming_metrics_<mode>."""
+        per-industry pharma_twin_<industry>.metrics.streaming_metrics_<mode>."""
         from iot_twin.services.industry.industry_catalog_service import industry_table
 
         expected = f"{UC_CATALOG}.{UC_SCHEMA}.pharmaceutical_metrics"

@@ -1,6 +1,6 @@
 """Focused unit tests asserting that zerobus validation steps use the
 one-schema table layout ({UC_CATALOG}.{UC_SCHEMA}.{industry}_zerobus)
-rather than the old per-industry-catalog layout (iot_{industry}.zerobus.*).
+rather than the old per-industry-catalog layout (pharma_twin_{industry}.zerobus.*).
 
 No cluster, no Kafka, no live DB — DBSQL is mocked.
 """
@@ -46,7 +46,7 @@ def _make_ctx(*, mode: str | None = None) -> StepContext:
 
 
 EXPECTED_ZB_FQN = f"{UC_CATALOG}.{UC_SCHEMA}.{INDUSTRY}_zerobus"
-OLD_ZEROBUS_PATTERN = f"iot_{INDUSTRY}.zerobus."
+OLD_ZEROBUS_PATTERN = f"pharma_twin_{INDUSTRY}.zerobus."
 
 
 class TestZerobusCreateTableOneSchema:

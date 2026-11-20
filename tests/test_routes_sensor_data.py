@@ -1289,7 +1289,7 @@ _UC_SCHEMA = "rtm_lakets_zb"
 
 
 def _patch_dbsql_timeseries_deps(
-    catalog: str | None = "iot_pharmaceutical",
+    catalog: str | None = "pharma_twin_pharmaceutical",
     warehouse_id: str | None = "wh-1",
     exec_result: dict | None = None,
     exec_side_effect: Exception | None = None,
@@ -1568,8 +1568,8 @@ class TestDbsqlTimeseries:
         assert resp.status_code == 200
         body = resp.json()
         assert body["mode"] == "zerobus"
-        # Legacy path (no industry param): iot_pharmaceutical.zerobus.iot_sensor_data
-        assert body["table"] == "iot_pharmaceutical.zerobus.iot_sensor_data"
+        # Legacy path (no industry param): pharma_twin_pharmaceutical.zerobus.iot_sensor_data
+        assert body["table"] == "pharma_twin_pharmaceutical.zerobus.iot_sensor_data"
 
     async def test_mode_defaults_to_microbatch_when_inference_fails(self) -> None:
         # No `mode` param, and the pipeline row lookup yields nothing usable.

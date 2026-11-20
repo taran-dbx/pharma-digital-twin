@@ -12,6 +12,7 @@ from typing import Any
 
 from fastapi import WebSocket
 
+from iot_twin.core.config import owned_env
 from iot_twin.core.state import AppState
 from iot_twin.domain.catalog import map_simulator_industries, to_record_industry
 
@@ -99,7 +100,7 @@ async def run_simulator(state: AppState) -> None:
             # Resolve Zerobus client secret: env var first, then UC secrets via SDK
             zerobus_client_secret = os.getenv("ZEROBUS_CLIENT_SECRET")
             if not zerobus_client_secret:
-                zb_scope = os.getenv("ZEROBUS_SECRET_SCOPE")
+                zb_scope = owned_env("ZEROBUS_SECRET_SCOPE") or None
                 zb_key = os.getenv("ZEROBUS_SECRET_KEY")
                 if zb_scope and zb_key:
                     import base64

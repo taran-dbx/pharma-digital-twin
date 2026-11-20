@@ -1,7 +1,7 @@
 """End-to-end integration test for the industry provisioning engine.
 
 Provisions a THROWAWAY industry (``spiketest``) against the real
-``example-us-east`` workspace + ``iot-pipelines`` Lakebase project:
+``example-us-east`` workspace + ``pharma-twin-pipelines`` Lakebase project:
 
 - canonical ``iot_spiketest`` catalog + 5 schemas + checkpoint volume +
   external metrics table,
@@ -23,6 +23,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.integration
+
 INDUSTRY = "spiketest"
 # Task 3: provision into the PRE-EXISTING catalog + single schema from env.
 CATALOG = os.getenv("UC_CATALOG", "")
@@ -37,8 +39,9 @@ def _ws_or_skip():
         from databricks.sdk import WorkspaceClient
     except Exception as exc:  # pragma: no cover
         pytest.skip(f"databricks-sdk unavailable: {exc}")
-    profile = os.getenv("DATABRICKS_CONFIG_PROFILE", "example-us-east")
-    os.environ.setdefault("DATABRICKS_CONFIG_PROFILE", profile)
+    from tests.conftest import require_live_tests
+
+    profile = require_live_tests()
     try:
         ws = WorkspaceClient(profile=profile)
         ws.current_user.me()

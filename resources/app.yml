@@ -55,7 +55,7 @@ resources:
             permission: CAN_USE
         - name: genie-space
           genie_space:
-            name: pharma-twin-genie
+            name: ${var.resource_prefix}-genie
             space_id: ${var.genie_space_id}
             permission: CAN_VIEW
         - name: lakebase

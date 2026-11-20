@@ -51,7 +51,7 @@ def _patch_all(*, preflight_pass=True):
             "provision_industry_branch",
             new=AsyncMock(
                 return_value={
-                    "project": "iot-pipelines",
+                    "project": "pharma-twin-pipelines",
                     "branch": "spiketest",
                     "primary_host": "p",
                     "replica_host": "r",
@@ -84,7 +84,7 @@ def _patch_all(*, preflight_pass=True):
             "ensure_cdf_config",
             return_value={
                 "name": (
-                    "projects/iot-pipelines/branches/spiketest/databases/"
+                    "projects/pharma-twin-pipelines/branches/spiketest/databases/"
                     "databricks_postgres/cdf-configs/lakets_cdf"
                 ),
                 "cdf_config_id": "lakets_cdf",
@@ -202,7 +202,7 @@ async def test_realtime_branch_failure_is_recorded_not_propagated() -> None:
         patch.object(
             ips.pps,
             "provision_industry_branch",
-            new=AsyncMock(side_effect=RuntimeError("Project 'iot-pipelines' not found")),
+            new=AsyncMock(side_effect=RuntimeError("Project 'pharma-twin-pipelines' not found")),
         ),
     ):
         summary = await ips.provision_industry(
@@ -213,7 +213,7 @@ async def test_realtime_branch_failure_is_recorded_not_propagated() -> None:
         )
     sections = {s["phase"]: s["result"] for s in summary["sections"]}
     assert sections["lakebase_branch"]["status"] == "failed"
-    assert "iot-pipelines" in sections["lakebase_branch"]["error"]
+    assert "pharma-twin-pipelines" in sections["lakebase_branch"]["error"]
     # Grants still ran despite the realtime failure.
     assert "grants" in sections
     assert "branch" not in summary

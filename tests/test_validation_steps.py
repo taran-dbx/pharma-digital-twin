@@ -28,7 +28,7 @@ from tests._fakes import fake_credential
 
 UC_CATALOG = "test_catalog"
 UC_SCHEMA = "test_schema"
-PIPELINES_LAKEBASE_PROJECT = "test_pipelines"
+PIPELINES_LAKEBASE_PROJECT = "pharma-twin-test-pipelines"
 
 # UC service credential *name* (an identifier, not a secret) and a probe status.
 UC_SC_NAME = "iot-rtm-sc"
@@ -92,7 +92,9 @@ def test_resolve_lakebase_write_conn_uses_configured_project(monkeypatch):
 
     connection = vs._resolve_lakebase_write_conn(ctx, "pharmaceutical")
 
-    assert requested_names == ["projects/test_pipelines/branches/pharmaceutical/endpoints/primary"]
+    assert requested_names == [
+        "projects/pharma-twin-test-pipelines/branches/pharmaceutical/endpoints/primary"
+    ]
     assert connection == ("pg.example.com", "app-client-id", fake_credential("pg"))
 
 

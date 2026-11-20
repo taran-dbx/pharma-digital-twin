@@ -3,7 +3,7 @@
 Unit tests drive the routes through an httpx ``AsyncClient`` with the repos,
 provisioning service, and teardown service mocked, plus the ``is_admin`` gate
 and app-backend DB pool stubbed. A skippable live smoke test ensures the
-app-backend tables against the real ``iot-app-backend`` project.
+app-backend tables against the real ``pharma-twin-backend`` project.
 """
 
 from __future__ import annotations
@@ -830,7 +830,11 @@ class TestProvision:
 
     async def test_provisions_and_returns_resources(self) -> None:
         setup = {"id": "s1", "industry": "pharmaceutical", "warehouse_id": "wh1"}
-        summary = {"industry": "pharmaceutical", "sections": [], "catalog": "iot_pharmaceutical"}
+        summary = {
+            "industry": "pharmaceutical",
+            "sections": [],
+            "catalog": "pharma_twin_pharmaceutical",
+        }
         resources = [{"id": "r1", "resource_type": "uc_catalog"}]
         with (
             _admin(True),
@@ -1516,7 +1520,7 @@ class TestRollupHealth:
 
 
 # ---------------------------------------------------------------------------
-# Live smoke test (skippable) — ensure tables against real iot-app-backend
+# Live smoke test (skippable) — ensure tables against real pharma-twin-backend
 # ---------------------------------------------------------------------------
 @pytest_asyncio.fixture()
 async def schema_ready(app_backend_conn):

@@ -6,7 +6,7 @@ import iot_twin.services.industry.industry_service as isvc
 
 UC_CATALOG = "test_catalog"
 UC_SCHEMA = "test_schema"
-PIPELINES_LAKEBASE_PROJECT = "test_pipelines"
+PIPELINES_LAKEBASE_PROJECT = "pharma-twin-test-pipelines"
 
 
 @pytest.fixture(autouse=True)

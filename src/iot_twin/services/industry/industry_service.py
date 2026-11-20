@@ -593,7 +593,7 @@ async def _provision_lakebase_branch(
         "lb_branch_id": "production",
         "lb_database": LAKEBASE_SYNC_DATABASE,
         "table_name": "sensor_readings",
-        "secret_scope": os.getenv("ZEROBUS_SECRET_SCOPE") or get_secret_scope(),
+        "secret_scope": get_secret_scope(),
         "industry": industry,
     }
     return await setup_pipeline_lakebase(state, params)
