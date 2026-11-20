@@ -30,7 +30,7 @@ def _alert(**overrides) -> AlertRecord:
         "sensor_ids": ["mfg-sns-cnc_1_spindle_temp"],
         "severity": "crit",
         "status": "open",
-        "fault_code": "M-SPINDLE-OVERTEMP",
+        "fault_code": "VPP-SPINDLE3-TEMP",
         "value": 85.0,
         "threshold": 80.0,
         "opened_at": now,

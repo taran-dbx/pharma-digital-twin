@@ -14,6 +14,6 @@
   "UC_SERVICE_CREDENTIAL": "iot-rtm-sc",
   "PIPELINES_LAKEBASE_PROJECT": "iot-pipelines-example",
   "MSK_BOOTSTRAP_SERVERS": "b-1-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198,b-2-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198,b-3-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198",
-  "INDUSTRIES": "pharmaceutical,manufacturing",
+  "INDUSTRIES": "manufacturing,pharmaceutical",
   "ADMIN_GROUP": "iot-admins"
 }

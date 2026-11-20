@@ -11,6 +11,7 @@ from iot_twin.domain.catalog import (
     sensor_by_name,
     to_record_industry,
 )
+from iot_twin.domain.lot_context import carries_lot_context, lot_context_at
 from iot_twin.scenario_engine.cadence import CadenceClock
 
 PHASES: tuple[str, ...] = ("normal", "degraded", "failed", "recovering")
@@ -144,6 +145,8 @@ class ScenarioEngine:
             metadata["component_id"] = site.assets[0].components[0].component_id
         metadata["scenario_id"] = self.scenario_id
         metadata["phase"] = phase
+        if self.industry == "manufacturing" and carries_lot_context(name):
+            metadata = {**lot_context_at(timestamp), **metadata}
 
         value = float(_get(record, "value", 0.0) or 0.0)
         effects = _PHASE_EFFECTS.get(self.industry, {}).get(phase, {})

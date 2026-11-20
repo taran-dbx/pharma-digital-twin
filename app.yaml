@@ -59,7 +59,7 @@ env:
     value: "b-1-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198,b-2-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198,b-3-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198"
 
   - name: INDUSTRIES
-    value: "pharmaceutical,manufacturing"
+    value: "manufacturing,pharmaceutical"
 
   - name: ADMIN_GROUP
     value: "iot-admins"
