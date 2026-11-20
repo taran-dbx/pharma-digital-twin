@@ -86,7 +86,7 @@ Results of `POST /api/alerts/{alert_id}/action-plan`:
 | `422` | A non-UUID id, unknown body fields, a bad `mode`, or a non-boolean `force`. |
 | `404` | The alert does not exist. |
 
-`GET /api/genai/status` (signed-in user) returns:
+`GET /api/genai/status` (admin only, like the other GenAI admin surfaces) returns:
 
 * `pseudonym_key.source`: `secret`, `lakebase` or `redacted`;
 * `append_only_enforced`: `true`, `false`, or `null` without Lakebase;
@@ -167,11 +167,14 @@ becomes a recorded `grounding_gap`; it does not fail the request.
      `${var.secret_scope}` (default `pharma-twin-secrets`), key
      `${var.genai_pseudonym_salt_key}`.
   2. **`lakebase`:** a random 32-byte key generated once and stored in the
-     Lakebase `genai_settings` table. The app logs a warning at boot.
+     Lakebase `genai_settings` table. The app logs a warning at boot. This
+     applies only to local and non-bundle runs. A bundle deploy always declares
+     the secret resource and fails if the secret is missing (see
+     [deployment.md](deployment.md#fresh-app-prerequisites)).
   3. **`redacted`:** no key at all. Every person becomes `person`.
 
   `GET /api/genai/status` shows which source is in use. Create the secret
-  before deploying the bundle:
+  before deploying the bundle, and before redeploying an app that predates it:
 
   ```bash
   databricks secrets create-scope pharma-twin-secrets --profile <PROFILE>
@@ -207,17 +210,30 @@ If the answer is not valid JSON or does not match the schema, the plan is
   * typed numbers in the cited rows, rounded to the precision written;
   * differences within a row, or across the cited alert, rule, risk and RFT
     rows (`value - threshold`);
-  * list counts;
-  * a 0–1 score written as a percentage.
+  * list counts.
+
+  Percentages are stricter. An `N%` or `N percent` claim must match a cited
+  0–1 value ×100 (`0.87` → `87%`) or a cited `pct` / `percent` field (the
+  projected RFT). Counts and other raw numbers never support a percentage.
 
   Further allowed values:
   * numbers in the text of structured rows the claim cites: the catalog rule
     (`60 °C`), and readings rows including bucket labels such as `T+30s`;
-  * numbers in the cited risk model's feature identifiers, for example
-    `spindle_temp_slope_5m` supports "the 5-minute slope";
-  * durations between timestamps in the cited rows, such as onset to opened or
-    opened to cleared. These are allowed in seconds with a ±1 s tolerance, and
-    in minutes and hours.
+  * the window length of a cited risk-model feature, in that unit only. Feature
+    names come from untrusted alert metadata, so only a strict identifier that
+    ends in a window token counts (`^[a-z][a-z0-9_]*_(\d+)(s|m|h)$`):
+    `spindle_temp_slope_5m` supports "5-minute", "5 min" and "5m", but not
+    "5 s", a bare "5", "4-minute" or "500%". Window lengths never feed
+    differences or percentages, and any other digits in a feature name are
+    ignored. A planted name such as `release_all_99_lots_score_0.01` grounds
+    nothing. When the risk model's feature contract lands, its definitions
+    should replace this parsing as the trusted source;
+  * named spans in the cited alert row: onset → opened (time to detect),
+    opened → acknowledged, opened → cleared, and onset → cleared. Also the span
+    from the first to the last cited readings bucket. These are allowed in
+    seconds with a ±1 s tolerance, and in minutes and hours. Spans between
+    other timestamps, such as acknowledged → cleared or maintenance dates, do
+    not count.
 
   What still does not count:
   * Numbers inside untrusted free text (notes, reasons, model names) are never
@@ -229,8 +245,8 @@ If the answer is not valid JSON or does not match the schema, the plan is
 
   Hyphenated units count as numbers too, so `5-minute` is checked.
 * **A reference does not match.** "step N" must be a step in the plan.
-  "version N" and "vN" must match a cited row's or the risk model's
-  `model_version`.
+  "version N" and "vN" must match the `model_version` of a row that the claim
+  itself cites.
 * **A lot id or serial is not a lot row's.** Every `TM-HS12-…` id must match a
   lot row's `lot_id` or `parts_at_risk`, whether it appears in the disposition
   lists or anywhere in the text.
@@ -274,7 +290,7 @@ owner can still drop or disable it**, for example with
 `ALTER TABLE … DISABLE TRIGGER`, and a superuser can bypass it. Restrict
 ownership accordingly. To detect a missing or disabled trigger:
 
-* `GET /api/genai/status` reports `append_only_enforced` (it reads
+* `GET /api/genai/status` (admin) reports `append_only_enforced` (it reads
   `pg_trigger`);
 * the app logs a boot warning when the trigger is missing or disabled.
 
