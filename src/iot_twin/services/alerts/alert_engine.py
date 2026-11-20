@@ -9,7 +9,7 @@ import logging
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from iot_twin.domain.catalog import (
@@ -307,6 +307,41 @@ def _as_datetime(value: Any) -> datetime | None:
     return None
 
 
+# Epoch values above this are milliseconds, not seconds.
+_EPOCH_MS_FLOOR = 1e11
+
+
+def reading_time(reading: Mapping[str, Any] | None) -> datetime | None:
+    """Event time a reading carries (``timestamp`` epoch s/ms or ISO-8601), if any."""
+    raw = reading.get("timestamp") if reading is not None else None
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int | float):
+        seconds = float(raw) / 1000.0 if float(raw) > _EPOCH_MS_FLOOR else float(raw)
+        try:
+            return datetime.fromtimestamp(seconds, tz=UTC)
+        except (OverflowError, OSError, ValueError):
+            return None
+    return _as_datetime(raw)
+
+
+def onset_fields(
+    first_reading_at: datetime | None, opened_at: datetime, duration_s: float
+) -> dict[str, Any]:
+    """Excursion onset recorded on the ``opened`` event.
+
+    Onset is the event time of the first over-limit reading when the reading
+    carried one, else ``opened_at - rule.duration_s``; never after ``opened_at``.
+    """
+    if first_reading_at is not None:
+        return {
+            "onset_at": min(first_reading_at, opened_at).isoformat(),
+            "onset_source": "first_reading",
+        }
+    fallback = opened_at - timedelta(seconds=max(0.0, duration_s))
+    return {"onset_at": fallback.isoformat(), "onset_source": "rule_duration"}
+
+
 def _row_to_alert(row: Any) -> AlertRecord:
     data = dict(row)
     sensor_ids = data.get("sensor_ids") or []
@@ -349,6 +384,8 @@ class AlertEngine:
         self._by_fingerprint: dict[str, AlertRecord] = {}
         self._by_id: dict[str, AlertRecord] = {}
         self._pending: dict[str, datetime] = {}
+        # event time of the first over-limit reading of each pending excursion
+        self._pending_onset: dict[str, datetime | None] = {}
         self._lock = asyncio.Lock()
 
     def get_alert_sync(self, alert_id: str) -> AlertRecord | None:
@@ -575,9 +612,12 @@ class AlertEngine:
             if existing is None or existing.status == "cleared":
                 started = self._pending.get(fp, now)
                 self._pending[fp] = started
+                if fp not in self._pending_onset:
+                    self._pending_onset[fp] = reading_time(index.get(rule.sensor_id))
                 if (now - started).total_seconds() < duration:
                     return None
                 self._pending.pop(fp, None)
+                extra = {**extra, **onset_fields(self._pending_onset.pop(fp, None), now, duration)}
                 alert = AlertRecord(
                     id=str(uuid.uuid4()),
                     fingerprint=fp,
@@ -626,6 +666,7 @@ class AlertEngine:
         # for this sensor; only an in-limit reading restarts the duration timer.
         if value is not None:
             self._pending.pop(fp, None)
+            self._pending_onset.pop(fp, None)
         if existing is None or existing.status == "cleared":
             return None
         recovered, clear_value = _any_required_recovered(rule, index)
@@ -683,6 +724,7 @@ class AlertEngine:
             "sensor_id": sensor_id,
             "value": value if value is not None else (threshold + 1 if violating else threshold),
             "industry": raw.get("industry"),
+            "timestamp": raw.get("timestamp"),
         }
         return await self._evaluate_rule(
             rule,
