@@ -21,6 +21,11 @@ decision whose action the old CHECK rejects is stored under its legacy name
 (``quarantine_lot`` → ``hold_batch``, ``request_cmm_inspection`` →
 ``send_to_inspect``) with the real action in ``reference.audit.action``.
 ``open_ncr`` has no legacy equivalent and is refused until the upgrade runs.
+A legacy-named row already recorded for the episode — written before the
+upgrade, or a genuine ``hold_batch`` / ``send_to_inspect`` from an older client
+— counts as that decision: recording ``quarantine_lot`` again returns it with
+``created`` false (its action reads ``quarantine_lot`` when the row carries
+``reference.audit.action``, otherwise the legacy name).
 The in-memory store is used only when no app backend is configured at all.
 """
 
@@ -42,7 +47,11 @@ from iot_twin.domain.catalog import (
     list_sensors,
 )
 from iot_twin.domain.lot_context import LOT_METADATA_KEYS, lot_disposition
-from iot_twin.services.alerts.alert_engine import EXCURSION_STARTED_KEY, AlertRecord
+from iot_twin.services.alerts.alert_engine import (
+    DETECT_LOOKBACK_S,
+    EXCURSION_STARTED_KEY,
+    AlertRecord,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +149,7 @@ class AlertResponse:
 
     def signature(self) -> str | None:
         """Printed manifestation of the signature: name, meaning, date/time."""
-        if not self.signature_meaning:
+        if not self.signature_meaning or self.signature_meaning == LEGACY_UNSIGNED:
             return None
         signed = (self.signed_at or self.created_at).isoformat()
         return f"{self.recorded_by} · {self.signature_meaning} · {signed}"
@@ -216,16 +225,32 @@ def _rule_duration_s(alert: AlertRecord) -> float:
 def excursion_start(alert: AlertRecord, now: datetime) -> datetime:
     """First over-limit reading when known, else ``opened_at - duration_s``.
 
+    The stamp is trusted only inside ``[opened - (duration_s + DETECT_LOOKBACK_S),
+    opened]``; anything else (for example a stamp left over from an earlier
+    episode of the reused alert row) falls back to ``opened_at - duration_s``.
     Containment errs inclusive: the window never starts after the alert opened.
     """
     opened = _as_utc(alert.opened_at or now)
+    duration = _rule_duration_s(alert)
+    fallback = opened - timedelta(seconds=duration)
     raw = alert.metadata.get(EXCURSION_STARTED_KEY)
-    if raw:
-        try:
-            return min(opened, _as_utc(datetime.fromisoformat(str(raw))))
-        except ValueError:
-            logger.warning("alert %s has an unreadable %s", alert.id, EXCURSION_STARTED_KEY)
-    return opened - timedelta(seconds=_rule_duration_s(alert))
+    if not raw:
+        return fallback
+    try:
+        stamped = _as_utc(datetime.fromisoformat(str(raw)))
+    except ValueError:
+        logger.warning("alert %s has an unreadable %s", alert.id, EXCURSION_STARTED_KEY)
+        return fallback
+    earliest = opened - timedelta(seconds=duration + DETECT_LOOKBACK_S)
+    if earliest <= stamped <= opened:
+        return stamped
+    logger.warning(
+        "alert %s %s=%s is outside its episode; using opened_at - duration_s",
+        alert.id,
+        EXCURSION_STARTED_KEY,
+        raw,
+    )
+    return fallback
 
 
 def _excursion(alert: AlertRecord, now: datetime) -> tuple[datetime, datetime]:
@@ -523,6 +548,17 @@ class AlertResponseStore:
             signed_at=at,
         )
         if db is not None:
+            legacy = LEGACY_STORAGE_ACTION.get(action)
+            if legacy is not None:
+                # A QA hold / CMM request stored under its legacy name before the table
+                # upgrade (or a genuine legacy decision) is the same decision for this
+                # episode: return it rather than writing a second row.
+                try:
+                    prior = await db.fetchrow(_SELECT_EXISTING, alert.id, episode, legacy)
+                except Exception as exc:
+                    raise ResponseStoreUnavailable(f"decision lookup failed: {exc}") from exc
+                if prior is not None:
+                    return _row_to_response(prior), False
             row, stored_action = await self._insert(db, candidate)
             if row is not None:
                 return _row_to_response(row), True
