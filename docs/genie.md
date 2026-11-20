@@ -88,8 +88,14 @@ Per-pipeline spaces exist for **every industry the app offers** (the curated
 templates: manufacturing, pharmaceutical, energy, automotive) and every mode
 (`realtime`, `microbatch`, `zerobus`). Wording, sample sensors and units are derived
 from the industry template and domain catalog (`services/genie/genie_industry_profile.py`).
-Manufacturing keeps its OEE wording; other industries use an "operating health index"
-(availability x performance x quality) with their own sensors and units. An industry
+Manufacturing (shown as **Medical Devices**; the internal id stays `manufacturing`) carries
+medical-device quality grounding: Trinity Medical's orthopaedic implant cell, the Spindle 3
+temperature limit as a validated process parameter (OQ/PQ references, fault code
+`VPP-SPINDLE3-TEMP`), lot context read from the telemetry `metadata` column (`lot_id`,
+`part_serial`, `work_order`, `part_number`, `udi_di`, `dhr_ref`), time-to-detect and MTTR
+definitions, and a first-pass-yield (right-first-time) proxy instead of OEE. Other industries
+use an "operating health index" (availability x performance x quality) with their own sensors
+and units. See [domain-medtech.md](domain-medtech.md) for the glossary. An industry
 the app does not offer reports `supported: false` on `/status` and 404 on the other
 routes; it never fails a deploy.
 
@@ -176,7 +182,7 @@ workspace, 2026-11-18:
   event_time, min_value, max_value, nominal_value, fault_active, metadata`.
 - It also has `id`, `source` and the CDC columns `_pg_change_type, _pg_lsn, _pg_xid, _timestamp, _sort_by`.
 
-So the OEE, downtime and anomaly definitions are unchanged. For realtime, the instructions, example SQL,
+So the health-index, downtime and anomaly definitions are unchanged. For realtime, the instructions, example SQL,
 SQL snippets (measures and filters) and the prompt's recent-telemetry summary all apply the dashboard's
 row filter from `routes/sensor_data.py`: `_pg_change_type IN ('insert', 'update_postimage') AND
 industry = '<industry>'`. The filter comes from `genie_space_content.telemetry_row_filter`, because
@@ -195,16 +201,34 @@ Microbatch and zerobus write `{industry}_{mode}` directly (`services/pipeline_fr
 tables exist but were empty in that workspace, because only realtime was running there. Zerobus emits no streaming metrics, so
 its space does not include the metrics table.
 
-The space also carries these instructions (manufacturing wording shown; other industries say "operating health index" instead of OEE):
+The space also carries these instructions (other industries say "operating health index" where
+manufacturing says first-pass-yield proxy):
 
 - **Downtime**: intervals where `fault_active` is true, counted in distinct minutes.
 - **Availability**: 1 − fault minutes / observed minutes.
 - **Performance**: `value / nominal_value`, capped at 1.
 - **Quality**: the share of readings inside `[min_value, max_value]`.
-- **OEE**: the product of the three above. It is an approximation.
+- **First-pass yield (right-first-time) proxy**: the product of the three above. It is an
+  approximation from telemetry, not CMM pass/fail or lot-release data, and Genie says so.
 - **Anomaly**: a value outside `[min_value, max_value]`.
 
-It also has example SQL, SQL snippets (measures, filters, expressions) and
+For manufacturing the instructions add the medical-device context:
+
+- **Validated limit**: Spindle 3 temperature (`cnc_1_spindle_temp`) above the threshold of
+  `mfg-alert-spindle-temp` in `intelligence_alert_rules` is an excursion outside the validated
+  state (OQ-TM-CNC1-014, PQ-TM-HS12-022) and a dimensional nonconformance risk.
+- **Parts at risk**: distinct `part_serial` values on Spindle 3 readings above the limit; the
+  rest of the lot is a release candidate pending QA review.
+- **Time to detect**: alert `opened_at` minus the first reading above the limit in the same
+  excursion. **MTTR**: cleared time minus `opened_at`.
+- **Decision log**: NCRs, QA holds (`quarantine_lot`), CMM inspection requests and their
+  Part 11-style audit fields live in the app's `alert_response` log, not in the Genie tables.
+  Asked for NCR numbers or dispositions, Genie lists the excursion episodes and lots at risk
+  and points to that log. Genie only recommends; it never quarantines or releases lots, opens
+  NCRs or signs records.
+
+It also has example SQL (for manufacturing including "Which lots were machined while Spindle 3
+was outside its validated limit?"), SQL snippets (measures, filters, expressions) and
 sample questions that match `/starters`. No new tables are created. Builder:
 `services/genie_space_service.py` and `services/genie_space_content.py`.
 
@@ -295,13 +319,15 @@ return `available: false` with `supported: false`. An unknown setup returns 404.
 ### `GET …/starters`
 
 ```json
-{"questions": ["What is the approximate OEE per sensor over the last 24 hours?", "…"]}
+{"questions": ["Which lots were machined while Spindle 3 was outside its validated limit?", "…"]}
 ```
 
-The list depends on the industry and mode: five shared questions (health index or OEE, downtime, anomalies,
-faults, maintenance), two per-sensor questions for industries other than manufacturing (average reading per
-hour of their first two sample sensors), and two for the mode. That is 7 questions for manufacturing and 9
-for pharmaceutical, energy and automotive, in every mode.
+The list depends on the industry and mode. Manufacturing (Medical Devices) leads with medical-device
+quality questions: lots machined outside the validated limit, part serials to quarantine for the latest
+excursion, time to detect each excursion, and which excursions this shift need an NCR. Other industries get
+shared questions (health index, downtime, anomalies, faults, maintenance), per-sensor questions (average
+reading per hour of their first two sample sensors) and questions for the mode. The exact list per industry
+and mode is pinned by the golden files in `tests/golden/`.
 
 ### `POST …/conversations`
 
@@ -342,9 +368,9 @@ Poll until `status` is terminal (`COMPLETED`, `FAILED` or `CANCELLED`). Other va
     },
     {
       "attachment_id": "01ef…",
-      "text": "Spindle-3 had the most downtime (42 min).",
+      "text": "Spindle 3 had the most downtime (42 min).",
       "query": null,
-      "suggested_questions": ["What was the OEE for spindle-3?"]
+      "suggested_questions": ["Which lots were machined while Spindle 3 was outside its validated limit?"]
     }
   ]
 }

@@ -52,7 +52,7 @@ export interface IndustryOption {
 }
 
 export const INDUSTRIES: IndustryOption[] = [
-  { id: "manufacturing", name: "Manufacturing", tag: "Assembly · CNC · robotics", sensors: 19, icon: Factory, exists: true },
+  { id: "manufacturing", name: "Medical Devices", tag: "Life Sciences · orthopaedic implants", sensors: 19, icon: Factory, exists: true },
   { id: "pharmaceutical", name: "Pharmaceutical", tag: "Bioreactor · WFI · batch yield", sensors: 30, icon: FlaskConical },
   { id: "energy", name: "Energy", tag: "Turbines · grid load", sensors: 32, icon: Zap, exists: true },
   { id: "automotive", name: "Automotive", tag: "Body shop · paint · powertrain", sensors: 28, icon: Car },

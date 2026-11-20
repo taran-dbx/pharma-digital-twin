@@ -197,7 +197,7 @@ class TestAlertEngineStateMachine:
         assert transitions[0].event_type == "alert_opened"
         assert transitions[0].alert.status == "open"
         assert transitions[0].alert.severity == "crit"
-        assert transitions[0].alert.fault_code == "M-SPINDLE-OVERTEMP"
+        assert transitions[0].alert.fault_code == "VPP-SPINDLE3-TEMP"
 
     async def test_does_not_open_when_below_threshold_c7402_regression(self) -> None:
         """[C7402][regression] Values inside the limit stay quiet."""
@@ -273,7 +273,7 @@ class TestAlertEngineStateMachine:
         engine = AlertEngine(now_fn=clock)
         rule = _catalog_spindle_rule()
         assert rule.duration_s == 2.0
-        assert rule.action == "Inspection required"
+        assert rule.action.startswith("QA hold: quarantine parts")
 
         async def feed(values: list[float], step_s: float = 0.25) -> list[str]:
             events: list[str] = []
@@ -382,7 +382,7 @@ class TestAlertEngineStateMachine:
             operator="gt",
             threshold=80.0,
             severity="crit",
-            fault_code="M-SPINDLE-OVERTEMP",
+            fault_code="VPP-SPINDLE3-TEMP",
             correlate_sensor_ids=("mfg-sns-cnc_1_vibration",),
             correlate_operator="gt",
             correlate_threshold=8.0,
@@ -430,7 +430,7 @@ class TestAlertEngineStateMachine:
             operator="gt",
             threshold=80.0,
             severity="crit",
-            fault_code="M-SPINDLE-OVERTEMP",
+            fault_code="VPP-SPINDLE3-TEMP",
             hysteresis=2.0,
             correlate_sensor_ids=("mfg-sns-cnc_1_vibration",),
             correlate_operator="gt",
@@ -485,7 +485,7 @@ class TestAlertEngineStateMachine:
             operator="gt",
             threshold=80.0,
             severity="crit",
-            fault_code="M-SPINDLE-OVERTEMP",
+            fault_code="VPP-SPINDLE3-TEMP",
             hysteresis=2.0,
             correlate_sensor_ids=("mfg-sns-cnc_1_vibration",),
             correlate_operator="gt",

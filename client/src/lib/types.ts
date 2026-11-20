@@ -529,8 +529,28 @@ export interface AlertLifecycleEvent {
   timestamp?: string;
 }
 
-/** Operator decisions recorded against an alert episode (never machine commands). */
-export type AlertResponseAction = "hold_batch" | "send_to_inspect" | "request_maintenance";
+/**
+ * Signed operator decisions recorded against an alert episode (never machine
+ * commands). `hold_batch` / `send_to_inspect` are the legacy CNC-cell names,
+ * still accepted by the API and shown in history.
+ */
+export type AlertResponseAction =
+  | "quarantine_lot"
+  | "open_ncr"
+  | "request_cmm_inspection"
+  | "request_maintenance"
+  | "hold_batch"
+  | "send_to_inspect";
+
+/** 21 CFR 11.50-style meaning of an electronic signature. */
+export type SignatureMeaning = "authored" | "reviewed" | "approved" | "responsible";
+
+/** What the operator signs with a decision. */
+export interface DecisionSignoff {
+  reason: string;
+  comment?: string;
+  signature_meaning: SignatureMeaning;
+}
 
 export interface AlertResponseRecord {
   id: string;
@@ -545,8 +565,22 @@ export interface AlertResponseRecord {
     asset?: string;
     component?: string;
     last_service?: { event_id: string; kind: string; notes: string; started_at: string };
+    hold?: string;
+    lot_ids?: string[];
+    parts_at_risk?: string[];
+    parts_released?: number;
+    parts_to_measure?: string[];
+    dhr_refs?: string[];
+    ncr_id?: string;
+    disposition?: string;
   };
   created_at: string;
+  reason?: string | null;
+  comment?: string | null;
+  signature_meaning?: SignatureMeaning | null;
+  signed_at?: string | null;
+  /** Printed signature: "<signer> · <meaning> · <signed at>". */
+  signature?: string | null;
 }
 
 export interface AlertResponseEvent {
@@ -555,7 +589,7 @@ export interface AlertResponseEvent {
   alert_id: string;
   response: AlertResponseRecord;
   created?: boolean;
-  /** Set when the decision also stopped the cell (send_to_inspect). */
+  /** Set when the decision also stopped the cell (request_cmm_inspection). */
   production?: ProductionState;
   production_error?: string;
 }
@@ -586,6 +620,8 @@ export interface AlertEpisodeDecision {
   station: "PACK" | "INSPECT" | "MILL" | null;
   recorded_by: string;
   created_at: string;
+  reason?: string | null;
+  signature_meaning?: SignatureMeaning | null;
 }
 
 /** One open → cleared run of an alert rule, rebuilt from the event log. */

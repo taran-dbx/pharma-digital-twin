@@ -1088,3 +1088,43 @@
     animation: none;
   }
 }
+
+/* Part 11-style sign-off for a quality decision. */
+.cell-signoff {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--db-border);
+  border-radius: 6px;
+  background: var(--db-background);
+  font-size: 12.5px;
+}
+.cell-signoff label {
+  color: var(--db-muted-foreground);
+  font-size: 11.5px;
+}
+.cell-signoff select,
+.cell-signoff input:not([type="checkbox"]),
+.cell-signoff textarea {
+  width: 100%;
+  padding: 5px 7px;
+  border: 1px solid var(--db-border);
+  border-radius: 4px;
+  background: var(--db-background);
+  color: inherit;
+  font: inherit;
+}
+.cell-signoff .cell-signoff__intent {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  color: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.cell-signoff__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}

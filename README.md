@@ -4,13 +4,15 @@ A **Databricks App** that demonstrates three streaming-ingestion architectures f
 sensor data side by side, with a live per-pipeline dashboard (KPIs, 3D twin, latency
 metrics, hot and cold history). The backend is FastAPI; the frontend is a React SPA.
 
-The UI is **industry-first**: pick an industry (for example pharmaceutical or
-manufacturing), then deploy one or more **pipeline flavors** against it. Each flavor is a
+The UI is **industry-first**: pick an industry (the default is **Medical Devices**, with
+pharmaceutical, energy and automotive alongside), then deploy one or more **pipeline flavors**
+against it. Each flavor is a
 real Databricks deployment: a Kafka topic, a Spark or Zerobus job, a Lakebase branch and
 Unity Catalog objects.
 
 ## Contents
 
+- [Demo story: medical-device manufacturing](#demo-story-medical-device-manufacturing)
 - [Pipeline flavors](#pipeline-flavors)
 - [Repository layout](#repository-layout)
 - [Quick start](#quick-start)
@@ -19,6 +21,37 @@ Unity Catalog objects.
 - [Testing and quality gates](#testing-and-quality-gates)
 - [Documentation](#documentation)
 - [Contributing](#contributing)
+
+## Demo story: medical-device manufacturing
+
+The flagship scenario is life-sciences **medical-device manufacturing**. Trinity Medical machines
+orthopaedic implants in Warsaw, IN: Spindle 3 on the CNC-1 5-axis mill cuts Ti-6Al-4V femoral hip
+stems and acetabular cups, and parts flow **MILL → CMM INSPECT → CLEAN / PASSIVATE → STERILE
+PACK**. The Spindle 3 temperature limit (60 °C) is a **validated process parameter** (OQ/PQ).
+A scheduled thermal excursion drives the demo:
+
+1. The alert engine opens `VPP-SPINDLE3-TEMP` within seconds of Spindle 3 leaving its validated
+   limit; the alert carries the lot context (lot, part serial, work order, part number, UDI-DI,
+   DHR reference) and the validation references.
+2. The operator page shows exactly which parts were cut during the excursion ("quarantine these
+   3 parts, release the rest").
+3. The operator records signed decisions: **quarantine the lot** (QA hold), **open an NCR**,
+   **request CMM inspection** (stops the mill and the pack line) and **request Spindle 3
+   maintenance**. Each record keeps actor, time, reason, comment and signature meaning, in the
+   style of a 21 CFR Part 11 audit trail.
+4. Genie answers quality questions such as "Which lots were machined while Spindle 3 was outside
+   its validated limit?" or "List NCRs opened this shift and their disposition".
+
+| Owner | KPIs |
+|---|---|
+| Alex Morgan, VP Quality & Site Head | cost of poor quality, lots scrapped / quarantined, lot-release lead time |
+| Shreya, Head of Manufacturing Operations | time-to-detect, NCRs opened, right-first-time / first-pass yield, MTTR |
+
+The internal industry id stays `manufacturing`, so topic, table and pipeline names do not change;
+only the labels moved to the medical-device story. [docs/domain-medtech.md](docs/domain-medtech.md)
+has the glossary (IQ/OQ/PQ, DHR, NCR, CAPA, UDI, QMSR / ISO 13485, Part 11), the CNC-to-medical-
+device mapping and how each concept maps to app features. It is a demo, not a validated system or
+a QMS of record.
 
 ## Pipeline flavors
 
@@ -56,7 +89,7 @@ databricks.yml           Declarative Automation Bundle (DABs) definition
 resources/               bundle resource definitions (the app)
 docs/                    architecture, deployment and API documentation
 ops/                     operator tooling: the pipeline health-check notebook
-usecases/                customer-facing KPI notebooks (manufacturing OEE, alarms, throughput)
+usecases/                customer-facing KPI notebooks (medical-device process health, alarms, throughput)
 ```
 
 ## Quick start
@@ -102,7 +135,7 @@ placeholders only. Main settings:
 | `MSK_BOOTSTRAP_SERVERS` | Kafka brokers for real-time and micro-batch flavors |
 | `ZEROBUS_SERVER_ENDPOINT`, `ZEROBUS_CLIENT_ID`, `ZEROBUS_SECRET_SCOPE`, `ZEROBUS_SECRET_KEY` | Zerobus ingest |
 | `UC_SERVICE_CREDENTIAL`, `UC_STORAGE_BASE`, `UC_EXTERNAL_LOCATION` | Storage and credentials |
-| `INDUSTRIES` | Industries offered in the UI |
+| `INDUSTRIES` | Industries offered in the UI (default `manufacturing`, shown as Medical Devices) |
 | `ADMIN_GROUP` | Group whose members are app admins (optional `ADMIN_EMAILS` CSV adds extra admins; not set by the bundle) |
 | `USAGE_TRACKING_ENABLED` | Usage tracking on/off (default `true`; `false`, `0`, `no` or `off` opts out) |
 | `USAGE_TRACKING_APP_NAME`, `USAGE_TRACKING_DEMO_CATALOG_ID` | Optional tracker app name (default: the resource prefix, `pharma-twin`) and [demo catalog](https://go/demo-catalog) id |
@@ -169,9 +202,10 @@ run locally through `pre-commit`.
 | [docs/architecture.md](docs/architecture.md) | Components, data flow, alerts, Genie copilot, auth, storage |
 | [docs/deployment.md](docs/deployment.md) | Bundle deploys, variables, isolation guard, prerequisites, troubleshooting |
 | [docs/genie.md](docs/genie.md) | Shared copilot space, per-pipeline Genie spaces, permissions, API |
+| [docs/domain-medtech.md](docs/domain-medtech.md) | Medical-device glossary (IQ/OQ/PQ, DHR, NCR, CAPA, UDI, QMSR, Part 11) and how each maps to the app |
 | [docs/api.md](docs/api.md) | API routes by router; live OpenAPI at `/docs` and `/openapi.json` |
 | [ops/README.md](ops/README.md) | Pipeline health-check notebook (read-only, inline report) |
-| [usecases/README.md](usecases/README.md) | Manufacturing KPI notebook: OEE, downtime and alarms, sensor health, throughput |
+| [usecases/README.md](usecases/README.md) | Medical-device KPI notebook: right-first-time process health, downtime and alarms, sensor health, throughput |
 | [tests/e2e/playwright/README.md](tests/e2e/playwright/README.md) | Browser QA |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Workflow, standards, commit conventions |
 | [CHANGELOG.md](CHANGELOG.md) | Notable changes |

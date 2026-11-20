@@ -39,17 +39,19 @@ class IndustryTemplate:
 
 # Ported verbatim from IND in the original design reference.
 _TEMPLATES: dict[str, IndustryTemplate] = {
+    # The id stays ``manufacturing`` so tables, topics and pipelines don't churn;
+    # the user-facing story is orthopaedic-implant (medical device) machining.
     "manufacturing": IndustryTemplate(
         id="manufacturing",
-        name="Manufacturing",
+        name="Medical Devices",
         accent="#e86247",
         icon="factory",
         twin_type="line",
-        tag="Assembly line · CNC · robotics",
+        tag="Life Sciences · orthopaedic implants · 5-axis machining",
         lede=(
-            "Real-time visibility into your production line — station "
-            "throughput, spindle load, OEE and fault detection across the "
-            "floor."
+            "Trinity Medical's titanium hip-stem cell — Spindle 3 held to its "
+            "validated limit, lot-level traceability to the DHR, and QA hold, "
+            "NCR and CMM decisions signed into a Part 11-style audit trail."
         ),
         # Real simulator sensor names (SSE / twin overlay keys).
         sensors=[
@@ -60,13 +62,15 @@ _TEMPLATES: dict[str, IndustryTemplate] = {
             "press_1_pressure",
             "compressor_1_pressure",
         ],
-        # Every tile is backed by a live reading or the alert rail; "—" until
-        # the first SSE event arrives. No derived production metrics.
+        # Live tiles come from a reading or the alert rail; quality tiles are
+        # derived from the alert episode, the lot clock and signed decisions.
+        # "—" until the first SSE event arrives.
         kpis=[
             {"k": "Spindle 3 temperature", "v": "—", "u": "°C"},
-            {"k": "Operating limit", "v": "—", "u": "°C"},
-            {"k": "Spindle 3 status", "v": "—", "u": ""},
-            {"k": "Open alerts", "v": "—", "u": ""},
+            {"k": "Parts at risk", "v": "—", "u": ""},
+            {"k": "First-pass yield", "v": "—", "u": "%"},
+            {"k": "Time to detect", "v": "—", "u": ""},
+            {"k": "NCRs opened", "v": "—", "u": ""},
             {"k": "Last device event", "v": "—", "u": ""},
         ],
         default_hz=40,

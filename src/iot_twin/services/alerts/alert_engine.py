@@ -15,9 +15,11 @@ from typing import Any
 from iot_twin.domain.catalog import (
     AlertRule,
     list_alert_rules,
+    rule_metadata,
     sensor_by_name,
     to_record_industry,
 )
+from iot_twin.domain.lot_context import carries_lot_context, lot_context_at, lot_fields
 from iot_twin.services.alerts.alert_sse import (
     EVENT_ACKNOWLEDGED,
     EVENT_CLEARED,
@@ -189,6 +191,37 @@ def _index_readings(
                 index[node.sensor_id] = raw
                 index[node.name] = raw
     return index
+
+
+def _reading_metadata(reading: Mapping[str, Any] | None) -> dict[str, Any]:
+    raw = reading.get("metadata") if reading is not None else None
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw or "{}")
+        except json.JSONDecodeError:
+            return {}
+    return dict(raw) if isinstance(raw, Mapping) else {}
+
+
+def open_metadata(
+    rule: AlertRule,
+    reading: Mapping[str, Any] | None,
+    industry: str | None,
+    at: datetime,
+) -> dict[str, Any]:
+    """Validation refs from the rule plus the lot the triggering reading belongs to.
+
+    Mill readings carry lot context from the producer; when they don't (older
+    producers, replayed rows) the lot is derived from the cell's lot clock.
+    """
+    metadata: dict[str, Any] = rule_metadata(rule)
+    if _catalog_industry(industry) != "manufacturing":
+        return metadata
+    name = str((reading or {}).get("sensor_name") or rule.sensor_id.rsplit("-sns-", 1)[-1])
+    if not carries_lot_context(name):
+        return metadata
+    lot = lot_fields(_reading_metadata(reading)) or lot_context_at(at)
+    return {**metadata, **lot}
 
 
 def _configured_sensor_ids(rule: AlertRule) -> list[str]:
@@ -560,6 +593,7 @@ class AlertEngine:
                     threshold=float(rule.threshold),
                     opened_at=now,
                     updated_at=now,
+                    metadata=open_metadata(rule, index.get(rule.sensor_id), industry, now),
                 )
                 if existing is not None:
                     alert = replace(alert, id=existing.id)

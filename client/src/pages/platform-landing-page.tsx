@@ -391,14 +391,14 @@ export function PlatformLandingPage() {
         </header>
         <div className="platform-industry-grid">
           <article>
+            <Factory aria-hidden="true" />
+            <h3>Medical Devices</h3>
+            <p>Orthopaedic implants · validated machining · lot traceability</p>
+          </article>
+          <article>
             <FlaskConical aria-hidden="true" />
             <h3>Pharmaceutical</h3>
             <p>Bioprocessing · Fill-finish</p>
-          </article>
-          <article>
-            <Factory aria-hidden="true" />
-            <h3>Manufacturing</h3>
-            <p>Assembly · Quality control</p>
           </article>
           <article>
             <Zap aria-hidden="true" />

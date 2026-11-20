@@ -53,7 +53,7 @@ export const sampleClearedAlert = {
   sensor_ids: ["press_1_pressure"],
   severity: "warn",
   status: "cleared",
-  fault_code: "M-PRESS-LOW",
+  fault_code: "CLN-PASSIVATION-PRESS-LOW",
   value: 300,
   threshold: 120,
   opened_at: "2026-10-15T19:00:00Z",

@@ -60,7 +60,7 @@ variables:
     default: zerobus-client-secret
   industries:
     description: Comma-separated enabled industries.
-    default: pharmaceutical,manufacturing
+    default: manufacturing,pharmaceutical
   admin_group:
     description: Workspace group whose members are app admins.
     default: pharma-twin-admins

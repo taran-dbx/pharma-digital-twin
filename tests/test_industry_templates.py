@@ -29,13 +29,28 @@ def test_manufacturing_kpis_have_no_invented_values_c7230_defect():
     assert template is not None
     assert [k["k"] for k in template.kpis] == [
         "Spindle 3 temperature",
-        "Operating limit",
-        "Spindle 3 status",
-        "Open alerts",
+        "Parts at risk",
+        "First-pass yield",
+        "Time to detect",
+        "NCRs opened",
         "Last device event",
     ]
     assert all(k["v"] == "—" for k in template.kpis)
     assert not any(k["k"] in {"Production", "OEE", "Utilization"} for k in template.kpis)
+
+
+def test_manufacturing_is_presented_as_medical_devices_c7801_smoke():
+    """[C7801][smoke] The manufacturing id keeps its name in data, but reads as med-device."""
+    template = get_template("manufacturing")
+    assert template is not None
+    assert template.id == "manufacturing"
+    assert template.name == "Medical Devices"
+    assert template.tag.startswith("Life Sciences")
+    assert "orthopaedic" in template.tag
+    assert "OEE" not in template.lede
+    assert "validated limit" in template.lede
+    pharma = get_template("pharmaceutical")
+    assert pharma is not None and pharma.name == "Pharmaceutical"
 
 
 def test_get_template_unknown_returns_none():

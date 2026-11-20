@@ -9,6 +9,7 @@ import {
   HEALTH_LABEL,
   RESPONSE_STEPS,
   STATION_INFO,
+  cmmRequest,
   decisionLabel,
   formatDeviceTime,
   healthTone,
@@ -22,10 +23,11 @@ import { formatNumber } from "@/lib/utils";
 import "./machining-cell.css";
 
 /*
- * Layout follows the cell diagram: three station cards stand behind one conveyor
- * that runs under all of them. MILL carries a gantry with spindles 1-3, the
- * LIMIT gauge sits between MILL and INSPECT, INSPECT has an overhead camera and
- * PACK boxes the parts.
+ * Layout follows Trinity Medical's implant cell: three station cards stand
+ * behind one conveyor that runs under all of them. MILL is the 5-axis mill with
+ * spindles 1-3 cutting Ti-6Al-4V hip stems, the VALIDATED LIMIT gauge sits
+ * between MILL and CMM, CMM has an overhead measuring head and PACK cleans,
+ * passivates and sterile-packs the stems.
  */
 const BELT_TOP = 1.0;
 const BELT_START = -8.9;
@@ -748,7 +750,7 @@ function LimitGauge({
           </mesh>
         </group>
       )}
-      <Label text="LIMIT" color={palette.label} height={0.22} position={[0, TUBE_TOP + 0.22, 0]} />
+      <Label text="VALIDATED LIMIT" color={palette.label} height={0.2} position={[0, TUBE_TOP + 0.22, 0]} />
       {limit !== undefined && (
         <Label
           text={`${formatNumber(limit, 0)} °C`}
@@ -1242,7 +1244,7 @@ function CellScene(props: MachiningCellProps & { view: CellView; theme: Resolved
   const hero = sensors.find((s) => s.name === HERO_SENSOR);
   const attention: Record<CellStationId, boolean> = {
     mill: held || !!decisions.request_maintenance,
-    inspect: !!decisions.send_to_inspect,
+    inspect: !!cmmRequest(decisions),
     pack: held || batchHeld,
   };
   const decisionText = (station: CellStationId) =>
@@ -1290,7 +1292,7 @@ function CellScene(props: MachiningCellProps & { view: CellView; theme: Resolved
             />
           )}
           {id === "inspect" && (
-            <VisionCamera palette={palette} animate={animate} requested={!!decisions.send_to_inspect} scanning={held} />
+            <VisionCamera palette={palette} animate={animate} requested={!!cmmRequest(decisions)} scanning={held} />
           )}
           {id === "pack" && <PackStation palette={palette} hold={batchHeld} />}
           <StackLight position={STACK_LIGHT_AT[id]} health={stations[id].health} attention={attention[id]} animate={animate} />
@@ -1346,7 +1348,7 @@ export function MachiningCell(props: MachiningCellProps) {
     <div
       className={`machining-cell machining-cell--${theme}${stop?.phase === "stopped" ? " is-held" : ""}`}
       role="region"
-      aria-label="Machining cell twin: mill, inspect, pack"
+      aria-label="Implant cell twin: mill, CMM inspect, clean and sterile pack"
       data-motion={running ? "running" : "paused"}
       data-view={view}
       data-line={stop?.phase === "stopped" ? "stopped" : props.batchHeld ? "held-at-pack" : "moving"}

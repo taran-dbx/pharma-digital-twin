@@ -3,7 +3,9 @@
 Every wording that used to be hard-coded for manufacturing (industry label,
 health-index term, example sensors/units) is resolved here from the curated
 industry template and the domain catalog, so one content generator serves every
-industry the app offers.  Manufacturing keeps its historical wording (OEE).
+industry the app offers.  Manufacturing (internal id kept stable) is presented
+as medical-device manufacturing — Trinity Medical's orthopaedic implant cell —
+so its health term is a first-pass-yield / right-first-time proxy, not OEE.
 """
 
 from __future__ import annotations
@@ -15,17 +17,22 @@ from iot_twin.services.industry.industry_templates import get_template, mode_con
 
 _MAX_EXAMPLES = 3
 
-# Manufacturing's historical wording is preserved verbatim.
+# Manufacturing is the medical-device (orthopaedic implant) story: the health
+# term is a first-pass-yield proxy from in-range readings, never OEE.
 _HEALTH_TERM_OVERRIDES: dict[str, tuple[str, str]] = {
-    "manufacturing": ("OEE", "oee_pct"),
+    "manufacturing": ("first-pass yield (right-first-time) proxy", "fpy_proxy_pct"),
 }
+# Industries whose Genie space carries medical-device quality grounding.
+MEDTECH_INDUSTRIES: frozenset[str] = frozenset({"manufacturing"})
 _TYPE_EXAMPLE_OVERRIDES: dict[str, str] = {
     "manufacturing": "temperature, vibration, pressure",
 }
 _DEFAULT_HEALTH = ("operating health index", "health_index_pct")
 # Wording that is manufacturing-specific in the historical output.
 _FAULT_SUBJECT_OVERRIDES: dict[str, str] = {"manufacturing": "machine/sensor"}
-_OUTPUT_NOTE_OVERRIDES: dict[str, str] = {"manufacturing": "production counts"}
+_OUTPUT_NOTE_OVERRIDES: dict[str, str] = {
+    "manufacturing": "CMM inspection results or DHR lot-release records",
+}
 _DEFAULT_FAULT_SUBJECT = "equipment/sensor"
 _DEFAULT_OUTPUT_NOTE = "recorded output counts"
 
@@ -38,14 +45,15 @@ class UnknownIndustry(ValueError):
 class IndustryProfile:
     industry: str  # record industry id as stored in readings / intelligence tables
     name: str  # display name, e.g. "Pharmaceutical"
-    health_term: str  # "OEE" or "operating health index"
+    health_term: str  # first-pass-yield proxy (medtech) or "operating health index"
     health_alias: str  # SQL alias for the health metric
     type_examples: str  # sensor_type column examples
     sensor_examples: tuple[str, ...]
     units: tuple[str, ...]
     fault_subject: str  # who reports an active fault
     output_note: str  # what the health index is NOT derived from
-    derived: bool  # True when wording is derived (not the historical manufacturing text)
+    derived: bool  # True when wording is derived (not the curated manufacturing text)
+    medtech: bool = False  # medical-device quality grounding (validated process, lots, NCRs)
 
     @property
     def label(self) -> str:
@@ -84,6 +92,7 @@ def profile_for(industry: str | None) -> IndustryProfile:
         fault_subject=_FAULT_SUBJECT_OVERRIDES.get(key, _DEFAULT_FAULT_SUBJECT),
         output_note=_OUTPUT_NOTE_OVERRIDES.get(key, _DEFAULT_OUTPUT_NOTE),
         derived=key not in _HEALTH_TERM_OVERRIDES,
+        medtech=key in MEDTECH_INDUSTRIES,
     )
 
 

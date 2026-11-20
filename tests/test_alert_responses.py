@@ -14,11 +14,16 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from iot_twin.core.state import AppState
+from iot_twin.domain import lot_context
 from iot_twin.domain.catalog import AlertRule, list_alert_rules
 from iot_twin.models import app_schema
 from iot_twin.routes.alerts import router as alerts_router
 from iot_twin.services.alerts.alert_engine import AlertEngine
-from iot_twin.services.alerts.alert_responses import AlertResponseStore, response_store_for
+from iot_twin.services.alerts.alert_responses import (
+    AlertResponseStore,
+    ResponseAudit,
+    response_store_for,
+)
 from iot_twin.services.production_control import ProductionControl
 from tests.test_production_control import FakeWorkspace
 
@@ -46,7 +51,7 @@ class FakeResponseDb:
     async def fetchrow(self, sql: str, *args):
         compact = " ".join(sql.split()).lower()
         if compact.startswith("insert into alert_response"):
-            rid, alert_id, episode, action, recorded_by, reference = args
+            rid, alert_id, episode, action, recorded_by, reference, *audit = args
             if any(
                 (r["alert_id"], r["episode_opened_at"], r["action"]) == (alert_id, episode, action)
                 for r in self.rows
@@ -61,6 +66,14 @@ class FakeResponseDb:
                 "reference": reference,
                 "created_at": datetime.now(UTC),
             }
+            if audit:
+                reason, comment, meaning, signed_at = audit
+                row |= {
+                    "reason": reason,
+                    "comment": comment,
+                    "signature_meaning": meaning,
+                    "signed_at": signed_at,
+                }
             self.rows.append(row)
             return row
         if "from alert_response" in compact:
@@ -115,6 +128,16 @@ async def _spindle_reading(state: AppState, value: float) -> list:
     )
 
 
+def _signed(action: str, **extra) -> dict:
+    """A decision body with the Part 11-style signing fields."""
+    return {
+        "action": action,
+        "reason": "Spindle 3 outside its validated limit",
+        "signature_meaning": "responsible",
+        **extra,
+    }
+
+
 def _drain(queue: asyncio.Queue) -> list[dict]:
     items = []
     while not queue.empty():
@@ -131,7 +154,7 @@ class TestAlertResponses:
         alert_id = opened[0].alert.id
         _drain(queue)
 
-        resp = await client.post(f"/api/alerts/{alert_id}/responses", json={"action": "hold_batch"})
+        resp = await client.post(f"/api/alerts/{alert_id}/responses", json=_signed("hold_batch"))
         assert resp.status_code == 200
         body = resp.json()
         assert body["created"] is True
@@ -151,11 +174,11 @@ class TestAlertResponses:
         client, state, _clock, queue = cell
         alert_id = (await _spindle_reading(state, 66.3))[0].alert.id
         first = await client.post(
-            f"/api/alerts/{alert_id}/responses", json={"action": "send_to_inspect"}
+            f"/api/alerts/{alert_id}/responses", json=_signed("send_to_inspect")
         )
         _drain(queue)
         again = await client.post(
-            f"/api/alerts/{alert_id}/responses", json={"action": "send_to_inspect"}
+            f"/api/alerts/{alert_id}/responses", json=_signed("send_to_inspect")
         )
         assert again.json()["created"] is False
         assert again.json()["response"]["id"] == first.json()["response"]["id"]
@@ -166,7 +189,7 @@ class TestAlertResponses:
         """[C7422][defect] A re-opened alert does not inherit the previous episode's hold."""
         client, state, clock, _queue = cell
         alert_id = (await _spindle_reading(state, 66.3))[0].alert.id
-        await client.post(f"/api/alerts/{alert_id}/responses", json={"action": "hold_batch"})
+        await client.post(f"/api/alerts/{alert_id}/responses", json=_signed("hold_batch"))
         clock.instant += timedelta(seconds=56)
         await _spindle_reading(state, 53.0)
         clock.instant += timedelta(seconds=240)
@@ -182,28 +205,28 @@ class TestAlertResponses:
         client, state, _clock, _queue = cell
         alert_id = (await _spindle_reading(state, 66.3))[0].alert.id
         resp = await client.post(
-            f"/api/alerts/{alert_id}/responses", json={"action": "request_maintenance"}
+            f"/api/alerts/{alert_id}/responses", json=_signed("request_maintenance")
         )
         reference = resp.json()["response"]["reference"]
         assert reference["station"] == "MILL"
-        assert reference["asset"] == "CNC-1"
+        assert reference["asset"] == "CNC-1 5-axis mill"
         assert reference["component"] == "Spindle 3"
-        assert reference["last_service"]["notes"] == "Spindle bearing inspection"
+        assert reference["last_service"]["notes"].startswith("Spindle bearing inspection")
 
     async def test_rejects_unknown_action_alert_and_non_admin_c7424_defect(self, cell) -> None:
         """[C7424][defect] Bad actions, unknown alerts and non-admin callers are refused."""
         client, state, _clock, queue = cell
         alert_id = (await _spindle_reading(state, 66.3))[0].alert.id
         _drain(queue)
-        bad = await client.post(f"/api/alerts/{alert_id}/responses", json={"action": "stop_mill"})
+        bad = await client.post(f"/api/alerts/{alert_id}/responses", json=_signed("stop_mill"))
         assert bad.status_code == 422
         missing = await client.post(
-            "/api/alerts/does-not-exist/responses", json={"action": "hold_batch"}
+            "/api/alerts/does-not-exist/responses", json=_signed("hold_batch")
         )
         assert missing.status_code == 404
         with patch("iot_twin.routes.alerts.app_permissions.is_admin", return_value=False):
             denied = await client.post(
-                f"/api/alerts/{alert_id}/responses", json={"action": "hold_batch"}
+                f"/api/alerts/{alert_id}/responses", json=_signed("hold_batch")
             )
         assert denied.status_code == 403
         assert response_store_for(state)._memory == {}
@@ -223,8 +246,11 @@ async def test_lakebase_path_dedupes_on_unique_key_c7425_regression() -> None:
     )[0].alert
     store = AlertResponseStore()
     db = FakeResponseDb()
-    first, created = await store.record(alert, "hold_batch", "op@example.com", db=db)
-    second, created_again = await store.record(alert, "hold_batch", "other@example.com", db=db)
+    audit = ResponseAudit(reason="excursion", signature_meaning="responsible")
+    first, created = await store.record(alert, "hold_batch", "op@example.com", db=db, audit=audit)
+    second, created_again = await store.record(
+        alert, "hold_batch", "other@example.com", db=db, audit=audit
+    )
     assert (created, created_again) == (True, False)
     assert second.id == first.id
     assert second.recorded_by == "op@example.com"
@@ -233,9 +259,176 @@ async def test_lakebase_path_dedupes_on_unique_key_c7425_regression() -> None:
 
 
 def test_alert_response_schema_is_constrained_c7426_smoke() -> None:
-    """[C7426][smoke] Only the three decisions exist, once per alert episode."""
+    """[C7426][smoke] Only the med-device decisions (plus legacy names) exist, once per episode."""
     ddl = " ".join(app_schema.ALERT_RESPONSE_DDL.split())
     assert "CREATE TABLE IF NOT EXISTS alert_response" in ddl
-    assert "CHECK (action IN ('hold_batch', 'send_to_inspect', 'request_maintenance'))" in ddl
+    assert (
+        "CHECK (action IN ('quarantine_lot', 'open_ncr', 'request_cmm_inspection', "
+        "'request_maintenance', 'hold_batch', 'send_to_inspect'))"
+    ) in ddl
     assert "UNIQUE (alert_id, episode_opened_at, action)" in ddl
     assert "REFERENCES alert(id) ON DELETE CASCADE" in ddl
+
+
+@pytest.mark.asyncio
+class TestMedtechDecisions:
+    async def test_quarantine_lot_names_parts_at_risk_c7830_smoke(self, cell) -> None:
+        """[C7830][smoke] A QA hold lists the parts cut during the excursion and the rest to release."""
+        client, state, clock, queue = cell
+        # Excursion opens at second 225 of a lot and clears at second 275.
+        start = clock.instant.timestamp()
+        start -= start % lot_context.LOT_CYCLE_S
+        clock.instant = datetime.fromtimestamp(start + 225, UTC)
+        alert_id = (await _spindle_reading(state, 66.3))[0].alert.id
+        clock.instant = datetime.fromtimestamp(start + 275, UTC)
+        await _spindle_reading(state, 53.0)
+        _drain(queue)
+
+        resp = await client.post(
+            f"/api/alerts/{alert_id}/responses", json=_signed("quarantine_lot")
+        )
+        assert resp.status_code == 200
+        reference = resp.json()["response"]["reference"]
+        lot = lot_context.lot_id_at(start)
+        assert resp.json()["response"]["station"] == "PACK"
+        assert reference["hold"] == "QA hold"
+        assert reference["lot_ids"] == [lot]
+        assert reference["parts_at_risk"] == [f"{lot}-12", f"{lot}-13", f"{lot}-14"]
+        assert reference["parts_released"] == 12
+        assert reference["dhr_refs"] == [f"DHR-{lot}"]
+        assert reference["udi_di"] == lot_context.UDI_DI
+        assert reference["triggering_part"]["lot_id"] == lot
+        assert reference["excursion"]["open"] is False
+        assert [e["type"] for e in _drain(queue)] == ["alert_response"]
+
+    async def test_open_ncr_carries_validation_refs_c7831_smoke(self, cell) -> None:
+        """[C7831][smoke] The NCR cites the validated limit, OQ/PQ and awaits MRB disposition."""
+        client, state, _clock, _queue = cell
+        alert_id = (await _spindle_reading(state, 66.3))[0].alert.id
+        resp = await client.post(f"/api/alerts/{alert_id}/responses", json=_signed("open_ncr"))
+        body = resp.json()["response"]
+        reference = body["reference"]
+        assert body["station"] == "INSPECT"
+        assert reference["ncr_id"].startswith("NCR-20261020-")
+        assert reference["fault_code"] == "VPP-SPINDLE3-TEMP"
+        assert reference["validation"]["oq_ref"] == "OQ-TM-CNC1-014"
+        assert reference["validation"]["pq_ref"] == "PQ-TM-HS12-022"
+        assert reference["disposition"] == "Pending MRB disposition"
+        assert reference["excursion"]["open"] is True
+        assert reference["parts_at_risk"]
+
+    async def test_cmm_inspection_stops_the_cell_c7832_smoke(self, cell) -> None:
+        """[C7832][smoke] Requesting CMM inspection stops production and lists parts to measure."""
+        client, state, _clock, queue = cell
+        alert_id = (await _spindle_reading(state, 66.3))[0].alert.id
+        _drain(queue)
+        resp = await client.post(
+            f"/api/alerts/{alert_id}/responses", json=_signed("request_cmm_inspection")
+        )
+        body = resp.json()
+        assert body["response"]["reference"]["parts_since"] == "2026-10-20T13:48:52+00:00"
+        assert body["response"]["reference"]["parts_to_measure"]
+        assert body["production"]["state"] == "stopped"
+        assert body["production"]["reason"] == "CMM inspection"
+        assert [e["type"] for e in _drain(queue)] == ["alert_response", "production_state"]
+
+    async def test_every_decision_is_a_signed_record_c7833_smoke(self, cell) -> None:
+        """[C7833][smoke] Actor, timestamp, reason, comment and signature meaning are recorded."""
+        client, state, _clock, _queue = cell
+        alert_id = (await _spindle_reading(state, 66.3))[0].alert.id
+        resp = await client.post(
+            f"/api/alerts/{alert_id}/responses",
+            json=_signed(
+                "quarantine_lot",
+                signature_meaning="approved",
+                comment="  Hold the lot pending CMM  ",
+            ),
+            headers={"X-Forwarded-Email": "qa.lead@example.com"},
+        )
+        record = resp.json()["response"]
+        assert record["reason"] == "Spindle 3 outside its validated limit"
+        assert record["comment"] == "Hold the lot pending CMM"
+        assert record["signature_meaning"] == "approved"
+        assert record["signed_at"]
+        assert record["recorded_by"]
+        assert record["signature"] == (
+            f"{record['recorded_by']} · approved · {record['signed_at']}"
+        )
+        listed = (await client.get(f"/api/alerts/{alert_id}/responses")).json()["responses"]
+        assert listed[0]["signature_meaning"] == "approved"
+
+    @pytest.mark.parametrize(
+        ("body", "message"),
+        [
+            ({"action": "open_ncr", "signature_meaning": "approved"}, "reason is required"),
+            ({"action": "open_ncr", "reason": "   ", "signature_meaning": "approved"}, "reason"),
+            ({"action": "open_ncr", "reason": "x"}, "signature_meaning must be one of"),
+            (
+                {"action": "open_ncr", "reason": "x", "signature_meaning": "approve-ish"},
+                "signature_meaning",
+            ),
+            (
+                {"action": "open_ncr", "reason": "x" * 281, "signature_meaning": "approved"},
+                "at most 280",
+            ),
+            (
+                {
+                    "action": "open_ncr",
+                    "reason": "x",
+                    "signature_meaning": "approved",
+                    "comment": 7,
+                },
+                "comment must be text",
+            ),
+        ],
+    )
+    async def test_unsigned_decisions_are_refused_c7834_defect(self, cell, body, message) -> None:
+        """[C7834][defect] A decision without a reason or a valid signature meaning is 422."""
+        client, state, _clock, queue = cell
+        alert_id = (await _spindle_reading(state, 66.3))[0].alert.id
+        _drain(queue)
+        resp = await client.post(f"/api/alerts/{alert_id}/responses", json=body)
+        assert resp.status_code == 422
+        assert message in resp.json()["detail"]
+        assert response_store_for(state)._memory == {}
+        assert _drain(queue) == []
+
+    async def test_non_object_body_is_refused_c7834_regression(self, cell) -> None:
+        """[C7834][regression] A JSON array body is a 422, not a 500."""
+        client, state, _clock, _queue = cell
+        alert_id = (await _spindle_reading(state, 66.3))[0].alert.id
+        resp = await client.post(f"/api/alerts/{alert_id}/responses", json=["open_ncr"])
+        assert resp.status_code == 422
+
+
+class LegacyColumnsDb(FakeResponseDb):
+    """A table the app identity could not upgrade: no audit columns."""
+
+    async def fetchrow(self, sql: str, *args):
+        if "signature_meaning" in sql:
+            raise RuntimeError('column "reason" of relation "alert_response" does not exist')
+        return await super().fetchrow(sql, *args)
+
+
+@pytest.mark.asyncio
+async def test_unupgraded_table_keeps_the_signature_in_reference_c7835_defect() -> None:
+    """[C7835][defect] Without audit columns the signature survives in reference.audit."""
+    engine = AlertEngine(now_fn=Clock(datetime(2026, 10, 20, 13, 48, 52, tzinfo=UTC)))
+    alert = (
+        await engine.evaluate(
+            [{**SPINDLE, "value": 66.3}], [_instant_spindle_rule()], industry="manufacturing"
+        )
+    )[0].alert
+    store = AlertResponseStore()
+    db = LegacyColumnsDb()
+    audit = ResponseAudit(reason="excursion", signature_meaning="reviewed", comment="see NCR")
+    response, created = await store.record(alert, "open_ncr", "qa@example.com", db=db, audit=audit)
+    assert created is True
+    assert store._memory == {}
+    assert db.rows[0]["reference"].count('"audit"') == 1
+    assert response.reason == "excursion"
+    assert response.signature_meaning == "reviewed"
+    assert response.comment == "see NCR"
+    assert "audit" not in response.reference
+    (listed,) = await store.list_for(alert, db=db)
+    assert listed.signature_meaning == "reviewed"

@@ -14,6 +14,6 @@
   "UC_SERVICE_CREDENTIAL": "iot-rtm-sc",
   "PIPELINES_LAKEBASE_PROJECT": "pharma-twin-pipelines",
   "MSK_BOOTSTRAP_SERVERS": "boot-public-9dm.example.abc123.c1.kafka.eu-central-1.amazonaws.com:9198,boot-public-hak.example.abc123.c1.kafka.eu-central-1.amazonaws.com:9198,boot-public-mnx.example.abc123.c1.kafka.eu-central-1.amazonaws.com:9198",
-  "INDUSTRIES": "pharmaceutical,manufacturing",
+  "INDUSTRIES": "manufacturing,pharmaceutical",
   "ADMIN_GROUP": "pharma-twin-admins"
 }
