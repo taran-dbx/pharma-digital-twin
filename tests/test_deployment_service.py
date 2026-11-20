@@ -10,7 +10,6 @@ integration test.
 from __future__ import annotations
 
 import base64
-import inspect
 import os
 from unittest.mock import ANY, AsyncMock, MagicMock
 
@@ -351,13 +350,28 @@ class TestSparkTasks:
         )
         assert [t.task_key for t in tasks] == ["rtm_consumer"]
 
-    def test_pipeline_tasks_have_job_level_retry_safety_net(self):
-        """[C7234][defect][regression] Pipeline tasks restart after sink failure."""
-        source = inspect.getsource(ds.build_spark_tasks)
+    def test_continuous_pipeline_tasks_have_no_task_retry_policy(self):
+        """Spark pipeline jobs are Continuous; the Jobs API rejects task retry policies there.
 
-        assert source.count("max_retries=3") == 2
-        assert source.count("min_retry_interval_millis=30_000") == 2
-        assert source.count("retry_on_timeout=True") == 2
+        ``jobs.create`` fails with ``retryPolicy is not allowed in continuous job``. The
+        continuous trigger itself restarts a failed run, which is the restart-after-sink-failure
+        safety net, so the tasks must not carry ``max_retries`` / ``retry_on_timeout``.
+        """
+        tasks = ds.build_spark_tasks(
+            mode="realtime",
+            consumer_notebook_path="/c",
+            producer_notebook_path="/p",
+            node_type="m5d.large",
+            num_workers=1,
+            single_user_name="u",
+            cloud="aws",
+        )
+
+        assert [t.task_key for t in tasks] == ["rtm_consumer", "data_producer"]
+        for task in tasks:
+            assert task.max_retries is None
+            assert task.min_retry_interval_millis is None
+            assert task.retry_on_timeout is None
 
 
 # ---------------------------------------------------------------------------
