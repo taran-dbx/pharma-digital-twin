@@ -334,7 +334,7 @@ def test_pattern_catches_known_legacy_forms(line: str) -> None:
         "from iot_twin.core import config",
         "import iot_simulator",
         'table = "iot_sensor_data"',
-        'UC_SERVICE_CREDENTIAL = "iot-rtm-sc"',
+        'sc_name = "iot-rtm-sc"',
     ],
 )
 def test_pattern_ignores_product_strings(line: str) -> None:
