@@ -7,6 +7,19 @@ episode (64.2 °C against the 60 °C validated limit, model risk score 0.87). No
 Lakebase, warehouse or other resource was created or touched. The workspace
 host is redacted. The requester is a placeholder address.
 
+**Field rename (2026-11-20):** in every `*-audit.json`, the grounding-row
+field `key` is now `ref`, matching the app (`GroundingItem.ref`). Stock
+gitleaks rules flagged `"key": "<uuid>"` as a `generic-api-key`, 24 times. Only
+the field name changed: every recorded value, row order and field order is
+unchanged.
+
+* `grounding_hash` was computed at the time over rows that used `key`, so
+  hashing the stored rows now gives a different digest.
+* The `*-request.json` files are the exact prompts that were sent, so they are
+  left untouched. Their rows still say `key` inside the escaped message string,
+  which the scanner does not match, and `prompt_hash` still matches them.
+* `scripts/genai_recheck_evidence.py` reads either name.
+
 Each run has three files:
 
 * `*-request.json`: endpoint, prompt template version, prompt hash and the exact

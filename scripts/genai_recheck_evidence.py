@@ -27,7 +27,9 @@ EVIDENCE = ROOT / "docs" / "evidence" / "genai"
 def recheck(path: Path) -> dict:
     trace = json.loads(path.read_text(encoding="utf-8"))
     items = tuple(
-        GroundingItem(r["id"], r["source"], r["key"], r["data"]) for r in trace["grounding_rows"]
+        # ``ref`` (current) or ``key`` (records written before the rename).
+        GroundingItem(r["id"], r["source"], r.get("ref", r.get("key")), r["data"])
+        for r in trace["grounding_rows"]
     )
     grounding = GroundingSet(alert_id=trace["alert_id"], items=items)
     parsed = parse_plan(trace["response"].get("raw_text") or "")

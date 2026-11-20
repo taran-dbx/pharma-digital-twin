@@ -132,8 +132,15 @@ rules, whatever the UI does:
 
 ## Grounding and citations
 
-Every grounding item has the form `{id, source, key, data}`. Its `id` is the
-citation the model must quote:
+Every grounding item has the form `{id, source, ref, data}`. Its `id` is the
+citation the model must quote, and `ref` is the row's own key within its source
+(a UUID, rule id, lot id and so on). The field was called `key` until
+2026-11-20. It was renamed because stock secret scanners (gitleaks
+`generic-api-key`) read `"key": "<uuid>"` in stored audit JSON as an API key.
+Audit rows written before the rename still carry `key`, and their
+`grounding_hash` was computed over that name. Because the field name is part of
+the hashed rows, the first request after upgrading regenerates a plan instead of
+reusing an older one.
 
 | Citation id | Source |
 | --- | --- |

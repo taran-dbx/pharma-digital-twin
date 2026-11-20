@@ -615,7 +615,8 @@ export interface ActionPlanRecord {
 export interface GroundingRow {
   id: string;
   source: string;
-  key: string;
+  /** The row's own key within its source (renamed from `key`; older audit rows may still carry `key`). */
+  ref: string;
   data: Record<string, unknown>;
 }
 

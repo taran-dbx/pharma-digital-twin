@@ -240,3 +240,21 @@ class TestFeatureEntrySanitising:
     def test_unparseable_string_features_are_dropped(self) -> None:
         alert = make_alert(risk=False, metadata={"risk_score": 0.5, "top_features": "99 lots"})
         assert _ground(alert).by_source("risk_score")[0].data["top_features"] is None
+
+
+class TestCitationRefField:
+    """The row-key field is ``ref``: ``"key": "<uuid>"`` trips stock secret scanners."""
+
+    def test_grounding_rows_carry_ref_not_key(self) -> None:
+        rows = _ground().rows()
+        assert rows and all(set(row) == {"id", "source", "ref", "data"} for row in rows)
+
+    def test_saved_evidence_uses_ref(self) -> None:
+        from pathlib import Path
+
+        evidence = Path(__file__).parents[1] / "docs" / "evidence" / "genai"
+        files = sorted(evidence.glob("*-audit.json"))
+        assert files
+        for path in files:
+            for row in json.loads(path.read_text(encoding="utf-8"))["grounding_rows"]:
+                assert "key" not in row and "ref" in row, path.name

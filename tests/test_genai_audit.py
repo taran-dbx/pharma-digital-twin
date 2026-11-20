@@ -39,8 +39,8 @@ def make_record(alert_id: str | None = None, **overrides) -> AuditRecord:
         "prompt_hash": "a" * 64,
         "grounding_hash": "b" * 64,
         "grounding_rows": [
-            {"id": "alert:x", "source": "alert", "key": "x", "data": {"value": 64.2}},
-            {"id": "risk_score:x", "source": "risk_score", "key": "x", "data": dict(RISK)},
+            {"id": "alert:x", "source": "alert", "ref": "x", "data": {"value": 64.2}},
+            {"id": "risk_score:x", "source": "risk_score", "ref": "x", "data": dict(RISK)},
         ],
         "response": {"plan": {"summary": {"text": "It's hot", "citations": ["alert:x"]}}},
         "grounding_check": "pass",
