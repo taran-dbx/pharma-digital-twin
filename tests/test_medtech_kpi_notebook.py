@@ -32,7 +32,8 @@ SECTIONS = (
     "Pipeline at a glance",
     "EXECUTIVE: cost of poor quality and lot exposure",
     "OPERATIONS: detect, respond, recover",
-    "Coming next (not yet available)",
+    "MODEL RISK SCORE: Spindle 3 thermal-excursion risk",
+    "AI ACTION PLANS: grounded, advisory, audited",
     "Summary",
 )
 RICH_TYPES = ("display_data", "execute_result")
@@ -84,7 +85,7 @@ def test_notebook_is_valid_with_unique_ids(committed):
     ids = [c.id for c in committed.cells]
     assert len(ids) == len(set(ids))
     assert {"params", "queries", "live-backend", "sample-backend", "executive", "operations",
-            "pending", "summary"} <= set(ids)  # fmt: skip
+            "model-risk", "ai-plans", "summary"} <= set(ids)  # fmt: skip
 
 
 def test_shared_helpers_match_the_manufacturing_template(committed):
@@ -213,7 +214,8 @@ def test_sample_run_renders_both_personas_and_placeholders():
     for kpi in ("Cost of poor quality avoided", "Lots quarantined", "Exposure remaining",
                 "Time to detect", "Time to acknowledge", "NCRs / CMM inspections",
                 "Projected right-first-time", "MTTR", "Streaming latency distribution",
-                "Model risk score", "AI action plans", "PENDING"):  # fmt: skip
+                "Predicted alerts", "Breaches warned >= 30 s ahead", "Scoring lag (median)",
+                "Plans generated", "Grounding check passed", "Applied by a person"):  # fmt: skip
         assert kpi in text, kpi
     assert "SAMPLE DATA" in text
 
@@ -231,3 +233,43 @@ def test_committed_outputs_are_readable_and_redacted(committed):
         assert not re.search(pattern, blob), pattern
     checker = _load("check_identifiers_medtech", ROOT / "scripts" / "check_identifiers.py")
     assert checker.main([str(NOTEBOOK)]) == 0
+
+
+def test_lead_times_count_only_predictions_at_or_before_the_breach(ns, committed):
+    helpers = _cell(committed, "model-risk").split("\ndef model_risk_section", 1)[0]
+    exec(compile(helpers, "<cell:model-risk>", "exec"), ns)
+    t0 = datetime(2026, 11, 20, 15, 0, tzinfo=UTC)
+    predicted = [
+        {"opened_at": t0 - timedelta(seconds=45)},
+        {"opened_at": t0 + timedelta(seconds=300)},
+    ]
+    breaches = [{"opened_at": t0}, {"opened_at": t0 + timedelta(seconds=301)},
+                {"opened_at": t0 + timedelta(hours=2)}]  # fmt: skip
+    assert ns["lead_times"](predicted, breaches) == [45.0, 1.0, None]
+    # One long-open prediction is credited to the first breach only, not to the next one.
+    long_open = [{"opened_at": t0 - timedelta(seconds=1)}]
+    two = [{"opened_at": t0}, {"opened_at": t0 + timedelta(seconds=300)}]
+    assert ns["lead_times"](long_open, two) == [1.0, None]
+
+
+def test_ai_plans_query_never_reads_the_requester(committed):
+    queries = _cell(committed, "queries")
+    sql = queries.split('"ai_plans": (', 1)[1].split("),\n", 1)[0]
+    assert "genai_action_plan_audit" in sql
+    assert "requested_by" not in sql
+
+
+def test_event_queries_keep_the_newest_rows_under_their_limit(committed):
+    """[regression] 'updated' events and oldest-first ordering truncated newer episodes."""
+    queries = _cell(committed, "queries")
+    alert_events = queries.split('"alert_events": (', 1)[1].split("),\n", 1)[0]
+    assert "event_type IN ('opened', 'acknowledged', 'cleared')" in alert_events
+    assert "ORDER BY e.created_at DESC" in alert_events
+    risk_events = queries.split('"risk_events": (', 1)[1].split("),\n", 1)[0]
+    assert "ORDER BY e.created_at DESC" in risk_events
+
+
+def test_use_case_notebook_stays_runnable(committed):
+    """The exporter adds a snapshot guard for stored ops runs; this notebook must not keep it."""
+    assert committed.cells[0].source.startswith("**LIVE RUN, redacted, ")
+    assert all(c.get("id") != "snapshot-guard" for c in committed.cells)
