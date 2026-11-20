@@ -27,10 +27,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from databricks.sdk import WorkspaceClient  # noqa: E402
-
 from iot_twin.services.alerts.alert_engine import AlertRecord  # noqa: E402
 from iot_twin.services.genai import action_plan as ap  # noqa: E402
+from iot_twin.services.genai import fm_client  # noqa: E402
 from iot_twin.services.genai.audit_store import GenaiAuditStore  # noqa: E402
 from iot_twin.services.genai.grounding import GroundingSources, assemble_grounding  # noqa: E402
 from iot_twin.services.genai.prompt import render_messages  # noqa: E402
@@ -91,7 +90,8 @@ def redact(value, host: str):
 
 
 async def run(profile: str, endpoint: str, inject: bool = False) -> dict:
-    client = WorkspaceClient(profile=profile)
+    # Same bounded client the app uses (HTTP and SDK-retry timeouts under the attempt limit).
+    client = fm_client.build_client(fm_client.call_limits().timeout_s, profile)
     host = (client.config.host or "").removeprefix("https://")
     now = datetime.now(UTC)
     alert = synthetic_alert(now, inject)

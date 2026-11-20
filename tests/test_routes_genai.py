@@ -64,7 +64,7 @@ async def client() -> AsyncGenerator[tuple[AsyncClient, AppState, str], None]:
 
 def _model(outcome=None):
     serving = ModelServing(outcome)
-    return patch.object(fm_client, "WorkspaceClient", return_value=fake_client_with(serving))
+    return patch.object(fm_client, "build_client", return_value=fake_client_with(serving))
 
 
 def fake_client_with(serving):
@@ -197,3 +197,100 @@ class TestReadAndApply:
         with patch(ALERTS_ADMIN, return_value=True):
             resp = await http.post(f"/api/alerts/{alert_id}/responses", json=sign)
         assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+class TestAdmissionAndReuse:
+    async def test_cooldown_returns_429_with_retry_after(self, client, monkeypatch) -> None:
+        http, _state, alert_id = client
+        monkeypatch.setenv("GENAI_USER_COOLDOWN_S", "60")
+        with patch(ADMIN, return_value=True), _model():
+            first = await http.post(f"/api/alerts/{alert_id}/action-plan")
+            second = await http.post(f"/api/alerts/{alert_id}/action-plan", json={"force": True})
+        assert first.status_code == 201
+        assert second.status_code == 429
+        assert 1 <= int(second.headers["Retry-After"]) <= 60
+
+    async def test_in_flight_generation_for_the_same_alert_is_429(self, client) -> None:
+        http, state, alert_id = client
+        from iot_twin.services.genai.limits import limiter_for
+
+        async with limiter_for(state).admit("someone-else", alert_id):
+            with patch(ADMIN, return_value=True), _model():
+                resp = await http.post(f"/api/alerts/{alert_id}/action-plan")
+        assert resp.status_code == 429
+        assert "already being generated" in resp.json()["detail"]
+
+    async def test_unchanged_grounding_reuses_the_latest_plan_unless_forced(
+        self, client, monkeypatch
+    ) -> None:
+        http, _state, alert_id = client
+        monkeypatch.setenv("GENAI_USER_COOLDOWN_S", "0")
+        calls = []
+        serving = ModelServing()
+        original = serving.query
+        serving.query = lambda **kw: calls.append(1) or original(**kw)
+        with (
+            patch(ADMIN, return_value=True),
+            patch.object(fm_client, "build_client", return_value=fake_client_with(serving)),
+        ):
+            first = (await http.post(f"/api/alerts/{alert_id}/action-plan")).json()
+            again = await http.post(f"/api/alerts/{alert_id}/action-plan")
+            forced = await http.post(f"/api/alerts/{alert_id}/action-plan", json={"force": True})
+        assert again.status_code == 200 and again.json()["reused"] is True
+        assert again.json()["plan_id"] == first["plan_id"]
+        assert forced.status_code == 201 and forced.json()["plan_id"] != first["plan_id"]
+        assert len(calls) == 2
+        with patch(ADMIN, return_value=True):
+            bad = await http.post(f"/api/alerts/{alert_id}/action-plan", json={"force": "yes"})
+        assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
+class TestServerSideApplyGate:
+    async def _rejected_plan(self, http, alert_id) -> str:
+        with patch(ADMIN, return_value=True), _model("not json at all"):
+            body = (await http.post(f"/api/alerts/{alert_id}/action-plan")).json()
+        assert body["status"] == "rejected"
+        return body["plan_id"]
+
+    async def test_ungrounded_plan_cannot_be_applied(self, client) -> None:
+        http, _state, alert_id = client
+        plan_id = await self._rejected_plan(http, alert_id)
+        sign = {
+            "action": "open_ncr",
+            "reason": "excursion",
+            "signature_meaning": "approved",
+            "action_plan_id": plan_id,
+        }
+        with patch(ALERTS_ADMIN, return_value=True):
+            resp = await http.post(f"/api/alerts/{alert_id}/responses", json=sign)
+        assert resp.status_code == 422
+        assert "did not pass the grounding check" in resp.json()["detail"]
+        # Nothing was signed.
+        assert (await http.get(f"/api/alerts/{alert_id}/responses")).json()["responses"] == []
+
+    async def test_explicit_override_is_recorded(self, client) -> None:
+        http, _state, alert_id = client
+        plan_id = await self._rejected_plan(http, alert_id)
+        sign = {
+            "action": "open_ncr",
+            "reason": "excursion",
+            "signature_meaning": "approved",
+            "action_plan_id": plan_id,
+            "apply_override_reason": "QA reviewed the steps manually against the DHR",
+        }
+        with patch(ALERTS_ADMIN, return_value=True):
+            resp = await http.post(f"/api/alerts/{alert_id}/responses", json=sign)
+        assert resp.status_code == 200, resp.text
+        trace = (await http.get(f"/api/genai/audit/{plan_id}")).json()
+        assert trace["applied_override_reason"].startswith("QA reviewed")
+
+    async def test_override_needs_a_plan_and_text(self, client) -> None:
+        http, _state, alert_id = client
+        sign = {"action": "open_ncr", "reason": "r", "signature_meaning": "approved"}
+        with patch(ALERTS_ADMIN, return_value=True):
+            no_plan = await http.post(
+                f"/api/alerts/{alert_id}/responses", json={**sign, "apply_override_reason": "x"}
+            )
+        assert no_plan.status_code == 422

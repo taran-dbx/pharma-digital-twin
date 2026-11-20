@@ -7,8 +7,10 @@ Contract tests run everywhere; the live tests use a throwaway local Postgres
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from unittest.mock import AsyncMock
 
@@ -250,12 +252,160 @@ class TestLive:
             await app.close()
 
 
+_LITERAL = re.compile(r"'((?:[^'\\]|\\.)*)'|NULL|[-0-9.]+")
+
+
+def _spark_values(sql: str) -> list:
+    """Parse a ``(v1, v2, ...)`` tuple the way Databricks SQL reads string literals."""
+    body = sql.strip()[1:-1]
+    values, pos = [], 0
+    while pos < len(body):
+        if body[pos] in ", ":
+            pos += 1
+            continue
+        match = _LITERAL.match(body, pos)
+        assert match is not None, f"unparseable SQL near: {body[pos : pos + 40]!r}"
+        lexeme = match.group(0)
+        if lexeme == "NULL":
+            values.append(None)
+        elif lexeme.startswith("'"):
+            values.append(re.sub(r"\\(.)", r"\1", match.group(1)))
+        else:
+            values.append(float(lexeme))
+        pos = match.end()
+    return values
+
+
+class _Pool:
+    """``acquire()`` over one connection, like LakebaseConnectionManager."""
+
+    def __init__(self, conn) -> None:
+        self.conn = conn
+
+    @asynccontextmanager
+    async def acquire(self):
+        yield self.conn
+
+
+@pytest.mark.asyncio
+class TestLiveHardening:
+    async def test_audit_is_append_only(self, pg) -> None:
+        conn, _server, _db = pg
+        await app_schema.ensure_app_schema(conn)
+        alert_id = await _alert(conn)
+        record = await GenaiAuditStore().record(make_record(alert_id), db=conn)
+        with pytest.raises(Exception, match="append-only"):
+            await conn.execute(
+                "UPDATE genai_action_plan_audit SET grounding_check = 'fail' WHERE id = $1::uuid",
+                record.id,
+            )
+        with pytest.raises(Exception, match="append-only"):
+            await conn.execute("DELETE FROM genai_action_plan_audit WHERE id = $1::uuid", record.id)
+        with pytest.raises(Exception, match="append-only"):
+            await conn.execute("TRUNCATE genai_action_plan_audit")
+        response_id = await conn.fetchval(
+            "INSERT INTO alert_response (alert_id, episode_opened_at, action, recorded_by) "
+            "VALUES ($1::uuid, now(), 'open_ncr', 'qa@x') RETURNING id::text",
+            alert_id,
+        )
+        applied = await GenaiAuditStore().mark_applied(
+            record.id, applied_by="qa@x", response_id=response_id, db=conn
+        )
+        assert applied is not None
+        with pytest.raises(Exception, match="already applied"):
+            await conn.execute(
+                "UPDATE genai_action_plan_audit SET applied_by = 'someone' WHERE id = $1::uuid",
+                record.id,
+            )
+        # Re-running the schema is a no-op on a hardened table.
+        await app_schema.ensure_app_schema(conn)
+
+    async def test_decision_and_plan_link_commit_together(self, pg, monkeypatch) -> None:
+        from iot_twin.services.alerts.alert_responses import AlertResponseStore, ResponseAudit
+        from iot_twin.services.genai.apply import PlanLink, sign_with_plan
+        from tests._genai_fixtures import make_alert
+
+        conn, _server, _db = pg
+        await app_schema.ensure_app_schema(conn)
+        alert = make_alert()
+        await conn.execute(
+            "INSERT INTO alert (id, fingerprint, rule_id, severity, opened_at) "
+            "VALUES ($1::uuid, 'fp-atomic', $2, 'crit', $3)",
+            alert.id,
+            alert.rule_id,
+            alert.opened_at,
+        )
+        audits = GenaiAuditStore()
+        plan = await audits.record(make_record(alert.id), db=conn)
+        audit = ResponseAudit(reason="excursion", signature_meaning="approved")
+
+        async def broken(*_a, **_k):
+            raise AuditStoreUnavailable("link failed")
+
+        monkeypatch.setattr(audits, "mark_applied", broken)
+        with pytest.raises(AuditStoreUnavailable):
+            await sign_with_plan(
+                AlertResponseStore(),
+                audits,
+                alert,
+                "open_ncr",
+                user="qa@x",
+                audit=audit,
+                link=PlanLink(plan.id, None),
+                db=_Pool(conn),
+            )
+        assert await conn.fetchval("SELECT count(*) FROM alert_response") == 0  # rolled back
+
+        monkeypatch.undo()
+        signed = await sign_with_plan(
+            AlertResponseStore(),
+            audits,
+            alert,
+            "open_ncr",
+            user="qa@x",
+            audit=audit,
+            link=PlanLink(plan.id, None),
+            db=_Pool(conn),
+        )
+        assert signed.created and signed.applied.applied_response_id == signed.response.id
+        assert await conn.fetchval("SELECT count(*) FROM alert_response") == 1
+
+
 class TestUcMirror:
     def test_row_sql_carries_trace_and_risk(self) -> None:
-        sql = audit_sync.audit_row_sql(make_record())
-        assert "'pass'" in sql and "'It''s hot'" in sql
-        assert "0.87" in sql and "'pharma_twin.ml.spindle_risk'" in sql
-        assert '["alert:x", "risk_score:x"]' in sql
+        values = _spark_values(audit_sync.audit_row_sql(make_record()))
+        assert len(values) == len(audit_sync.COLUMNS.split(","))
+        row = dict(zip([c.strip() for c in audit_sync.COLUMNS.split(",")], values, strict=True))
+        assert row["grounding_check"] == "pass" and row["plan_summary"] == "It's hot"
+        assert row["risk_score"] == 0.87 and row["risk_model"] == "pharma_twin.ml.spindle_risk"
+        assert json.loads(row["citation_ids"]) == ["alert:x", "risk_score:x"]
+        assert json.loads(row["plan"])["summary"]["text"] == "It's hot"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "ends with a backslash \\",
+            "quote \\' escape",
+            "\\\\'; DROP TABLE x; --",
+            "mixed ' \\ ''",
+        ],
+    )
+    def test_backslash_quotes_round_trip(self, text: str) -> None:
+        """[review #3] Model/metadata text with \\' cannot end the literal early."""
+        record = make_record(
+            response={"plan": {"summary": {"text": text, "citations": ["alert:x"]}}},
+            model=text,
+        )
+        values = _spark_values(audit_sync.audit_row_sql(record))
+        row = dict(zip([c.strip() for c in audit_sync.COLUMNS.split(",")], values, strict=True))
+        assert row["plan_summary"] == text and row["model"] == text
+        assert json.loads(row["plan"])["summary"]["text"] == text
+
+    def test_people_are_pseudonymised_in_the_mirror(self) -> None:
+        values = _spark_values(audit_sync.audit_row_sql(make_record(applied_by="qa@example.com")))
+        row = dict(zip([c.strip() for c in audit_sync.COLUMNS.split(",")], values, strict=True))
+        assert row["requested_by"].startswith("person-") and row["applied_by"].startswith("person-")
+        assert "example.com" not in json.dumps(row)
 
     @pytest.mark.asyncio
     async def test_sync_replaces_rows_and_skips_empty(self, monkeypatch) -> None:

@@ -28,7 +28,7 @@ def grounding() -> g.GroundingSet:
 def _check(grounding: g.GroundingSet, plan: dict) -> ps.GroundingCheck:
     parsed = ps.parse_plan(json.dumps(plan))
     assert parsed.plan is not None, parsed.errors
-    return ps.check_grounding(parsed.plan, grounding, pr.SYSTEM_PROMPT)
+    return ps.check_grounding(parsed.plan, grounding)
 
 
 class TestPrompt:

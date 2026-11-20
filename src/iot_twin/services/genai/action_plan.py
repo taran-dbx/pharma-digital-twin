@@ -130,9 +130,7 @@ def _base_record(
     }
 
 
-def _evaluate(
-    text: str, grounding: GroundingSet, trusted: str
-) -> tuple[dict[str, Any], GroundingCheck, str]:
+def _evaluate(text: str, grounding: GroundingSet) -> tuple[dict[str, Any], GroundingCheck, str]:
     parsed = parse_plan(text)
     if parsed.plan is None:
         response = {
@@ -141,7 +139,7 @@ def _evaluate(
             "schema_errors": list(parsed.errors),
         }
         return response, failed_check(parsed.errors), "rejected"
-    check = check_grounding(parsed.plan, grounding, trusted)
+    check = check_grounding(parsed.plan, grounding)
     response = {
         "raw_text": text[:MAX_RAW_TEXT],
         "plan": parsed.plan.model_dump(),
@@ -151,6 +149,49 @@ def _evaluate(
     return response, check, "generated"
 
 
+@dataclass(frozen=True)
+class PreparedPlan:
+    """Grounding and prompt for one request, before any model call."""
+
+    grounding: GroundingSet
+    prompt: RenderedPrompt
+    endpoint: str
+    requested_at: datetime
+
+
+async def prepare(
+    request: PlanRequest, sources: GroundingSources, now: datetime | None = None
+) -> PreparedPlan:
+    requested_at = now or datetime.now(UTC)
+    grounding = await assemble_grounding(request.alert, sources, requested_at)
+    return PreparedPlan(
+        grounding=grounding,
+        prompt=render_messages(request.alert.id, grounding),
+        endpoint=request.endpoint or fm_client.endpoint_name(),
+        requested_at=requested_at,
+    )
+
+
+async def reusable_plan(
+    store: GenaiAuditStore, prepared: PreparedPlan, alert_id: str, db: Any | None = None
+) -> AuditRecord | None:
+    """The latest plan for the alert when nothing it depends on has changed.
+
+    Same grounding rows (hash), template, endpoint, and it was generated and
+    passed the check — re-asking the model would only spend tokens.
+    """
+    latest = next(iter(await store.list_for_alert(alert_id, db=db, limit=1)), None)
+    if latest is None:
+        return None
+    same = (
+        latest.grounding_hash == prepared.grounding.digest()
+        and latest.prompt_template_version == prepared.prompt.template_version
+        and latest.endpoint == prepared.endpoint
+    )
+    passed = latest.status == "generated" and latest.grounding_check == "pass"
+    return latest if same and passed else None
+
+
 async def generate_action_plan(
     request: PlanRequest,
     sources: GroundingSources,
@@ -158,12 +199,12 @@ async def generate_action_plan(
     *,
     db: Any | None = None,
     now: datetime | None = None,
+    prepared: PreparedPlan | None = None,
 ) -> AuditRecord:
     """Assemble grounding, call the model, validate and audit. Never mutates alerts."""
-    requested_at = now or datetime.now(UTC)
-    grounding = await assemble_grounding(request.alert, sources, requested_at)
-    prompt = render_messages(request.alert.id, grounding)
-    endpoint = request.endpoint or fm_client.endpoint_name()
+    ready = prepared or await prepare(request, sources, now)
+    grounding, prompt, endpoint = ready.grounding, ready.prompt, ready.endpoint
+    requested_at = ready.requested_at
     base = _base_record(request, grounding, prompt, endpoint, requested_at)
     inputs = {
         "alert_id": request.alert.id,
@@ -198,7 +239,7 @@ async def generate_action_plan(
             record_outputs({"status": "error", "error": str(exc)})
             raise ActionPlanModelError(str(exc), kind=exc.kind, record=entry) from exc
         latency = int((time.monotonic() - started) * 1000)
-        response, check, status = _evaluate(reply.text, grounding, prompt.trusted_text)
+        response, check, status = _evaluate(reply.text, grounding)
         served, version = await fm_client.describe_endpoint(endpoint, request.client)
         entry = AuditRecord(
             **base,

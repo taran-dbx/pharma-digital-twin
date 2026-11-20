@@ -1,7 +1,10 @@
 """AI action plan endpoints (grounded, audited, advisory).
 
 * ``POST /api/alerts/{alert_id}/action-plan`` — generate and log a plan (admin,
-  like the other alert writes).
+  like the other alert writes). Admission-controlled (429 + Retry-After): a
+  concurrency cap, one generation per alert, a per-user cooldown. Returns the
+  latest plan (200, ``reused: true``) when its grounding is unchanged, unless
+  ``force: true``.
 * ``GET  /api/alerts/{alert_id}/action-plan`` — prior plans for the alert.
 * ``GET  /api/genai/audit/{plan_id}`` — the full grounding trace of one plan.
 
@@ -29,16 +32,19 @@ from iot_twin.services.genai.action_plan import (
     PlanRequest,
     dbsql_runner,
     generate_action_plan,
+    prepare,
     readings_query,
+    reusable_plan,
 )
 from iot_twin.services.genai.audit_store import AuditStoreUnavailable, audit_store_for
 from iot_twin.services.genai.audit_sync import mark_audit_dirty
 from iot_twin.services.genai.grounding import GroundingSources
+from iot_twin.services.genai.limits import RateLimited, limiter_for
 from iot_twin.services.industry.industry_templates import MODES
 
 router = APIRouter()
 
-_BODY_KEYS = frozenset({"mode"})
+_BODY_KEYS = frozenset({"mode", "force"})
 _ERROR_STATUS = {"timeout": 504, "endpoint": 502}
 
 
@@ -69,6 +75,8 @@ async def _parse_body(request: Request) -> dict[str, Any]:
     mode = body.get("mode")
     if mode is not None and mode not in MODES:
         raise HTTPException(status_code=422, detail=f"mode must be one of: {', '.join(MODES)}")
+    if not isinstance(body.get("force", False), bool):
+        raise HTTPException(status_code=422, detail="force must be true or false")
     return body
 
 
@@ -101,12 +109,28 @@ async def create_action_plan(
     alert = await engine_for(state).get_alert(alert_id, db=db)
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")
-    store = audit_store_for(state)
     try:
-        sources = await _sources(state, alert, body.get("mode"), user_email)
-        record = await generate_action_plan(
-            PlanRequest(alert=alert, requested_by=user_email), sources, store, db=db
+        async with limiter_for(state).admit(user_email, alert_id):
+            return await _generate(state, alert, body, user_email, db)
+    except RateLimited as exc:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": str(exc)},
+            headers={"Retry-After": str(exc.retry_after_s)},
         )
+
+
+async def _generate(state: AppState, alert: Any, body: dict[str, Any], user: str, db: Any):
+    store = audit_store_for(state)
+    request = PlanRequest(alert=alert, requested_by=user)
+    try:
+        sources = await _sources(state, alert, body.get("mode"), user)
+        prepared = await prepare(request, sources)
+        if not body.get("force"):
+            reused = await reusable_plan(store, prepared, alert.id, db=db)
+            if reused is not None:
+                return JSONResponse(status_code=200, content={**reused.summary(), "reused": True})
+        record = await generate_action_plan(request, sources, store, db=db, prepared=prepared)
     except (ResponseStoreUnavailable, AuditStoreUnavailable) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ActionPlanModelError as exc:
@@ -116,7 +140,7 @@ async def create_action_plan(
             content={"detail": f"AI endpoint did not answer: {exc}", "plan": exc.record.summary()},
         )
     mark_audit_dirty(state)
-    return JSONResponse(status_code=201, content=record.summary())
+    return JSONResponse(status_code=201, content={**record.summary(), "reused": False})
 
 
 @router.get("/api/alerts/{alert_id}/action-plan")

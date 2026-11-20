@@ -6,6 +6,11 @@ Mirrors ``genai_action_plan_audit`` (Lakebase) into
 :mod:`iot_twin.services.alerts.alert_snapshot_sync`: a new plan marks the
 mirror dirty, a periodic loop rewrites the recent rows, and an empty copy
 never deletes the last-known-good table.
+
+People are pseudonymised (``person-<hex>``) in the mirror; the real
+``requested_by`` / ``applied_by`` stay in the access-controlled Lakebase table.
+Values are SQL-escaped by ``intelligence_catalog_service._sql_str`` (backslash
+and quote), since summaries and model names are model- or metadata-controlled.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ from typing import Any
 from iot_twin.services import intelligence_catalog_service as ics
 from iot_twin.services.alerts.alert_snapshot_sync import missing_sync_config, resolve_interval_s
 from iot_twin.services.genai.audit_store import AuditRecord, audit_store_for
+from iot_twin.services.genai.redact import pseudonym
 from iot_twin.services.uc_ident import sql_fqn
 
 logger = logging.getLogger("iot_digital_twin.services.genai_audit_sync")
@@ -55,7 +61,7 @@ def audit_row_sql(record: AuditRecord) -> str:
         ics._sql_str(record.id),
         ics._sql_str(record.alert_id),
         ics._sql_str(record.industry),
-        ics._sql_str(record.requested_by),
+        ics._sql_str(pseudonym(record.requested_by)),
         ics._sql_str(record.requested_at.isoformat()),
         ics._sql_str(record.endpoint),
         ics._sql_str(record.model),
@@ -75,7 +81,7 @@ def audit_row_sql(record: AuditRecord) -> str:
         ics._sql_str(risk.get("model_version")),
         _int(record.latency_ms),
         _int(record.total_tokens),
-        ics._sql_str(record.applied_by),
+        ics._sql_str(pseudonym(record.applied_by)),
         ics._sql_str(record.applied_at.isoformat() if record.applied_at else None),
     ]
     return f"({', '.join(values)})"

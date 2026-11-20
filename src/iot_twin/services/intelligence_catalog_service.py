@@ -195,9 +195,16 @@ def alert_snapshot_contract(syncer: Any | None = None) -> dict[str, Any]:
 
 
 def _sql_str(value: Any) -> str:
+    """A Databricks SQL string literal for ``value``.
+
+    Databricks SQL treats ``\\`` as the escape character inside string literals, so
+    both backslashes and single quotes are backslash-escaped. Doubling quotes
+    alone is not enough: a value ending in ``\\`` or containing ``\\'`` would
+    end the literal early and break (or inject into) the statement.
+    """
     if value is None:
         return "NULL"
-    escaped = str(value).replace("'", "''")
+    escaped = str(value).replace("\\", "\\\\").replace("'", "\\'")
     return f"'{escaped}'"
 
 

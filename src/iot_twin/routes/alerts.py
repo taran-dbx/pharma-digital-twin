@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -23,6 +22,7 @@ from iot_twin.services.alerts.alert_responses import (
     response_store_for,
 )
 from iot_twin.services.alerts.alert_sse import build_lifecycle_payload, enqueue_alert_events
+from iot_twin.services.genai.apply import PlanLinkError, resolve_link, sign_with_plan
 from iot_twin.services.genai.audit_store import AuditStoreUnavailable, audit_store_for
 from iot_twin.services.genai.audit_sync import mark_audit_dirty
 from iot_twin.services.production_control import (
@@ -153,35 +153,37 @@ async def list_alert_responses(
     }
 
 
-async def _plan_for(state: AppState, alert_id: str, raw: Any, db: Any) -> str | None:
-    """Validate an optional ``action_plan_id``: it must be a plan for this alert."""
-    if raw in (None, ""):
-        return None
+async def _plan_link(state: AppState, alert_id: str, body: dict[str, Any], db: Any):
+    """Validate an optional ``action_plan_id`` (grounded, same alert, or overridden)."""
     try:
-        plan_id = str(uuid.UUID(str(raw)))
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail="action_plan_id must be a UUID") from exc
-    try:
-        plan = await audit_store_for(state).get(plan_id, db=db)
+        return await resolve_link(audit_store_for(state), alert_id, body, db)
+    except PlanLinkError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except AuditStoreUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    if plan is None or plan.alert_id != alert_id:
-        raise HTTPException(status_code=422, detail="action_plan_id is not a plan for this alert")
-    return plan_id
 
 
-async def _apply_plan(
-    state: AppState, plan_id: str, user_email: str, response_id: str, db: Any
-) -> dict[str, Any]:
-    """Mark the plan applied by this signed decision; the decision itself is already stored."""
+async def _record(state: AppState, alert: Any, action: str, user: str, audit: Any, link, db):
+    """``(response, created, applied plan or None)``; decision + plan link are atomic."""
+    store = response_store_for(state)
     try:
-        applied = await audit_store_for(state).mark_applied(
-            plan_id, applied_by=user_email, response_id=response_id, db=db
+        if link is None:
+            response, created = await store.record(
+                alert, action, recorded_by=user, db=db, audit=audit
+            )
+            return response, created, None
+        signed = await sign_with_plan(
+            store, audit_store_for(state), alert, action, user=user, audit=audit, link=link, db=db
         )
+    except ResponseStoreUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except AuditStoreUnavailable as exc:
-        return {"plan_id": plan_id, "apply_error": str(exc)}
+        raise HTTPException(
+            status_code=503,
+            detail=f"decision NOT recorded: the AI plan link could not be saved ({exc})",
+        ) from exc
     mark_audit_dirty(state)
-    return applied.summary() if applied else {"plan_id": plan_id, "already_applied": True}
+    return signed.response, signed.created, signed.applied
 
 
 @router.post("/api/alerts/{alert_id}/responses")
@@ -210,18 +212,15 @@ async def record_alert_response(
     alert = await engine_for(state).get_alert(alert_id, db=db)
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")
-    plan_id = await _plan_for(state, alert.id, body.get("action_plan_id"), db)
-    try:
-        response, created = await response_store_for(state).record(
-            alert, action, recorded_by=user_email, db=db, audit=audit
-        )
-    except ResponseStoreUnavailable as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    link = await _plan_link(state, alert.id, body, db)
+    response, created, applied = await _record(state, alert, action, user_email, audit, link, db)
     payload = response_event(alert, response)
     events = [payload] if created else []
     result: dict[str, Any] = {**payload, "created": created}
-    if plan_id and created:
-        result["action_plan"] = await _apply_plan(state, plan_id, user_email, response.id, db)
+    if link is not None and created:
+        result["action_plan"] = (
+            applied.summary() if applied else {"plan_id": link.plan_id, "already_applied": True}
+        )
     if created and action in STOPPING_ACTIONS and alert.industry in CELL_ASSETS:
         try:
             change, changed = await production_control_for(state).set_state(

@@ -13,6 +13,9 @@ plan can be traced back to the row it came from:
 * ``maintenance:<event_id>``           — maintenance history of the asset/component
 * ``risk_score:<alert_id>``            — model risk score, when the alert carries one
 
+People appear only as pseudonyms (``person-<hex>``) and every free-text value is
+cleaned (:mod:`iot_twin.services.genai.redact`) before it is stored or sent.
+
 Reads are best-effort: a source that is unavailable is reported in ``gaps``
 instead of failing the request, so the plan is honest about what it did not see.
 """
@@ -41,6 +44,7 @@ from iot_twin.domain.lot_context import (
 )
 from iot_twin.services.alerts.alert_engine import EXCURSION_STARTED_KEY, AlertRecord
 from iot_twin.services.alerts.alert_responses import excursion_start, ncr_number
+from iot_twin.services.genai.redact import clean_text, pseudonym
 
 logger = logging.getLogger(__name__)
 
@@ -115,9 +119,11 @@ def _iso(value: Any) -> Any:
 
 
 def _clip(value: Any) -> Any:
-    if isinstance(value, str) and len(value) > MAX_TEXT_CHARS:
-        return value[:MAX_TEXT_CHARS] + "…"
-    return value
+    """Clean (NFKC, invisible chars, tags, emails) and bound untrusted text."""
+    if not isinstance(value, str):
+        return value
+    text = clean_text(value)
+    return text[:MAX_TEXT_CHARS] + "…" if len(text) > MAX_TEXT_CHARS else text
 
 
 def _json_safe(value: Any, depth: int = 0) -> Any:
@@ -158,7 +164,7 @@ def _alert_item(alert: AlertRecord) -> GroundingItem:
         "excursion_started_at": alert.metadata.get(EXCURSION_STARTED_KEY),
         "ncr_id_if_opened": ncr_number(alert) if alert.industry == "manufacturing" else None,
         "acknowledged_at": _iso(alert.acknowledged_at),
-        "acknowledged_by": alert.acknowledged_by,
+        "acknowledged_by": pseudonym(alert.acknowledged_by),
         "cleared_at": _iso(alert.cleared_at),
         "triggering_part": lot or None,
     }
@@ -249,6 +255,7 @@ def _lot_items(
                 },
             )
         )
+    items = _with_triggering_part(items, alert)
     rft = disposition.get("projected_rft")
     if rft:
         items.append(
@@ -264,6 +271,41 @@ def _lot_items(
             )
         )
     return items
+
+
+def _with_triggering_part(items: list[GroundingItem], alert: AlertRecord) -> list[GroundingItem]:
+    """Carry the producer-stamped triggering part in the lot rows.
+
+    The producer stamps lot context on each reading; a small clock skew can put
+    that part outside the lot-clock window. It is still a part the episode
+    names, so its lot row says so (``triggering_part_serial``) instead of the
+    serial appearing out of nowhere.
+    """
+    lot_id = str(alert.metadata.get("lot_id") or "")
+    serial = str(alert.metadata.get("part_serial") or "")
+    if not lot_id or not serial:
+        return items
+    if any(item.key == lot_id for item in items):
+        return [
+            GroundingItem(
+                item.id, item.source, item.key, {**item.data, "triggering_part_serial": serial}
+            )
+            if item.key == lot_id
+            else item
+            for item in items
+        ]
+    extra = GroundingItem(
+        f"lot:{lot_id}",
+        "lot",
+        lot_id,
+        {
+            "lot_id": lot_id,
+            "parts_at_risk": [],
+            "triggering_part_serial": serial,
+            "note": "lot of the triggering reading (producer metadata), outside the lot-clock window",
+        },
+    )
+    return [*items, extra]
 
 
 def _lot_tracked(alert: AlertRecord) -> bool:
@@ -357,6 +399,8 @@ async def _event_items(
             "created_at": _iso(row["created_at"]),
             **{key: payload.get(key) for key in _EVENT_PAYLOAD_KEYS if key in payload},
         }
+        if data.get("acknowledged_by"):
+            data["acknowledged_by"] = pseudonym(data["acknowledged_by"])
         event_id = str(row["id"])
         items.append(
             GroundingItem(f"alert_event:{event_id}", "alert_event", event_id, _json_safe(data))
@@ -380,6 +424,7 @@ def _response_items(responses: list[Any]) -> list[GroundingItem]:
                 "reference",
             )
         }
+        data["recorded_by"] = pseudonym(data.get("recorded_by"))
         items.append(
             GroundingItem(
                 f"alert_response:{response.id}", "alert_response", response.id, _json_safe(data)

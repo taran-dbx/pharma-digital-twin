@@ -5,10 +5,13 @@ claim carries ``citations`` — ids from the grounding set. After schema
 validation, :func:`check_grounding` fails the plan when it:
 
 * cites an id that is not in the grounding set (fabricated citation),
-* states a number that does not match any grounded value (after rounding to
-  the precision written, and allowing simple derived values such as
-  ``value - threshold``, list counts and a 0–1 score written as a percentage),
-* names a lot or part serial that is not in the grounding set,
+* states a number (units included: 0.05mm, 5min, 87%) that matches no value in
+  the rows THAT CLAIM cites, after rounding to the precision written and
+  allowing simple derivations (``value - threshold``, list counts, a 0–1 score
+  as a percentage). Numbers inside untrusted free text (notes, reasons, model
+  names) and in the system prompt are never allowed values,
+* names a lot or part serial — in the disposition lists or anywhere in the
+  text — that is not in the lot rows,
 * narrates a risk score the grounding set does not hold, or ignores one it does.
 
 A failed check never hides the plan; it is shown with a ``fail`` badge and the
@@ -25,8 +28,9 @@ from typing import Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from iot_twin.domain.lot_context import LOT_PREFIX
 from iot_twin.models.app_schema import ALERT_RESPONSE_ACTIONS
-from iot_twin.services.genai.grounding import GroundingSet
+from iot_twin.services.genai.grounding import GroundingItem, GroundingSet
 
 OwnerRole = Literal["Operator", "QA", "Maintenance", "Manufacturing Eng"]
 OWNER_ROLES: tuple[str, ...] = ("Operator", "QA", "Maintenance", "Manufacturing Eng")
@@ -135,10 +139,24 @@ def parse_plan(text: str) -> ParseResult:
 
 # --------------------------------------------------------------------------- grounding check
 
-# A number not glued to a letter, hyphen, slash, colon or dot (so ids like
-# OQ-TM-CNC1-014, HS-TI64-12, dates and clock times are not read as claims).
-_CLAIM_NUMBER = re.compile(r"(?<![\w.\-/:])[-+]?\d+(?:\.\d+)?(?![\w\-/:]|\.\d)")
-_PERCENT_AFTER = re.compile(r"^\s*(%|percent)")
+# A number (optionally with a unit glued on: 0.05mm, 5min, 64.2°C, 87%) that is
+# not part of an identifier, date or clock time (OQ-TM-CNC1-014, 2026-11-20, 10:42).
+_CLAIM_NUMBER = re.compile(
+    r"(?<![\w.\-/:])([-+]?\d+(?:\.\d+)?)(\s?%|[a-zA-Zµ°]{1,6})?(?![\w\-/:]|\.\d)"
+)
+_PERCENT_WORD = re.compile(r"^\s*percent\b", re.I)
+# Fixed names and regulatory references that contain digits but are not quantities.
+_NON_QUANTITIES = re.compile(
+    r"\bSpindle\s+\d+\b|\bCNC-?\d+\b|\b21\s*CFR\s*(?:Part\s*)?\d+(?:\.\d+)?\b"
+    r"|\bISO\s*\d+(?::\d{4})?\b|\bPart\s+11\b|\bsteps?\s+\d+(?:\s*(?:-|to|and)\s*\d+)?\b"
+    r"|\b(?:model\s+)?version\s+v?\d+(?:\.\d+)*\b|\bv\d+(?:\.\d+)*\b|\brev\.?\s+[A-Z0-9]+\b",
+    re.I,
+)
+_LOT_OR_SERIAL = re.compile(rf"\b{re.escape(LOT_PREFIX)}-\d{{6}}-\d{{3}}(?:-\d{{2}})?\b")
+# Only catalog rows are trusted to carry numbers inside text ("60 °C"); every
+# other string (notes, reasons, model names) is untrusted and contributes none.
+_TEXT_NUMBER_SOURCES = frozenset({"alert_rule"})
+_DERIVABLE_SOURCES = frozenset({"alert", "alert_rule", "risk_score", "projected_rft"})
 
 
 @dataclass(frozen=True)
@@ -180,38 +198,45 @@ def _numeric(value: Any) -> float | None:
     return None
 
 
-def grounded_numbers(grounding: GroundingSet, trusted_text: str = "") -> list[float]:
-    """Every number the plan may state: grounded values, numbers in grounded text,
-    the trusted context's numbers and a few simple derived values."""
-    values: set[float] = set()
-    for item in grounding.items:
-        nums = []
+def _item_numbers(item: GroundingItem) -> set[float]:
+    """Typed numbers in one row, list counts, 0-1 values as percentages, intra-row differences."""
+    nums = [n for n in (_numeric(leaf) for leaf in _leaves(item.data)) if n is not None]
+    if item.source in _TEXT_NUMBER_SOURCES:
         for leaf in _leaves(item.data):
-            num = _numeric(leaf)
-            if num is not None:
-                nums.append(num)
-            elif isinstance(leaf, str):
-                values.update(float(m.group(0)) for m in _CLAIM_NUMBER.finditer(leaf))
-        for value in item.data.values():
-            if isinstance(value, list):
-                values.add(float(len(value)))
-        values.update(nums)
-        values.update(n * 100 for n in nums if 0 < abs(n) <= 1)
-        if item.source in {"alert", "risk_score", "alert_rule", "readings", "lot", "projected_rft"}:
-            values.update(abs(a - b) for a in nums for b in nums)
-    values.update(float(m.group(0)) for m in _CLAIM_NUMBER.finditer(trusted_text))
-    values.add(float(len(grounding.by_source("lot"))))
-    values.add(
-        float(sum(len(i.data.get("parts_at_risk") or []) for i in grounding.by_source("lot")))
-    )
+            if isinstance(leaf, str):
+                nums.extend(float(m.group(1)) for m in _CLAIM_NUMBER.finditer(leaf))
+    values = set(nums)
+    values.update(float(len(v)) for v in item.data.values() if isinstance(v, list))
+    values.update(n * 100 for n in nums if 0 < abs(n) <= 1)
+    if len(nums) <= 40:
+        values.update(abs(a - b) for a in nums for b in nums)
+    return values
+
+
+def allowed_numbers(grounding: GroundingSet, citations: Iterable[str]) -> list[float]:
+    """Numbers a claim may state: values from the rows IT cites, plus simple derivations."""
+    by_id = {item.id: item for item in grounding.items}
+    cited = [by_id[c] for c in citations if c in by_id]
+    values: set[float] = set()
+    for item in cited:
+        values |= _item_numbers(item)
+    derivable = [
+        n
+        for item in cited
+        if item.source in _DERIVABLE_SOURCES
+        for n in (_numeric(leaf) for leaf in _leaves(item.data))
+        if n is not None
+    ]
+    values.update(abs(a - b) for a in derivable for b in derivable)
+    lots = [item for item in cited if item.source == "lot"]
+    values.add(float(len(lots)))
+    values.add(float(sum(len(i.data.get("parts_at_risk") or []) for i in lots)))
     return sorted(values)
 
 
-def _matches(claim: str, allowed: list[float]) -> bool:
-    number = abs(float(claim))
-    decimals = len(claim.split(".", 1)[1]) if "." in claim else 0
+def _matches(number: float, decimals: int, allowed: list[float]) -> bool:
     tolerance = 0.5 * 10 ** (-decimals) + 1e-9
-    return any(abs(number - abs(value)) <= tolerance for value in allowed)
+    return any(abs(abs(number) - abs(value)) <= tolerance for value in allowed)
 
 
 def _claims(plan: ActionPlan) -> Iterator[tuple[str, str, list[str]]]:
@@ -231,29 +256,49 @@ def _claims(plan: ActionPlan) -> Iterator[tuple[str, str, list[str]]]:
         yield f"steps[{index}]", step.action, step.citations
 
 
+def _lot_identifiers(grounding: GroundingSet) -> frozenset[str]:
+    ids: set[str] = set()
+    for item in grounding.by_source("lot"):
+        ids.add(str(item.data.get("lot_id")))
+        ids.update(str(s) for s in item.data.get("parts_at_risk") or [])
+        if item.data.get("triggering_part_serial"):
+            ids.add(str(item.data["triggering_part_serial"]))
+    return frozenset(ids)
+
+
 def _identifier_reasons(plan: ActionPlan, grounding: GroundingSet) -> list[str]:
-    corpus = json.dumps(grounding.rows(), default=str)
-    reasons = []
+    """Every lot id / serial — in disposition lists AND in free text — must be a lot row's."""
+    known = _lot_identifiers(grounding)
     d = plan.disposition
-    named = [("lot", v) for v in d.quarantine.lots] + [
-        ("serial", v) for v in (*d.quarantine.serials, *d.cmm_inspection.serials)
+    named = [("lot", "disposition.quarantine.lots", v) for v in d.quarantine.lots]
+    named += [("serial", "disposition.quarantine.serials", v) for v in d.quarantine.serials]
+    named += [("serial", "disposition.cmm_inspection.serials", v) for v in d.cmm_inspection.serials]
+    for path, text, _citations in _claims(plan):
+        named += [("lot/serial", path, m.group(0)) for m in _LOT_OR_SERIAL.finditer(text)]
+    return [
+        f"{path} names {kind} '{value}' that is not in the lot rows"
+        for kind, path, value in named
+        if value not in known
     ]
-    for kind, value in named:
-        if f'"{value}"' not in corpus:
-            reasons.append(f"disposition names {kind} '{value}' that is not in the grounding set")
-    return reasons
 
 
 def _number_reasons(path: str, text: str, allowed: list[float]) -> tuple[list[str], int]:
     reasons, checked = [], 0
-    for match in _CLAIM_NUMBER.finditer(text):
+    # Replace with a word character so neighbouring digits stay "glued" (ids stay ids).
+    scrubbed = _LOT_OR_SERIAL.sub("X", _NON_QUANTITIES.sub("X", text))
+    for match in _CLAIM_NUMBER.finditer(scrubbed):
         checked += 1
-        claim = match.group(0).lstrip("+-")
-        percent = bool(_PERCENT_AFTER.match(text[match.end() :]))
-        if not _matches(claim, allowed) and not (
-            percent and _matches(str(float(claim) / 100), allowed)
-        ):
-            reasons.append(f"{path}: number {match.group(0)} does not match any grounded value")
+        raw, unit = match.group(1), (match.group(2) or "").strip()
+        number = float(raw)
+        decimals = len(raw.split(".", 1)[1]) if "." in raw else 0
+        percent = unit == "%" or bool(_PERCENT_WORD.match(scrubbed[match.end() :]))
+        ok = _matches(number, decimals, allowed) or (
+            percent and _matches(number / 100, decimals + 2, allowed)
+        )
+        if not ok:
+            reasons.append(
+                f"{path}: number {match.group(0).strip()} does not match a value in its cited rows"
+            )
     return reasons, checked
 
 
@@ -267,12 +312,9 @@ def _risk_reasons(plan: ActionPlan, grounding: GroundingSet) -> list[str]:
     return []
 
 
-def check_grounding(
-    plan: ActionPlan, grounding: GroundingSet, trusted_text: str = ""
-) -> GroundingCheck:
-    """Verify citations, numbers and identifiers against the grounding set."""
+def check_grounding(plan: ActionPlan, grounding: GroundingSet) -> GroundingCheck:
+    """Verify citations, per-claim numbers and lot/serial ids against the grounding set."""
     ids = grounding.ids
-    allowed = grounded_numbers(grounding, trusted_text)
     reasons: list[str] = []
     cited: list[str] = []
     checked = 0
@@ -282,7 +324,7 @@ def check_grounding(
                 reasons.append(f"{path}: cites '{citation}', which is not in the grounding set")
             elif citation not in cited:
                 cited.append(citation)
-        found, count = _number_reasons(path, text, allowed)
+        found, count = _number_reasons(path, text, allowed_numbers(grounding, citations))
         reasons.extend(found)
         checked += count
     reasons.extend(_identifier_reasons(plan, grounding))

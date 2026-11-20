@@ -18,21 +18,18 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from dataclasses import dataclass
 from typing import Any
 
 from iot_twin.models.app_schema import ALERT_RESPONSE_ACTIONS
 from iot_twin.services.genai.grounding import GroundingSet
 from iot_twin.services.genai.plan_schema import OWNER_ROLES, output_schema
+from iot_twin.services.genai.redact import defang
 
 PROMPT_TEMPLATE_VERSION = "action-plan/2026-11-20.v3"
 
 TRUSTED_TAG = "TRUSTED_CONTEXT"
 UNTRUSTED_TAG = "UNTRUSTED_GROUNDING"
-_TAG_PATTERN = re.compile(
-    r"\[\s*/?\s*(TRUSTED_CONTEXT|UNTRUSTED_GROUNDING|UNTRUSTED_OBSERVATIONS)\s*\]", re.I
-)
 
 SYSTEM_PROMPT = (
     "You are a medical-device quality assistant for the Trinity Medical orthopaedic implant "
@@ -74,8 +71,8 @@ class RenderedPrompt:
 
 
 def _defang(text: str) -> str:
-    """Neutralise delimiter tags inside untrusted data."""
-    return _TAG_PATTERN.sub(lambda m: f"(tag {m.group(1).lower()} removed)", text)
+    """Neutralise delimiter tags inside untrusted data (after NFKC + invisible-char strip)."""
+    return defang(text)
 
 
 def _trusted(alert_id: str, grounding: GroundingSet) -> dict[str, Any]:
@@ -94,7 +91,10 @@ def render_messages(alert_id: str, grounding: GroundingSet) -> RenderedPrompt:
     """System + user messages, with the grounding passed as untrusted data."""
     system = SYSTEM_PROMPT + json.dumps(output_schema(), sort_keys=True)
     trusted = json.dumps(_trusted(alert_id, grounding), sort_keys=True)
-    untrusted = _defang(json.dumps(grounding.rows(), sort_keys=True, default=str))
+    # ensure_ascii=False so look-alike characters reach defang() as characters, not \\u escapes.
+    untrusted = _defang(
+        json.dumps(grounding.rows(), sort_keys=True, default=str, ensure_ascii=False)
+    )
     user = (
         f"[{TRUSTED_TAG}]\n{trusted}\n[/{TRUSTED_TAG}]\n\n"
         f"[{UNTRUSTED_TAG}]\n"

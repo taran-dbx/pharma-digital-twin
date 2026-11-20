@@ -385,8 +385,25 @@ _PIPELINE_UNINSPECTABLE = (
 )
 
 
+# Tables added after spaces were first provisioned. A space that lacks one is
+# still authorized (it simply cannot answer those questions) and reports it, so
+# an upgrade does not lock Genie out until the space is re-provisioned.
+OPTIONAL_SPACE_TABLES: tuple[str, ...] = ("intelligence_genai_audit",)
+
+
+def _is_optional(fqn: str) -> bool:
+    return fqn.rsplit(".", 1)[-1] in OPTIONAL_SPACE_TABLES
+
+
+def missing_optional_tables(discovered: list[str], expected: list[str]) -> list[str]:
+    return sorted(t for t in set(expected) - set(discovered) if _is_optional(t))
+
+
 def _verdict(discovered: list[str], expected: list[str]) -> bool:
-    return bool(expected) and set(discovered) == set(expected)
+    if not expected:
+        return False
+    found, wanted = set(discovered), set(expected)
+    return found == wanted or found == wanted - set(missing_optional_tables(discovered, expected))
 
 
 def space_table_allowlist_status(
@@ -423,8 +440,16 @@ def space_table_allowlist_status(
             "requirement": _STATIC_REQUIREMENT if confirmed else unconfirmed,
         }
     verified = _verdict(discovered, expected)
+    missing_optional = missing_optional_tables(discovered, expected) if verified else []
+    if missing_optional:
+        logger.warning(
+            "Genie space %s lacks optional table(s) %s; re-provision it to enable those questions",
+            space_id,
+            ", ".join(missing_optional),
+        )
     return {
         **payload,
+        "missing_optional_tables": missing_optional,
         "verified": verified,
         "authorization_enforced": verified,
         "status": "matched" if verified else "mismatch",

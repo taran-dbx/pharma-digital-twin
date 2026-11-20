@@ -53,6 +53,7 @@ class AppState:
     # AI action-plan audit (services/genai/audit_store.py) and its UC mirror
     genai_audit_store: Any = None
     genai_audit_synchronizer: Any = None
+    genai_limiter: Any = None
     production_control: Any = None
 
     # Genie conversation ownership — process-local, fail-closed after restart

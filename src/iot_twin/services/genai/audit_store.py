@@ -47,6 +47,7 @@ _COLUMNS = (
     "applied_by",
     "applied_at",
     "applied_response_id",
+    "applied_override_reason",
 )
 _INSERT_COLUMNS = _COLUMNS[:21]
 
@@ -76,7 +77,8 @@ _GET_SQL = "SELECT * FROM genai_action_plan_audit WHERE id = $1::uuid"
 
 _APPLY_SQL = """
 UPDATE genai_action_plan_audit
-SET applied_by = $2, applied_at = $3, applied_response_id = $4::uuid
+SET applied_by = $2, applied_at = $3, applied_response_id = $4::uuid,
+    applied_override_reason = $5
 WHERE id = $1::uuid AND applied_at IS NULL
 RETURNING *
 """
@@ -108,6 +110,7 @@ class AuditRecord:
     applied_by: str | None = None
     applied_at: datetime | None = None
     applied_response_id: str | None = None
+    applied_override_reason: str | None = None
 
     @property
     def plan(self) -> dict[str, Any] | None:
@@ -144,6 +147,7 @@ class AuditRecord:
             "applied_by": self.applied_by,
             "applied_at": self.applied_at.isoformat() if self.applied_at else None,
             "applied_response_id": self.applied_response_id,
+            "applied_override_reason": self.applied_override_reason,
             "advisory": True,
         }
 
@@ -169,8 +173,15 @@ def _as_utc(value: datetime | None) -> datetime | None:
     return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
+def _get(row: Any, column: str) -> Any:
+    try:
+        return row[column]
+    except (KeyError, IndexError):  # a table created before the column existed
+        return None
+
+
 def _row_to_record(row: Any) -> AuditRecord:
-    data = {column: row[column] for column in _COLUMNS}
+    data = {column: _get(row, column) for column in _COLUMNS}
     for column in _JSON_COLUMNS:
         if isinstance(data[column], str):
             data[column] = json.loads(data[column] or "null")
@@ -261,6 +272,7 @@ class GenaiAuditStore:
         *,
         applied_by: str,
         response_id: str,
+        override_reason: str | None = None,
         db: Any | None = None,
         now: datetime | None = None,
     ) -> AuditRecord | None:
@@ -268,7 +280,9 @@ class GenaiAuditStore:
         at = _as_utc(now or datetime.now(UTC))
         if db is not None:
             try:
-                row = await db.fetchrow(_APPLY_SQL, plan_id, applied_by, at, response_id)
+                row = await db.fetchrow(
+                    _APPLY_SQL, plan_id, applied_by, at, response_id, override_reason
+                )
             except Exception as exc:
                 raise AuditStoreUnavailable(f"action plan apply not recorded: {exc}") from exc
             return _row_to_record(row) if row is not None else None
@@ -277,7 +291,11 @@ class GenaiAuditStore:
             if current is None or current.applied_at is not None:
                 return None
             updated = replace(
-                current, applied_by=applied_by, applied_at=at, applied_response_id=response_id
+                current,
+                applied_by=applied_by,
+                applied_at=at,
+                applied_response_id=response_id,
+                applied_override_reason=override_reason,
             )
             self._memory = {**self._memory, plan_id: updated}
             return updated
