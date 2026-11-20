@@ -21,7 +21,10 @@ The ``ensure_*`` creators are idempotent (``CREATE TABLE IF NOT EXISTS`` +
 
 from __future__ import annotations
 
+import logging
 from typing import Protocol
+
+logger = logging.getLogger(__name__)
 
 
 class _Executor(Protocol):
@@ -138,19 +141,94 @@ CREATE TABLE IF NOT EXISTS alert_event (
 )
 """
 
-ALERT_RESPONSE_DDL = """
+# Operator decisions on an alert episode. The first four are the medical-device
+# quality workflow; the legacy CNC-cell values stay accepted so rows written by
+# older builds remain valid.
+ALERT_RESPONSE_ACTIONS: tuple[str, ...] = (
+    "quarantine_lot",
+    "open_ncr",
+    "request_cmm_inspection",
+    "request_maintenance",
+)
+LEGACY_ALERT_RESPONSE_ACTIONS: tuple[str, ...] = ("hold_batch", "send_to_inspect")
+ALL_ALERT_RESPONSE_ACTIONS: tuple[str, ...] = (
+    *ALERT_RESPONSE_ACTIONS,
+    *LEGACY_ALERT_RESPONSE_ACTIONS,
+)
+ALERT_RESPONSE_ACTION_CHECK = "alert_response_action_check"
+_ACTION_LIST_SQL = ", ".join(f"'{action}'" for action in ALL_ALERT_RESPONSE_ACTIONS)
+
+# Part 11-style audit fields; actor and timestamp are recorded_by / created_at.
+ALERT_RESPONSE_AUDIT_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("reason", "TEXT"),
+    ("comment", "TEXT"),
+    ("signature_meaning", "TEXT"),
+    ("signed_at", "TIMESTAMPTZ"),
+)
+
+ALERT_RESPONSE_DDL = f"""
 CREATE TABLE IF NOT EXISTS alert_response (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     alert_id UUID NOT NULL
         REFERENCES alert(id) ON DELETE CASCADE,
     episode_opened_at TIMESTAMPTZ NOT NULL,
     action TEXT NOT NULL
-        CHECK (action IN ('hold_batch', 'send_to_inspect', 'request_maintenance')),
+        CONSTRAINT {ALERT_RESPONSE_ACTION_CHECK} CHECK (action IN ({_ACTION_LIST_SQL})),
     recorded_by TEXT NOT NULL,
-    reference JSONB NOT NULL DEFAULT '{}'::jsonb,
+    reference JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+    reason TEXT,
+    comment TEXT,
+    signature_meaning TEXT,
+    signed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (alert_id, episode_opened_at, action)
 )
+"""
+
+_AUDIT_COLUMN_STEPS = "\n".join(
+    f"""    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'alert_response' AND column_name = '{column}'
+    ) THEN
+        ALTER TABLE alert_response ADD COLUMN IF NOT EXISTS {column} {sql_type};
+    END IF;"""
+    for column, sql_type in ALERT_RESPONSE_AUDIT_COLUMNS
+)
+
+# Only ALTERs when a column is missing: Postgres checks table ownership before
+# IF NOT EXISTS, so an unconditional ALTER fails for a non-owner on every boot.
+ALERT_RESPONSE_AUDIT_MIGRATION = f"""
+DO $$
+BEGIN
+{_AUDIT_COLUMN_STEPS}
+END
+$$
+"""
+
+_MISSING_ACTION_TESTS = " OR ".join(
+    f"position('''{action}''' IN current_def) = 0" for action in ALL_ALERT_RESPONSE_ACTIONS
+)
+
+# Rebuilds the action CHECK only when it lacks a current value. The DO block is
+# one transaction, so the drop and re-add are atomic; every legacy value stays
+# in the list, so existing rows validate and nothing is rewritten or lost.
+ALERT_RESPONSE_ACTION_MIGRATION = f"""
+DO $$
+DECLARE
+    current_def TEXT;
+BEGIN
+    SELECT pg_get_constraintdef(oid) INTO current_def
+    FROM pg_constraint
+    WHERE conrelid = 'alert_response'::regclass
+      AND conname = '{ALERT_RESPONSE_ACTION_CHECK}';
+    IF current_def IS NULL OR {_MISSING_ACTION_TESTS} THEN
+        ALTER TABLE alert_response DROP CONSTRAINT IF EXISTS {ALERT_RESPONSE_ACTION_CHECK};
+        ALTER TABLE alert_response ADD CONSTRAINT {ALERT_RESPONSE_ACTION_CHECK}
+            CHECK (action IN ({_ACTION_LIST_SQL}));
+    END IF;
+END
+$$
 """
 
 PRODUCTION_STATE_DDL = """
@@ -261,9 +339,34 @@ async def ensure_alert_event_table(db: _Executor) -> None:
     await _ensure_indexes(db, ALERT_EVENT_INDEXES)
 
 
+def _is_ownership_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "must be owner" in msg or "insufficientprivilege" in type(exc).__name__.lower()
+
+
 async def ensure_alert_response_table(db: _Executor) -> None:
-    """Create the ``alert_response`` table for recorded operator decisions."""
+    """Create or upgrade ``alert_response`` for the medical-device decision workflow.
+
+    Both upgrades are idempotent and no-ops on a current table. If the table is
+    owned by another identity and still needs an upgrade, boot continues with a
+    warning; the decision store then falls back to the legacy column set.
+    """
     await db.execute(ALERT_RESPONSE_DDL)
+    for step, sql in (
+        ("audit columns", ALERT_RESPONSE_AUDIT_MIGRATION),
+        ("action check", ALERT_RESPONSE_ACTION_MIGRATION),
+    ):
+        try:
+            await db.execute(sql)
+        except Exception as exc:  # noqa: BLE001
+            if not _is_ownership_error(exc):
+                raise
+            logger.warning(
+                "alert_response %s not upgraded: the table is owned by another role (%s); "
+                "ask its owner to run ensure_alert_response_table",
+                step,
+                exc,
+            )
 
 
 async def ensure_production_tables(db: _Executor) -> None:

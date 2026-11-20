@@ -40,9 +40,12 @@ FROM alert WHERE id = ANY($1::uuid[])
 """
 
 _DECISIONS_SQL = """
-SELECT alert_id, episode_opened_at, action, recorded_by, created_at
-FROM alert_response WHERE alert_id = ANY($1::uuid[]) AND created_at >= $2
-ORDER BY created_at
+SELECT r.alert_id, r.episode_opened_at, r.action, r.recorded_by, r.created_at,
+       COALESCE(to_jsonb(r)->>'reason', r.reference->'audit'->>'reason') AS reason,
+       COALESCE(to_jsonb(r)->>'signature_meaning', r.reference->'audit'->>'signature_meaning')
+           AS signature_meaning
+FROM alert_response r WHERE r.alert_id = ANY($1::uuid[]) AND r.created_at >= $2
+ORDER BY r.created_at
 """
 
 
@@ -80,6 +83,8 @@ async def _from_lakebase(db: Any, industry: str, since: datetime) -> list[dict[s
                 "station": RESPONSE_STATIONS.get(r["action"]),
                 "recorded_by": r["recorded_by"],
                 "created_at": _iso(r["created_at"]),
+                "reason": r.get("reason"),
+                "signature_meaning": r.get("signature_meaning"),
             }
         )
     episodes = []

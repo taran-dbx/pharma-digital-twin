@@ -15,6 +15,8 @@ from iot_twin.services.alerts.alert_engine import engine_for, evaluate_and_emit
 from iot_twin.services.alerts.alert_history import alert_episodes
 from iot_twin.services.alerts.alert_responses import (
     RESPONSE_STATIONS,
+    ResponseValidationError,
+    parse_audit,
     response_event,
     response_store_for,
 )
@@ -29,7 +31,10 @@ from iot_twin.services.production_control import (
 router = APIRouter()
 
 # decision -> production stop reason recorded when the decision halts the cell
-STOPPING_ACTIONS: dict[str, str] = {"send_to_inspect": "inspection"}
+STOPPING_ACTIONS: dict[str, str] = {
+    "request_cmm_inspection": "CMM inspection",
+    "send_to_inspect": "inspection",
+}
 
 
 def _backend_db(state: AppState):
@@ -150,19 +155,25 @@ async def record_alert_response(
 ):
     if not app_permissions.is_admin(request):
         raise HTTPException(status_code=403, detail="admin access required")
-    body: dict[str, Any] = await request.json()
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=422, detail="body must be a JSON object")
     action = str(body.get("action") or "")
     if action not in RESPONSE_STATIONS:
         raise HTTPException(
             status_code=422,
             detail=f"action must be one of: {', '.join(RESPONSE_STATIONS)}",
         )
+    try:
+        audit = parse_audit(body)
+    except ResponseValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     db = _backend_db(state)
     alert = await engine_for(state).get_alert(alert_id, db=db)
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")
     response, created = await response_store_for(state).record(
-        alert, action, recorded_by=user_email, db=db
+        alert, action, recorded_by=user_email, db=db, audit=audit
     )
     payload = response_event(alert, response)
     events = [payload] if created else []
