@@ -1,0 +1,170 @@
+# captured 2026-11-20T20:46:40Z — GET /api/value/summary?industry=manufacturing&pipeline_id=<deployment-id>&window=24h (live app pharma-twin-dev)
+{
+    "success": true,
+    "data": {
+        "assumptions": {
+            "lines_in_scope": 4,
+            "excursion_events_per_line_per_year": 12.0,
+            "cost_per_lot_lost": 49750.0,
+            "capture_rate": 0.8,
+            "inspection_cost": 1500.0,
+            "lot_release_delay_cost_per_day": 0.0,
+            "release_delay_days_per_event": 5.0,
+            "lot_cost_components": {
+                "scrap": 27750.0,
+                "rework_and_mrb": 6000.0,
+                "revalidation": 12000.0,
+                "lost_run_time": 4000.0
+            }
+        },
+        "defaults": {
+            "lines_in_scope": 4,
+            "excursion_events_per_line_per_year": 12.0,
+            "cost_per_lot_lost": 49750.0,
+            "capture_rate": 0.8,
+            "inspection_cost": 1500.0,
+            "lot_release_delay_cost_per_day": 0.0,
+            "release_delay_days_per_event": 5.0,
+            "lot_cost_components": {
+                "scrap": 27750.0,
+                "rework_and_mrb": 6000.0,
+                "revalidation": 12000.0,
+                "lost_run_time": 4000.0
+            }
+        },
+        "overridden": [],
+        "fields": [
+            {
+                "name": "lines_in_scope",
+                "label": "Lines in scope",
+                "min": 1,
+                "max": 1000,
+                "integer": true
+            },
+            {
+                "name": "excursion_events_per_line_per_year",
+                "label": "Excursions per line per year",
+                "min": 0,
+                "max": 10000,
+                "integer": false
+            },
+            {
+                "name": "cost_per_lot_lost",
+                "label": "Cost per lot lost",
+                "min": 0,
+                "max": 1000000000.0,
+                "integer": false
+            },
+            {
+                "name": "capture_rate",
+                "label": "Capture rate",
+                "min": 0,
+                "max": 1,
+                "integer": false
+            },
+            {
+                "name": "inspection_cost",
+                "label": "CMM inspection + NCR cost",
+                "min": 0,
+                "max": 1000000000.0,
+                "integer": false
+            },
+            {
+                "name": "lot_release_delay_cost_per_day",
+                "label": "Lot-release delay cost per day",
+                "min": 0,
+                "max": 1000000000.0,
+                "integer": false
+            },
+            {
+                "name": "release_delay_days_per_event",
+                "label": "Release delay days per event",
+                "min": 0,
+                "max": 365,
+                "integer": false
+            }
+        ],
+        "projection": {
+            "annual_events": 48.0,
+            "caught_events": 38.4,
+            "missed_events": 9.6,
+            "loss_per_event": 49750.0,
+            "annual_exposure": 2388000.0,
+            "cost_avoided": 1852800.0,
+            "exposure_remaining": 535200.0,
+            "per_event": {
+                "if_missed": [
+                    {
+                        "item": "scrap",
+                        "usd": 27750.0
+                    },
+                    {
+                        "item": "rework_and_mrb",
+                        "usd": 6000.0
+                    },
+                    {
+                        "item": "revalidation",
+                        "usd": 12000.0
+                    },
+                    {
+                        "item": "lost_run_time",
+                        "usd": 4000.0
+                    }
+                ],
+                "loss_per_event": 49750.0,
+                "if_caught": [
+                    {
+                        "item": "cmm_inspection_and_ncr",
+                        "usd": 1500.0
+                    }
+                ],
+                "net_avoided_per_caught_event": 48250.0
+            },
+            "formula": {
+                "loss_per_event": "cost_per_lot_lost + lot_release_delay_cost_per_day \u00d7 release_delay_days_per_event = $49,750 + $0 \u00d7 5 = $49,750",
+                "annual_exposure": "lines_in_scope \u00d7 excursion_events_per_line_per_year \u00d7 loss_per_event = 4 \u00d7 12 \u00d7 $49,750 = $2,388,000",
+                "cost_avoided": "annual_events \u00d7 capture_rate \u00d7 (loss_per_event \u2212 inspection_cost) = 48 \u00d7 0.8 \u00d7 ($49,750 \u2212 $1,500) = $1,852,800",
+                "exposure_remaining": "annual_exposure \u2212 cost_avoided = $2,388,000 \u2212 $1,852,800 = $535,200"
+            },
+            "warnings": []
+        },
+        "actuals": {
+            "excursion_events_detected": 63,
+            "caught_in_time": 1,
+            "not_caught_in_time": 62,
+            "deadline_before_alert": 0,
+            "capture_rate_observed": 0.0159,
+            "lots_protected": 2,
+            "lots_quarantined": 2,
+            "parts_quarantined": 6,
+            "parts_released": 24,
+            "ncrs_opened": 1,
+            "cmm_inspections": 1,
+            "cost_avoided_to_date": 48250.0,
+            "exposure_if_scrapped": 3084500.0,
+            "formula": {
+                "cost_avoided_to_date": "caught_in_time \u00d7 (loss_per_event \u2212 inspection_cost) = 1 \u00d7 ($49,750 \u2212 $1,500) = $48,250",
+                "exposure_if_scrapped": "not_caught_in_time \u00d7 loss_per_event = 62 \u00d7 $49,750 = $3,084,500"
+            }
+        }
+    },
+    "error": null,
+    "meta": {
+        "industry": "manufacturing",
+        "pipeline_keys": [
+            "f9c44d56-<uuid>",
+            "industry:manufacturing"
+        ],
+        "alias_since": "2026-11-20T14:50:18.006913+00:00",
+        "window_start": "2026-11-19T20:46:19.408786+00:00",
+        "window_end": "2026-11-20T20:46:19.408786+00:00",
+        "data_available": true,
+        "parts_per_lot": 15,
+        "episodes_total": 63,
+        "truncated": true,
+        "recent_shown": 20,
+        "samples_shown": 63,
+        "pipeline_id": "f9c44d56-<uuid>",
+        "window": "24h"
+    }
+}

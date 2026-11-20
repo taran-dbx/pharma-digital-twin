@@ -1,0 +1,23 @@
+# Producer -> MSK -> RTM consumer -> Lakebase after the final redeploy (producer 500 Hz, consumer 2 workers)
+# Sampled every ~60 s from the pipeline branch: n_tup_ins over the sensor_readings chunks, max(event_time), now()-max(event_time).
+# Earlier probes this session: newest event 20:33:37 at 20:39:22 (lag ~6 min); 20:42:01 at 20:51:05 (~9 min).
+# The pg_stat counters RESET between 20:58 and 21:00 (9.9 M -> 21,700): the pipeline branch compute restarted.
+utc_time | total_inserted | inserted_since_prev | rows_per_s | newest_event_time | lag_s | rows_last_60s
+21:02:15 | 71672 | None | None | 20:54:26.548550 | 469.0 | 0
+21:03:17 | 104772 | 33100 | 533 | 20:54:26.548550 | 531.1 | 0
+21:04:26 | connect error: InternalServerError: Couldn't connect to compute node
+21:05:28 | 143280 | 38508 | 294 | 20:54:26.548550 | 662.2 | 0
+21:06:34 | 161480 | 18200 | 278 | 20:54:26.548550 | 727.8 | 0
+21:07:47 | 182380 | 20900 | 287 | 20:54:26.548550 | 800.7 | 0
+21:09:00 | 216142 | 33762 | 459 | 20:55:57.170952 | 783.6 | 0
+21:10:19 | 253642 | 37500 | 475 | 20:57:59.794128 | 740.0 | 0
+21:11:21 | 291942 | 38300 | 616 | 21:00:01.502843 | 680.5 | 0
+21:12:24 | 321942 | 30000 | 482 | 21:01:42.682254 | 641.5 | 0
+21:13:34 | connect error: InternalServerError: Couldn't connect to compute node
+21:14:37 | 378542 | 56600 | 426 | 21:04:38.877003 | 598.2 | 0
+21:15:45 | 411742 | 33200 | 485 | 21:06:40.556708 | 545.1 | 0
+
+# Reading: rows keep landing at ~300-600 rows/s, but the newest event_time trails the wall clock by 9-13 min (shrinking after 21:07) and stood still
+# from 21:02 to 21:07 while inserts continued (re-delivery after the compute restart). Connects intermittently fail with
+# 'Couldn't connect to compute node'. This follows the Lakehouse Sync stall at 19:29 (07b). The steady state before it is
+# in 05b and 11b (41 batches at 488 rows/s, e2e p99 median 13 ms).

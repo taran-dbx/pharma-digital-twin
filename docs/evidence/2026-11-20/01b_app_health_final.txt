@@ -1,0 +1,119 @@
+# captured 2026-11-20T21:13:15Z — final deployment (deploy/integration with isolation-prefix @571cce0, medtech-domain @0cabab1,
+# value-views @5cf9843, risk-model @922d0c0, grounded-action-plan @12c452a, plus the admin-identity fix in this PR)
+## databricks apps get pharma-twin-dev
+{
+ "name": "pharma-twin-dev",
+ "url": "https://pharma-twin-dev-<workspace-id>.aws.databricksapps.com",
+ "service_principal_client_id": "02ab07ab-<uuid>",
+ "service_principal_name": "app-501era pharma-twin-dev",
+ "compute": "ACTIVE",
+ "app": "RUNNING",
+ "resources": [
+  {
+   "name": "sql-warehouse",
+   "sql_warehouse": {
+    "id": "<warehouse-id>",
+    "permission": "CAN_USE"
+   }
+  },
+  {
+   "genie_space": {
+    "name": "pharma-twin-genie",
+    "permission": "CAN_VIEW",
+    "space_id": "<genie-id>"
+   },
+   "name": "genie-space"
+  },
+  {
+   "name": "risk-endpoint",
+   "serving_endpoint": {
+    "name": "dev_<owner>_pharma-twin-spindle-risk",
+    "permission": "CAN_QUERY"
+   }
+  },
+  {
+   "name": "genai-endpoint",
+   "serving_endpoint": {
+    "name": "databricks-claude-sonnet-5-5",
+    "permission": "CAN_QUERY"
+   }
+  },
+  {
+   "name": "genai-pseudonym-salt",
+   "secret": {
+    "key": "genai-pseudonym-salt",
+    "permission": "READ",
+    "scope": "pharma-twin-secrets"
+   }
+  },
+  {
+   "name": "lakebase",
+   "postgres": {
+    "branch": "projects/pharma-twin-backend/branches/production",
+    "database": "projects/pharma-twin-backend/branches/production/databases/databricks-postgres",
+    "permission": "CAN_CONNECT_AND_CREATE"
+   }
+  }
+ ]
+}
+## dev serving endpoint (created by the bundle, mode: development)
+{
+ "name": "dev_<owner>_pharma-twin-spindle-risk",
+ "state": {
+  "config_update": "NOT_UPDATING",
+  "ready": "READY"
+ },
+ "served": [
+  [
+   "<catalog>.pharma_twin.spindle_thermal_risk",
+   "4"
+  ]
+ ]
+}
+## GET /api/health
+{
+    "status": "ok",
+    "db_available": true,
+    "db_error": null,
+    "industries": "manufacturing,pharmaceutical",
+    "databricks_client_id": "02ab07ab-<uuid>",
+    "databricks_host": "<workspace-host>",
+    "zerobus_client_id": "02ab07ab...",
+    "zerobus_endpoint": "<id>.zerobus.<workspace-host>"
+}
+## GET /api/app-defaults (subset)
+{
+ "resource_prefix": "pharma-twin",
+ "uc_catalog": "<catalog>",
+ "uc_schema": "pharma_twin",
+ "lakebase_project_id": "pharma-twin-backend",
+ "pipelines_project": "pharma-twin-pipelines",
+ "service_credential (UC service-credential NAME, not a secret)": iot-rtm-sc
+}
+## admin route as a pharma-twin-admins member (403 for everyone before the identity fix in this PR)
+{
+    "job_id": "<id>",
+    "life_cycle_state": "RUNNING",
+    "result_state": null,
+    "state": "RUNNING",
+    "degraded": false,
+    "restartable": false,
+    "detail": null,
+    "tasks": [
+        {
+            "task": "rtm_consumer",
+            "life_cycle": "RUNNING",
+            "result": null,
+            "message": "In run"
+        },
+        {
+            "task": "data_producer",
+            "life_cycle": "RUNNING",
+            "result": null,
+            "message": "In run"
+        }
+    ]
+}
+## original deployment untouched (read-only)
+  iot-digital-twin ACTIVE sp 6ce122f2…
+  iot-twin-dev-<owner> ACTIVE sp c2bfe7c0…

@@ -1,0 +1,271 @@
+# Grounded AI action plan for a real Spindle 3 alert (live app pharma-twin-dev, feat/grounded-action-plan @12c452a)
+# captured 2026-11-20 ~20:47-20:55 UTC. Alert: the reused Spindle 3 row, episode opened 20:46:33, lot TM-HS12-261120-249.
+
+## 1. GET /api/genai/status (admin)
+{
+ "endpoint": "databricks-claude-sonnet-5-5",
+ "pseudonym_key": {
+  "source": "secret",
+  "pseudonyms": "keyed",
+  "detail": ""
+ },
+ "append_only_enforced": true,
+ "append_only": {
+  "enforced": true,
+  "detail": ""
+ },
+ "limits": {
+  "timeout_s": 40.0,
+  "attempts": 2,
+  "request_budget_s": 90.0,
+  "max_concurrent": 2,
+  "user_cooldown_s": 20.0
+ },
+ "advisory": true
+}
+
+## 2. POST /api/alerts/<alert-id>/action-plan  body {"mode":"realtime"}  -> HTTP 201
+{
+ "plan_id": "1cbf19ef-<uuid>",
+ "alert_id": "9c7b00f1-<uuid>",
+ "industry": "manufacturing",
+ "requested_by": "<user-email>",
+ "requested_at": "2026-11-20T20:47:04.910971+00:00",
+ "endpoint": "databricks-claude-sonnet-5-5",
+ "model": "databricks-claude-sonnet-5-5",
+ "model_version": "Claude Sonnet 5.5",
+ "prompt_template_version": "action-plan/2026-11-20.v4",
+ "prompt_hash": "4a8af4638444e8c8c725cba04730835cafaf957a0e24c441497378d4b03f3c1e",
+ "grounding_hash": "b825c1898b27f1ce2ef1c9c7fada145148c7d0d5873a3ca5c5e40ec13a4d53d6",
+ "grounding_check": "pass",
+ "grounding_reasons": [],
+ "status": "generated",
+ "error": null,
+ "latency_ms": 22962,
+ "applied_by": null,
+ "applied_at": null,
+ "applied_response_id": null,
+ "applied_override_reason": null,
+ "advisory": true,
+ "reused": false
+}
+usage: {"prompt_tokens": 14681, "completion_tokens": 3740, "total_tokens": 18421}
+
+### plan (as returned)
+{
+ "summary": {
+  "text": "Spindle 3 temperature (VPP-SPINDLE3-TEMP) exceeded the validated limit of 60 °C. The triggering reading was about 64.9 °C, and later alert events reached about 74.7 °C. Lot TM-HS12-261120-249 (WO-TM-24817) has 3 of 15 parts at risk. Recommend QA hold, NCR, CMM inspection and a maintenance request. No telemetry readings exist in the excursion window.",
+  "citations": [
+   "alert:9c7b00f1-<uuid>",
+   "alert_event:377ff7e2-<uuid>",
+   "alert_rule:mfg-alert-spindle-temp",
+   "lot:TM-HS12-261120-249"
+  ]
+ },
+ "disposition": {
+  "quarantine": {
+   "lots": [
+    "TM-HS12-261120-249"
+   ],
+   "serials": [
+    "TM-HS12-261120-249-05",
+    "TM-HS12-261120-249-06",
+    "TM-HS12-261120-249-07"
+   ],
+   "rationale": "These 3 parts were cut while Spindle 3 was outside its validated limit of 60 °C. The rule requires a QA hold on parts machined outside the limit. The other 12 parts in the lot are listed as releasable, pending QA review.",
+   "citations": [
+    "lot:TM-HS12-261120-249",
+    "alert_rule:mfg-alert-spindle-temp",
+    "alert:9c7b00f1-<uuid>"
+   ]
+  },
+  "cmm_inspection": {
+   "scope": "CMM-inspect the 3 at-risk parts for stem taper and neck geometry, the dimensional risk named in the rule. Do not release them to CLEAN / PASSIVATE until results are reviewed by QA. No CMM results exist yet.",
+   "serials": [
+    "TM-HS12-261120-249-05",
+    "TM-HS12-261120-249-06",
+    "TM-HS12-261120-249-07"
+   ],
+   "citations": [
+    "alert_rule:mfg-alert-spindle-temp",
+    "lot:TM-HS12-261120-249",
+    "projected_rft:9c7b00f1-<uuid>"
+   ]
+  },
+  "ncr": {
+   "required": true,
+   "rationale": "The validated process parameter (PS-TM-MILL-HS-003 rev C, OQ-TM-CNC1-014, PQ-TM-HS12-022) was exceeded, and the rule requires an NCR. The alert references NCR-20261120-204633-9C7B for DHR-TM-HS12-261120-249.",
+   "citations": [
+    "alert_rule:mfg-alert-spindle-temp",
+    "alert:9c7b00f1-<uuid>"
+   ]
+  },
+  "maintenance_request": {
+   "required": true,
+   "rationale": "The alert was critical, with temperatures well above 60 °C across many events. The last recorded spindle maintenance was an inspection on 2026-09-01 that re-verified thermal compensation per OQ-TM-CNC1-014. Request a spindle thermal check before further production.",
+   "citations": [
+    "alert:9c7b00f1-<uuid>",
+    "maintenance:mfg-mnt-001",
+    "alert_event:377ff7e2-<uuid>"
+   ]
+  }
+ },
+ "risk_narrative": {
+  "text": "The model score row is 0.6239 (about 62.39%), driven mainly by temp_margin_c, then temp_slope and temp_last. Caution: that row references alert_id 81dcc4e5-<uuid>, which differs from this alert. QA should confirm it applies before relying on it. The disposition above rests on the rule and lot rows, not on the score.",
+  "citations": [
+   "risk_score:81dcc4e5-<uuid>",
+   "alert:9c7b00f1-<uuid>"
+  ]
+ },
+ "steps": [
+  {
+   "order": 1,
+   "owner_role": "Operator",
+   "action": "Do not machine further parts on Spindle 3 of CNC-1 until Maintenance and QA confirm the temperature is back under the 60 °C validated limit.",
+   "response_action": null,
+   "citations": [
+    "alert:9c7b00f1-<uuid>",
+    "alert_rule:mfg-alert-spindle-temp"
+   ]
+  },
+  {
+   "order": 2,
+   "owner_role": "QA",
+   "action": "Review and sign the quarantine of lot TM-HS12-261120-249 for the 3 at-risk parts (serials in the disposition), per the QA hold requirement.",
+   "response_action": "quarantine_lot",
+   "citations": [
+    "lot:TM-HS12-261120-249",
+    "alert_rule:mfg-alert-spindle-temp"
+   ]
+  },
+  {
+   "order": 3,
+   "owner_role": "QA",
+   "action": "Open NCR-20261120-204633-9C7B referencing DHR-TM-HS12-261120-249, WO-TM-24817 and the exceeded limit of PS-TM-MILL-HS-003 rev C.",
+   "response_action": "open_ncr",
+   "citations": [
+    "alert:9c7b00f1-<uuid>",
+    "alert_rule:mfg-alert-spindle-temp"
+   ]
+  },
+  {
+   "order": 4,
+   "owner_role": "QA",
+   "action": "Request CMM inspection of the quarantined parts for stem taper and neck geometry. Keep them out of CLEAN / PASSIVATE and STERILE PACK until the results are reviewed.",
+   "response_action": "request_cmm_inspection",
+   "citations": [
+    "alert_rule:mfg-alert-spindle-temp",
+    "lot:TM-HS12-261120-249"
+   ]
+  },
+  {
+   "order": 5,
+   "owner_role": "Maintenance",
+   "action": "Inspect Spindle 3 cooling and thermal compensation. The last inspection on record was 2026-09-01. Document findings against OQ-TM-CNC1-014.",
+   "response_action": "request_maintenance",
+   "citations": [
+    "maintenance:mfg-mnt-001",
+    "alert:9c7b00f1-<uuid>"
+   ]
+  },
+  {
+   "order": 6,
+   "owner_role": "Manufacturing Eng",
+   "action": "Establish the excursion timing. No telemetry readings exist in the window, so use alert events and machine logs to confirm which parts were cut while above 60 °C.",
+   "response_action": null,
+   "citations": [
+    "alert:9c7b00f1-<uuid>",
+    "alert_event:44ad9306-<uuid>",
+    "lot:TM-HS12-261120-249"
+   ]
+  },
+  {
+   "order": 7,
+   "owner_role": "QA",
+   "action": "Decide on the 12 remaining parts of the lot only after the CMM results and the NCR assessment. The projected right-first-time is 57.14% (3 of 7 started parts at risk).",
+   "response_action": null,
+   "citations": [
+    "lot:TM-HS12-261120-249",
+    "projected_rft:9c7b00f1-<uuid>"
+   ]
+  },
+  {
+   "order": 8,
+   "owner_role": "QA",
+   "action": "Check whether the model score row applies to this alert, since its alert_id differs. Record the outcome in the NCR.",
+   "response_action": null,
+   "citations": [
+    "risk_score:81dcc4e5-<uuid>",
+    "alert:9c7b00f1-<uuid>"
+   ]
+  }
+ ]
+}
+
+## 3. Grounding check result
+grounding_check: pass | reasons: [] | status: generated
+citations in plan: 56 | grounding rows supplied: 56
+grounding rows by kind: {'alert': 1, 'alert_event': 50, 'lot': 1, 'projected_rft': 1, 'alert_rule': 1, 'maintenance': 1, 'risk_score': 1}
+every step citation is a supplied grounding row: True
+
+## 4. GET /api/genai/audit/<plan-id> (trace summary; full rows omitted for size)
+{
+ "plan_id": "1cbf19ef-<uuid>",
+ "alert_id": "9c7b00f1-<uuid>",
+ "prompt_template_version": "action-plan/2026-11-20.v4",
+ "prompt_hash": "4a8af4638444e8c8c725cba04730835cafaf957a0e24c441497378d4b03f3c1e",
+ "grounding_hash": "b825c1898b27f1ce2ef1c9c7fada145148c7d0d5873a3ca5c5e40ec13a4d53d6",
+ "grounding_check": "pass",
+ "status": "generated",
+ "latency_ms": 22962,
+ "applied_by": null,
+ "applied_at": null,
+ "advisory": true
+}
+citation_ids: ["alert:9c7b00f1-<uuid>", "alert_event:44ad9306-<uuid>", "alert_event:afa9a008-<uuid>", "alert_event:22bad9b9-<uuid>", "alert_event:a5cb0d39-<uuid>", "alert_event:14a65520-<uuid>", "alert_event:139f3b80-<uuid>", "alert_event:1adafc2f-<uuid>", "alert_event:584a722e-<uuid>", "alert_event:7bb9f0db-<uuid>", "alert_event:c7e0d7c0-<uuid>", "alert_event:7f2c1c65-<uuid>", "alert_event:d0ab9032-<uuid>", "alert_event:cd189476-<uuid>", "alert_event:e3f29255-<uuid>", "alert_event:14756a72-<uuid>", "alert_event:0a45fd2a-<uuid>", "alert_event:1a79241c-<uuid>", "alert_event:18897425-<uuid>", "alert_event:825aec30-<uuid>", "alert_event:b3b7f275-<uuid>", "alert_event:377ff7e2-<uuid>", "alert_event:c92f33cb-<uuid>", "alert_event:54b94c09-<uuid>", "alert_event:0d78b5fb-<uuid>", "alert_event:25caf591-<uuid>", "alert_event:ac853c60-<uuid>", "alert_event:99013781-<uuid>", "alert_event:19b28527-<uuid>", "alert_event:5903e360-<uuid>", "alert_event:8d147028-<uuid>", "alert_event:a9ef7711-<uuid>", "alert_event:c33f31c2-<uuid>", "alert_event:8709857f-<uuid>", "alert_event:1f58932b-<uuid>", "alert_event:abdf51ca-<uuid>", "alert_event:5865a633-<uuid>", "alert_event:65b32303-<uuid>", "alert_event:51ee0a93-<uuid>", "alert_event:745a4030-<uuid>", "alert_event:c357b660-<uuid>", "alert_event:8540d2de-<uuid>", "alert_event:bc655b15-<uuid>", "alert_event:9ef04553-<uuid>", "alert_event:a9d0c403-<uuid>", "alert_event:52b19ae7-<uuid>", "alert_event:a2f966b0-<uuid>", "alert_event:137352fb-<uuid>", "alert_event:d937df59-<uuid>", "alert_event:3f4029f2-<uuid>", "alert_event:b5b1ee63-<uuid>", "lot:TM-HS12-261120-249", "projected_rft:9c7b00f1-<uuid>", "alert_rule:mfg-alert-spindle-temp", "maintenance:mfg-mnt-001", "risk_score:81dcc4e5-<uuid>"]
+
+## 5. Lakebase audit row (pharma-twin-backend, table genai_action_plan_audit; append-only enforced)
+OK select id::text as plan_id, alert_id::text, industry, status, grounding_check, grounding_r [{'plan_id': '1cbf19ef-<uuid>', 'alert_id': '9c7b00f1-<uuid>', 'industry': 'manufacturing', 'status': 'generated', 'grounding_check': 'pass', 'grounding_reasons': '[]', 'prompt_template_version': 'action-plan/2026-11-20.v4', 'endpoint': 'databricks-claude-sonnet-5-5', 'model_version': 'Claude Sonnet 5.5', 'latency_ms': 22962, 'prompt_tokens': 14681, 'completion_tokens': 3740, 'requested_at': datetime.datetime(2026, 11, 20, 20, 47, 4, 910971, tzinfo=datetime.timezone.utc), 'prompt_hash16': '4a8af4638444e8c8', 'grounding_hash16': 'b825c1898b27f1ce', 'n_grounding_rows': 56, 'requested_by_len': 37}]
+
+## 6. UC mirror row (<catalog>.pharma_twin.intelligence_genai_audit, requested_by pseudonymised)
+[
+  {
+    "alert_id": "9c7b00f1-<uuid>",
+    "endpoint": "databricks-claude-sonnet-5-5",
+    "grounding_check": "pass",
+    "latency_ms": "22962",
+    "model_version": "Claude Sonnet 5.5",
+    "n_citations": "56",
+    "plan_id": "1cbf19ef-<uuid>",
+    "plan_summary": "Spindle 3 temperature (VPP-SPINDLE3-TEMP) exceeded the validated limit of 60 °C. The triggering reading was about 64.9 °C, and later alert events reached about 74.7 °C. Lot TM-HS12-261120-249 (WO-TM-24817) has 3 of 15 parts at risk. Recommend QA hold, NCR, CMM inspection and a maintenance request. No telemetry readings exist in the excursion window.",
+    "requested_at": "2026-11-20T20:47:04.910971+00:00",
+    "requested_by": "person-c486deb84af1b07e",
+    "risk_model": "<catalog>.pharma_twin.spindle_thermal_risk",
+    "risk_model_version": "4",
+    "risk_score": "0.6239",
+    "status": "generated",
+    "total_tokens": 18421
+  }
+]
+
+## 7. Genie (per-pipeline space, refreshed to include intelligence_genai_audit): which rows did the AI use?
+Q: Which rows did the AI use for alert 9c7b00f1-<uuid>? List the citation ids of its latest action plan and whether the plan passed the grounding check. | status: COMPLETED
+  SQL:
+SELECT `plan_id`, `alert_id`, `requested_at`, `citation_ids`, `grounding_check`
+FROM <catalog>.`pharma_twin`.`intelligence_genai_audit`
+WHERE `industry` = 'manufacturing'
+  AND `alert_id` = '9c7b00f1-<uuid>'
+  AND `requested_at` IS NOT NULL
+ORDER BY `requested_at` DESC
+LIMIT 1
+  text: For alert **9c7b00f1-<uuid>**, the latest action plan was plan ID **1cbf19ef-<uuid>** requested at **2026-11-20T20:47:04.910971+00:00**, and the grounding check was **pass**.
+
+The citation IDs used by plan ID **1cbf19ef-<uuid>** were:
+- 
+  result columns: ['plan_id', 'alert_id', 'requested_at', 'citation_ids', 'grounding_check']
+    ['1cbf19ef-<uuid>', '9c7b00f1-<uuid>', '2026-11-20T20:47:04.910971+00:00', '["alert:9c7b00f1-<uuid>", "alert_event:44ad9306-<uuid>", "alert_event:afa9a008-<uuid>", "alert_event:22bad9b9-<uuid>", "alert_event:a5cb0d39-<uuid>", "alert_event:14a65520-<uuid>", "alert_event:139f3b80-<uuid>", "alert_event:1adafc2f-<uuid>", "alert_event:584a722e-<uuid>", "alert_event:7bb9f0db-<uuid>", "alert_event:c7e0d7c0-<uuid>", "alert_event:7f2c1c65-<uuid>", "alert_event:d0ab9032-<uuid>", "alert_event:cd189476-<uuid>", "alert_event:e3f29255-<uuid>", "alert_event:14756a72-<uuid>", "alert_event:0a45fd2a-<uuid>", "alert_event:1a79241c-<uuid>", "alert_event:18897425-<uuid>", "alert_event:825aec30-<uuid>", "alert_event:b3b7f275-<uuid>", "alert_event:377ff7e2-<uuid>", "alert_event:c92f33cb-<uuid>", "alert_event:54b94c09-<uuid>", "alert_event:0d78b5fb-<uuid>", "alert_event:25caf591-<uuid>", "alert_event:ac853c60-<uuid>", "alert_event:99013781-<uuid>", "alert_event:19b28527-<uuid>", "alert_event:5903e360-<uuid>", "alert_event:8d147028-<uuid>", "alert_event:a9ef7711-<uuid>", "alert_event:c33f31c2-<uuid>", "alert_event:8709857f-<uuid>", "alert_event:1f58932b-<uuid>", "alert_event:abdf51ca-<uuid>", "alert_event:5865a633-<uuid>", "alert_event:65b32303-<uuid>", "alert_event:51ee0a93-<uuid>", "alert_event:745a4030-<uuid>", "alert_event:c357b660-<uuid>", "alert_event:8540d2de-<uuid>", "alert_event:bc655b15-<uuid>", "alert_event:9ef04553-<uuid>", "alert_event:a9d0c403-<uuid>", "alert_event:52b19ae7-<uuid>", "alert_event:a2f966b0-<uuid>", "alert_event:137352fb-<uuid>", "alert_event:d937df59-<uuid>", "alert_event:3f4029f2-<uuid>", "alert_event:b5b1ee63-<uuid>", "lot:TM-HS12-261120-249", "projected_rft:9c7b00f1-<uuid>", "alert_rule:mfg-alert-spindle-temp", "maintenance:mfg-mnt-001", "risk_score:81dcc4e5-<uuid>"]', 'pass']
+  rows returned: 1 truncated: False
+
+# Note: the plan summary says no telemetry readings were in the excursion window: after the two app redeploys the RTM
+# consumer was ~5 min behind (see 05c), so the readings for 20:46 had not landed yet. The plan is grounded on alert
+# events, the lot, the rule, maintenance and the model risk score instead, and the gap is stated, not invented.

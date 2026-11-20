@@ -1,0 +1,6 @@
+# captured ~21:12Z — GET /api/events?industry=manufacturing for 30 s (curl -N) on the final deployment
+HTTP/2 200 
+content-type: text/event-stream; charset=utf-8
+# data events: 209
+# event types: {'sensor_update': 168, 'alert_opened': 1, 'alert_updated': 40}
+# readings carried: 16800 | distinct sensors: 19

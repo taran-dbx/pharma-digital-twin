@@ -1,0 +1,28 @@
+# Streaming latency, second capture 2026-11-20T21:01:17Z, from <catalog>.pharma_twin.manufacturing_metrics (mode=realtime, producer 500 Hz,
+# consumer 2 workers). Per-batch e2e_p50 / e2e_p99 are Spark Real-Time Mode's own percentiles over every record of a 5-minute batch.
+
+## WINDOW C (steady state): batches completed 2026-11-20 16:01:00 to 19:27:13 UTC
+$ SQL: SELECT count(*) AS batches, sum(num_input_rows) AS records, percentile(e2e_p50,0.5) AS p50_ms_median_batch, max(e2e_p50) AS p50_ms_worst_batch, percentile(e2e_p99,0.5) AS p99_ms_median_batch, max(e2e_p99) AS p99_ms_worst_batch, round(avg(processed_rps),1) AS processed_rps_avg FROM <catalog>.pharma_twin.manufacturing_metrics WHERE mode='realtime' AND timestamp BETWEEN '2026-11-20T16:01:00Z' AND '2026-11-20T19:27:13Z'
+   {'batches': '41', 'p50_ms_median_batch': '7.0', 'p50_ms_worst_batch': '7.0', 'p99_ms_median_batch': '13.0', 'p99_ms_worst_batch': '29.0', 'processed_rps_avg': '482.3', 'records': '5953735'}
+
+## WINDOW D (degradation, the tail): batches completed 2026-11-20 19:30:00 to 20:49:28 UTC
+$ SQL: SELECT count(*) AS batches, sum(num_input_rows) AS records, percentile(e2e_p50,0.5) AS p50_ms_median_batch, max(e2e_p50) AS p50_ms_worst_batch, percentile(e2e_p99,0.5) AS p99_ms_median_batch, max(e2e_p99) AS p99_ms_worst_batch, round(avg(processed_rps),1) AS processed_rps_avg FROM <catalog>.pharma_twin.manufacturing_metrics WHERE mode='realtime' AND timestamp BETWEEN '2026-11-20T19:30:00Z' AND '2026-11-20T20:49:28Z'
+   {'batches': '9', 'p50_ms_median_batch': '7.0', 'p50_ms_worst_batch': '103635.0', 'p99_ms_median_batch': '124253.0', 'p99_ms_worst_batch': '496148.0', 'processed_rps_avg': '433.4', 'records': '2121825'}
+$ SQL: SELECT batch_id, timestamp, num_input_rows, e2e_p50, e2e_p99, queuing_p99, round(processed_rps,1) AS processed_rps FROM <catalog>.pharma_twin.manufacturing_metrics WHERE mode='realtime' AND timestamp BETWEEN '2026-11-20T19:30:00Z' AND '2026-11-20T20:49:28Z' ORDER BY timestamp
+   {'batch_id': '41', 'e2e_p50': '7.0', 'e2e_p99': '13.0', 'num_input_rows': '146775', 'processed_rps': '450.2', 'queuing_p99': '13.0', 'timestamp': '2026-11-20T19:32:38.926Z'}
+   {'batch_id': '42', 'e2e_p50': '7.0', 'e2e_p99': '22891.0', 'num_input_rows': '159144', 'processed_rps': '461.1', 'queuing_p99': '23039.0', 'timestamp': '2026-11-20T19:38:24.260Z'}
+   {'batch_id': '43', 'e2e_p50': '7.0', 'e2e_p99': '41906.0', 'num_input_rows': '168492', 'processed_rps': '442.1', 'queuing_p99': '41916.0', 'timestamp': '2026-11-20T19:44:45.113Z'}
+   {'batch_id': '44', 'e2e_p50': '7.0', 'e2e_p99': '77455.0', 'num_input_rows': '186048', 'processed_rps': '434.3', 'queuing_p99': '77454.0', 'timestamp': '2026-11-20T19:51:53.428Z'}
+   {'batch_id': '45', 'e2e_p50': '7.0', 'e2e_p99': '124253.0', 'num_input_rows': '209059', 'processed_rps': '399.0', 'queuing_p99': '124343.0', 'timestamp': '2026-11-20T20:00:37.399Z'}
+   {'batch_id': '46', 'e2e_p50': '8.0', 'e2e_p99': '218894.0', 'num_input_rows': '255681', 'processed_rps': '460.1', 'queuing_p99': '218851.0', 'timestamp': '2026-11-20T20:09:53.182Z'}
+   {'batch_id': '47', 'e2e_p50': '9.0', 'e2e_p99': '250348.0', 'num_input_rows': '271263', 'processed_rps': '397.7', 'queuing_p99': '250462.0', 'timestamp': '2026-11-20T20:21:15.193Z'}
+   {'batch_id': '48', 'e2e_p50': '42571.0', 'e2e_p99': '375373.0', 'num_input_rows': '332880', 'processed_rps': '413.9', 'queuing_p99': '375329.0', 'timestamp': '2026-11-20T20:34:39.411Z'}
+   {'batch_id': '49', 'e2e_p50': '103635.0', 'e2e_p99': '496148.0', 'num_input_rows': '392483', 'processed_rps': '441.9', 'queuing_p99': '496283.0', 'timestamp': '2026-11-20T20:49:27.706Z'}
+
+## Reading
+## - Window C: 41 batches, 5,953,735 records; every batch p50 7 ms; p99 median 13 ms, worst batch 29 ms (16:11). Sustained figure at 500 Hz.
+## - Window D: from 19:32 the consumer processed ~400-460 rows/s against ~488 produced, so the backlog and queuing grew batch
+##   by batch (p99 22.9 s at 19:38 to 496 s at 20:49; p50 left 7 ms only at 20:34). processing_p99 stayed 1 ms: the
+##   time is spent waiting, not computing. It began ~30 min BEFORE the first redeploy of this session (~20:00), so app
+##   restarts are not the cause; the pipeline branch's compute also restarted around 21:00 (pg_stat counters reset,
+##   'Couldn't connect to compute node'). Root cause is open: Lakebase write throughput falls under sustained load.
