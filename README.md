@@ -53,6 +53,21 @@ has the glossary (IQ/OQ/PQ, DHR, NCR, CAPA, UDI, QMSR / ISO 13485, Part 11), the
 device mapping and how each concept maps to app features. It is a demo, not a validated system or
 a QMS of record.
 
+### Outcome views
+
+The cell page has two tabs next to the live cell, one per owner:
+
+- **Executive · Alex Morgan, VP Quality & Site Head**: cost avoided to date, annual exposure and
+  exposure remaining (priced as if the lot were scrapped), lots protected vs quarantined, and an
+  editable assumptions panel that shows the formula.
+- **Operations · Shreya, Head of Manufacturing Ops**: time-to-detect and time-to-acknowledge
+  distributions, NCRs and CMM inspections triggered, projected right-first-time, MTTR and the
+  recent excursions.
+
+Both are per-pipeline (`GET /api/value/summary`, `GET /api/ops/summary`).
+[docs/value-model.md](docs/value-model.md) has the formulas, the definitions (onset,
+time-to-detect, caught in time), where each default comes from, and the limitations.
+
 ## Pipeline flavors
 
 | Flavor | Path | Latency profile |
@@ -201,6 +216,7 @@ run locally through `pre-commit`.
 | [docs/deployment.md](docs/deployment.md) | Bundle deploys, variables, binding, prerequisites, troubleshooting |
 | [docs/genie.md](docs/genie.md) | Shared copilot space, per-pipeline Genie spaces, permissions, API |
 | [docs/domain-medtech.md](docs/domain-medtech.md) | Medical-device glossary (IQ/OQ/PQ, DHR, NCR, CAPA, UDI, QMSR, Part 11) and how each maps to the app |
+| [docs/value-model.md](docs/value-model.md) | Executive and operations views: savings formulas, definitions (onset, TTD, caught in time), assumption sources, limitations |
 | [docs/api.md](docs/api.md) | API routes by router; live OpenAPI at `/docs` and `/openapi.json` |
 | [ops/README.md](ops/README.md) | Pipeline health-check notebook (read-only, inline report) |
 | [usecases/README.md](usecases/README.md) | Medical-device KPI notebook: right-first-time process health, downtime and alarms, sensor health, throughput |
