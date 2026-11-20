@@ -28,14 +28,15 @@ Query parameters, both routes: `industry` (required, a curated industry id), `pi
 e.g. `capture_rate=0.9&cost_per_lot_lost=60000`. Unknown parameters are rejected.
 
 Responses use the envelope `{"success", "data", "error", "meta"}`. `meta` carries the
-pipeline, the window bounds, `data_available` (false when the app backend is not connected)
+pipeline, the window bounds, `data_available` (false when the app backend is not connected),
+`episodes_total`, `truncated`, `recent_shown` / `samples_shown`, `alias_since`
 and, on a 422, `details: [{field, message}]` for every invalid input. A failed query is a 503
 with a generic message; details are logged server-side only. Identity is enforced the same way
 as the alert routes these read from (`require_identity`).
 
 A bound **realtime** deployment also reads alerts stamped `industry:<industry>`, because the
 industry-first realtime consumer posts readings with that pipeline id rather than the
-deployment id.
+deployment id. It reads only excursions opened since the deployment's `created_at`.
 
 ## Definitions
 
@@ -53,10 +54,11 @@ the event copy first and the row for the current episode. They apply the same bo
 back to **`opened_at − rule.duration_s`** (shown as "est.") when the stamp is missing or out of
 bounds. This is the onset the live cell uses for its containment window.
 
-**Containment window.** Onset → `cleared_at`, or the `request_cmm_inspection` decision if that
-came first (it stops the mill, so no more parts are cut), or the window end while the excursion
-is still open and the mill still running. The parts cut in it are the **parts at risk** (`lot_disposition` in
-`domain/lot_context.py`).
+**Containment window.** The canonical window that the signed quarantine and NCR records use
+(`alert_responses._excursion`): onset → `cleared_at`, or "now" while the excursion is still open.
+An excursion left open is counted for at most `max_open_excursion_s` (24 h) after it opened. The
+recent-events table calls that function directly. The SQL totals use the same arithmetic, and a
+parity test checks each SQL row against the function.
 
 **Time to detect (TTD).** `opened_at − onset`: pipeline latency plus the rule's sustain
 duration. This is the number the three pipeline flavors compete on.
@@ -67,28 +69,35 @@ decision) minus `opened_at`. Signing a decision implies the alert was seen.
 **Time to disposition.** The first **containment** decision (`quarantine_lot` or
 `request_cmm_inspection`, or the legacy `hold_batch` / `send_to_inspect`) minus `opened_at`.
 
-**Release deadline.** The end of the lot cycle the onset part belongs to. That is when the lot
-leaves the mill for CMM and clean / pack, i.e. when the first out-of-limit part would move on.
-The demo has no MES, so lots follow the deterministic lot clock (`LOT_CYCLE_S` = 300 s,
-15 parts a lot).
+**Release deadline.** `max(end of the onset part's lot cycle, opened_at + grace)`. The lot
+cycle end is when the lot leaves the mill for CMM and clean / pack. The grace
+(`caught_in_time_grace_s`, 120 s, set in `value_defaults.json` under `definitions`) covers an
+onset near the end of a cycle: the lot can move on before the alert even opens, and the operator
+still gets the grace period to contain. Because the demo has no MES, lots follow the
+deterministic lot clock (`LOT_CYCLE_S` = 300 s, 15 parts a lot). The outcome therefore depends
+on *where in the cycle* an excursion starts. The views report how many excursions had their lot
+move on before the alert (`deadline_before_alert`).
 
 **Caught in time.** A containment decision was signed **no later than the release deadline**.
-The out-of-limit parts never left the cell unheld, so only the parts at risk go to CMM and
-the rest of the lot is released. An excursion contained after the deadline is "late"; one with
-no containment decision is "not contained". Neither counts as caught.
+An excursion contained after the deadline is "late"; one with no containment decision is "not
+contained". Neither counts as caught.
 
 **Lots protected.** Distinct lots touched by caught-in-time excursions. **Lots quarantined**
-counts distinct lots touched by excursions with a `quarantine_lot` decision; its parts split into
-parts held (at risk) and parts released.
+counts distinct lots touched by excursions with a `quarantine_lot` decision; their parts split
+into parts held (at risk) and parts released. Lots and parts are **deduplicated across
+excursions** by part slot (`floor(epoch / 20 s)`, the same arithmetic as
+`lot_context.parts_in_window`), so a lot touched twice counts once.
 
 **NCRs / CMM inspections triggered.** Excursions with an `open_ncr` / `request_cmm_inspection`
-decision. **Cell stops** count `production_event` rows with `state = 'stopped'` linked to the
-pipeline's alerts.
+decision. **Cell stops** count `production_event` rows with `state = 'stopped'` that belong to an
+excursion in the window: same alert, created between its opening and the end of its containment
+window.
 
 **Projected right-first-time.** The app's single first-pass-yield proxy, defined once in
 `domain/lot_context.py` (`projected_rft`) and `client/src/lib/manufacturing-quality.ts`:
-`(parts started − parts at risk) / parts started` over the lots an excursion touched. The
-window figure sums parts started and parts at risk over its excursions. It is *projected*
+`(parts started − parts at risk) / parts started` over the lots an excursion touched. For a
+window, the lots and parts at risk are deduplicated across its excursions, and parts started are
+counted per distinct lot up to the window end. It is *projected*
 because no CMM results exist yet. The A×P×Q figure is the **process health index (telemetry
 approximation)**, not FPY.
 
@@ -111,11 +120,12 @@ exposure_remaining = annual_exposure − cost_avoided
                    = missed_events × loss_per_event + caught_events × inspection_cost
 ```
 
-Actuals over the window:
+Actuals over the window use the same `loss_per_event`, including any release-delay cost, so the
+to-date and annual figures are comparable:
 
 ```
-cost_avoided_to_date = caught_in_time × (cost_per_lot_lost − inspection_cost)
-exposure_if_scrapped = not_caught_in_time × cost_per_lot_lost
+cost_avoided_to_date = caught_in_time × (loss_per_event − inspection_cost)
+exposure_if_scrapped = not_caught_in_time × loss_per_event
 ```
 
 Every response also returns the formula with the numbers substituted, and a per-event
@@ -153,5 +163,13 @@ always sums to the cost used.
 * **TTD depends on onset quality.** With a device-time onset, TTD includes the pipeline's
   delivery latency and the rule's sustain time. Excursions with a rule-duration onset (marked
   "est.") show only the configured debounce.
-* **Window caps.** At most 500 excursions are read per request; TTD/TTA samples are capped at 200.
+* **Sampling.** Every total (counts, caught in time, lots, parts, cost, and the
+  TTD/TTA/disposition/MTTR statistics) is computed in SQL over the whole window. Only the
+  distribution histograms (latest 200 excursions) and the recent table (latest 20) are limited.
+  `meta.truncated` and `meta.episodes_total` say when that happens, and the operations view shows
+  a banner.
+* **Phase dependence.** Caught in time depends on where in the 300 s lot cycle the excursion
+  starts; see *Release deadline*.
+* **Realtime alias.** Alerts stamped `industry:<industry>` are counted for a realtime deployment
+  only from that deployment's `created_at`.
 * **No persistence of overrides.** Edited assumptions live in the browser session only.
