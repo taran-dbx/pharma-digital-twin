@@ -15,6 +15,7 @@ from iot_twin.services.alerts.alert_engine import engine_for, evaluate_and_emit
 from iot_twin.services.alerts.alert_history import alert_episodes
 from iot_twin.services.alerts.alert_responses import (
     RESPONSE_STATIONS,
+    ResponseStoreUnavailable,
     ResponseValidationError,
     parse_audit,
     response_event,
@@ -138,7 +139,10 @@ async def list_alert_responses(
     alert = await engine_for(state).get_alert(alert_id, db=db)
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")
-    responses = await response_store_for(state).list_for(alert, db=db)
+    try:
+        responses = await response_store_for(state).list_for(alert, db=db)
+    except ResponseStoreUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {
         "alert_id": alert.id,
         "episode_opened_at": alert.opened_at.isoformat() if alert.opened_at else None,
@@ -165,16 +169,19 @@ async def record_alert_response(
             detail=f"action must be one of: {', '.join(RESPONSE_STATIONS)}",
         )
     try:
-        audit = parse_audit(body)
+        audit = parse_audit(body, action)
     except ResponseValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     db = _backend_db(state)
     alert = await engine_for(state).get_alert(alert_id, db=db)
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")
-    response, created = await response_store_for(state).record(
-        alert, action, recorded_by=user_email, db=db, audit=audit
-    )
+    try:
+        response, created = await response_store_for(state).record(
+            alert, action, recorded_by=user_email, db=db, audit=audit
+        )
+    except ResponseStoreUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     payload = response_event(alert, response)
     events = [payload] if created else []
     result: dict[str, Any] = {**payload, "created": created}

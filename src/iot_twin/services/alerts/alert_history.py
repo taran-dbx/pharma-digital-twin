@@ -40,7 +40,9 @@ FROM alert WHERE id = ANY($1::uuid[])
 """
 
 _DECISIONS_SQL = """
-SELECT r.alert_id, r.episode_opened_at, r.action, r.recorded_by, r.created_at,
+SELECT r.alert_id, r.episode_opened_at,
+       COALESCE(r.reference->'audit'->>'action', r.action) AS action,
+       r.recorded_by, r.created_at,
        COALESCE(to_jsonb(r)->>'reason', r.reference->'audit'->>'reason') AS reason,
        COALESCE(to_jsonb(r)->>'signature_meaning', r.reference->'audit'->>'signature_meaning')
            AS signature_meaning

@@ -573,11 +573,13 @@ export interface AlertResponseRecord {
     dhr_refs?: string[];
     ncr_id?: string;
     disposition?: string;
+    projected_rft?: { pct: number; good: number; parts_started: number; parts_at_risk: number } | null;
   };
   created_at: string;
   reason?: string | null;
   comment?: string | null;
-  signature_meaning?: SignatureMeaning | null;
+  /** `legacy-unsigned` for legacy actions posted without signing fields. */
+  signature_meaning?: SignatureMeaning | "legacy-unsigned" | null;
   signed_at?: string | null;
   /** Printed signature: "<signer> · <meaning> · <signed at>". */
   signature?: string | null;
@@ -621,7 +623,7 @@ export interface AlertEpisodeDecision {
   recorded_by: string;
   created_at: string;
   reason?: string | null;
-  signature_meaning?: SignatureMeaning | null;
+  signature_meaning?: SignatureMeaning | "legacy-unsigned" | null;
 }
 
 /** One open → cleared run of an alert rule, rebuilt from the event log. */

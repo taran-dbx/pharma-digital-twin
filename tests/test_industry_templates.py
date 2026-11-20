@@ -30,7 +30,7 @@ def test_manufacturing_kpis_have_no_invented_values_c7230_defect():
     assert [k["k"] for k in template.kpis] == [
         "Spindle 3 temperature",
         "Parts at risk",
-        "First-pass yield",
+        "Projected RFT",
         "Time to detect",
         "NCRs opened",
         "Last device event",

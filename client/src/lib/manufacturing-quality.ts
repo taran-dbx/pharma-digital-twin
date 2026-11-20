@@ -8,7 +8,14 @@
  * NCRs opened, right-first-time, MTTR.
  */
 import type { SensorHistoryPoint } from "@/contexts/sensor-context";
-import { LOT_REFERENCE, PARTS_PER_LOT, lotDisposition, type LotDisposition } from "@/lib/manufacturing-lot";
+import {
+  LOT_REFERENCE,
+  PARTS_PER_LOT,
+  PART_CYCLE_S,
+  lotDisposition,
+  lotStartAt,
+  type LotDisposition,
+} from "@/lib/manufacturing-lot";
 import type { CellDecisions } from "@/lib/manufacturing-story";
 import type { AlertEpisode, AlertRecord } from "@/lib/types";
 import { toEpochSeconds } from "@/lib/utils";
@@ -16,38 +23,84 @@ import { toEpochSeconds } from "@/lib/utils";
 /** How far before the alert opened to look for the first reading over the limit. */
 const DETECT_LOOKBACK_S = 120;
 
+/** Alert metadata key: first over-limit reading the alert engine saw (ISO time). */
+export const EXCURSION_STARTED_KEY = "excursion_started_at";
+
+/**
+ * The app's single first-pass-yield proxy. Mirrors `PROJECTED_RFT_DEFINITION`
+ * in `src/iot_twin/domain/lot_context.py`; Genie and the docs use the same words.
+ */
+export const PROJECTED_RFT_LABEL = "Projected right-first-time";
+export const PROJECTED_RFT_DEFINITION =
+  "Projected right-first-time = (parts started - parts at risk) / parts started, over the lots an excursion " +
+  "touched. Parts at risk are the parts whose cut overlapped the time Spindle 3 was outside its validated limit. " +
+  "Projected: no CMM results exist yet.";
+
 export interface ExcursionWindow {
   start: number;
   end: number;
   open: boolean;
 }
 
-export function excursionWindow(alert: AlertRecord | null, now: number): ExcursionWindow | null {
+/**
+ * When Spindle 3 left its validated limit: the first over-limit reading the
+ * alert engine saw, else the first one in the live readings, else
+ * `opened_at - duration_s`. Containment errs inclusive (never after opening).
+ */
+export function excursionStart(
+  alert: AlertRecord,
+  options: { history?: SensorHistoryPoint[]; threshold?: number; durationS?: number } = {},
+): number {
+  const opened = toEpochSeconds(alert.opened_at);
+  const stamped = toEpochSeconds(alert.metadata?.[EXCURSION_STARTED_KEY]);
+  if (Number.isFinite(stamped)) return Math.min(opened, stamped);
+  const { history = [], threshold, durationS = 0 } = options;
+  if (threshold !== undefined) {
+    const first = history.find((p) => {
+      const t = p.t / 1000;
+      return p.v > threshold && t >= opened - DETECT_LOOKBACK_S && t <= opened;
+    });
+    if (first) return Math.min(opened, first.t / 1000);
+  }
+  return opened - durationS;
+}
+
+export function excursionWindow(
+  alert: AlertRecord | null,
+  now: number,
+  options: { history?: SensorHistoryPoint[]; threshold?: number; durationS?: number } = {},
+): ExcursionWindow | null {
   if (!alert?.opened_at) return null;
-  const start = toEpochSeconds(alert.opened_at);
+  const opened = toEpochSeconds(alert.opened_at);
+  if (!Number.isFinite(opened)) return null;
+  const start = excursionStart(alert, options);
   const end = alert.cleared_at ? toEpochSeconds(alert.cleared_at) : now;
-  if (!Number.isFinite(start)) return null;
   return { start, end: Math.max(start, end), open: !alert.cleared_at };
 }
 
 /** The parts cut while Spindle 3 was outside its validated limit. */
-export function episodeDisposition(alert: AlertRecord | null, now: number): LotDisposition | null {
-  const window = excursionWindow(alert, now);
+export function episodeDisposition(window: ExcursionWindow | null): LotDisposition | null {
   return window ? lotDisposition(window.start, window.end) : null;
 }
 
-export interface RightFirstTime {
+export interface ProjectedRft {
   pct: number;
   good: number;
-  total: number;
+  partsStarted: number;
+  partsAtRisk: number;
 }
 
-/** Right-first-time over the lot(s) the excursion touched. */
-export function rightFirstTime(disposition: LotDisposition | null): RightFirstTime | null {
-  if (!disposition || disposition.lotIds.length === 0) return null;
-  const total = disposition.lotIds.length * PARTS_PER_LOT;
-  const good = total - disposition.partsAtRisk.length;
-  return { pct: (good / total) * 100, good, total };
+/** `PROJECTED_RFT_DEFINITION`, computed; null without an excursion. */
+export function projectedRightFirstTime(disposition: LotDisposition | null, now: number): ProjectedRft | null {
+  if (!disposition || disposition.partsAtRisk.length === 0) return null;
+  const lotStarts = [...new Set(disposition.partsAtRisk.map((p) => lotStartAt(p.cutStart)))];
+  let started = 0;
+  for (const lotStart of lotStarts) {
+    if (now >= lotStart) started += Math.min(PARTS_PER_LOT, Math.floor((now - lotStart) / PART_CYCLE_S) + 1);
+  }
+  started = Math.max(started, disposition.partsAtRisk.length);
+  const good = started - disposition.partsAtRisk.length;
+  return { pct: (good / started) * 100, good, partsStarted: started, partsAtRisk: disposition.partsAtRisk.length };
 }
 
 /** Reference cost of poor quality if the parts at risk are scrapped. */
@@ -55,22 +108,19 @@ export function costOfPoorQualityUsd(disposition: LotDisposition | null): number
   return disposition ? disposition.partsAtRisk.length * LOT_REFERENCE.unitCostUsd : null;
 }
 
-/**
- * Seconds from the first reading over the limit to the alert opening, using
- * the live readings the dashboard received. Undefined when they are not in view.
- */
+/** Seconds from the first over-limit reading to the alert opening, when that reading is known. */
 export function timeToDetectSeconds(
   alert: AlertRecord | null,
   history: SensorHistoryPoint[],
   threshold: number | undefined,
 ): number | undefined {
-  if (!alert?.opened_at || threshold === undefined) return undefined;
+  if (!alert?.opened_at) return undefined;
   const opened = toEpochSeconds(alert.opened_at);
-  const first = history.find((p) => {
-    const t = p.t / 1000;
-    return p.v > threshold && t >= opened - DETECT_LOOKBACK_S && t <= opened;
-  });
-  return first ? Math.max(0, opened - first.t / 1000) : undefined;
+  const stamped = toEpochSeconds(alert.metadata?.[EXCURSION_STARTED_KEY]);
+  if (Number.isFinite(stamped)) return Math.max(0, opened - stamped);
+  if (threshold === undefined) return undefined;
+  const start = excursionStart(alert, { history, threshold, durationS: Number.NaN });
+  return Number.isFinite(start) ? Math.max(0, opened - start) : undefined;
 }
 
 function episodeKey(alertId: string, openedAt: string): string {

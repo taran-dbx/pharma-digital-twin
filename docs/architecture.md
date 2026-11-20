@@ -172,9 +172,17 @@ The legacy `hold_batch` and `send_to_inspect` values stay accepted for older cli
 rows. Each row also keeps Part 11-style audit fields: `recorded_by` (actor), `created_at`,
 `reason`, `comment`, `signature_meaning` (`authored`, `reviewed`, `approved` or `responsible`) and
 `signed_at`. `ensure_alert_response_table` migrates existing databases idempotently: it recreates
-the `action` CHECK constraint inside a `DO` block only when it lacks the new values, and adds the
-audit columns only when they are missing, so a table owned by another role does not hit the
-"must be owner" error. See [domain-medtech.md](domain-medtech.md) for the glossary. A background loop
+the `action` CHECK constraint inside a `DO` block only when it lacks the new values, adds the
+audit columns only when they are missing, and turns a cascading `alert_id` foreign key into
+`ON DELETE RESTRICT`, so a table owned by another role does not hit the "must be owner" error.
+With the app backend configured, a decision is persisted or refused with `503`; it is never kept
+only in memory (details in [domain-medtech.md](domain-medtech.md#data-model-notes)).
+
+API change: `POST /api/alerts/{id}/responses` now takes `reason` (required, ≤ 280 chars),
+`signature_meaning` (`authored`, `reviewed`, `approved`, `responsible`) and an optional `comment`
+(≤ 1000 chars); a missing or invalid field is `422`. For backward compatibility a legacy action
+(`hold_batch`, `send_to_inspect`) posted without any signing field is accepted and recorded with
+`signature_meaning = "legacy-unsigned"`. See [domain-medtech.md](domain-medtech.md) for the glossary. A background loop
 (`alert_snapshot_sync.py`, default every 60 s, `ALERT_SNAPSHOT_SYNC_INTERVAL_S`) copies the
 current alerts to the `intelligence_alert_snapshot` table in Unity Catalog.
 

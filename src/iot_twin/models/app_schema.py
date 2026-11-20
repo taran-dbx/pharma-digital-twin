@@ -156,6 +156,7 @@ ALL_ALERT_RESPONSE_ACTIONS: tuple[str, ...] = (
     *LEGACY_ALERT_RESPONSE_ACTIONS,
 )
 ALERT_RESPONSE_ACTION_CHECK = "alert_response_action_check"
+ALERT_RESPONSE_ALERT_FK = "alert_response_alert_id_fkey"
 _ACTION_LIST_SQL = ", ".join(f"'{action}'" for action in ALL_ALERT_RESPONSE_ACTIONS)
 
 # Part 11-style audit fields; actor and timestamp are recorded_by / created_at.
@@ -170,7 +171,7 @@ ALERT_RESPONSE_DDL = f"""
 CREATE TABLE IF NOT EXISTS alert_response (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     alert_id UUID NOT NULL
-        REFERENCES alert(id) ON DELETE CASCADE,
+        CONSTRAINT {ALERT_RESPONSE_ALERT_FK} REFERENCES alert(id) ON DELETE RESTRICT,
     episode_opened_at TIMESTAMPTZ NOT NULL,
     action TEXT NOT NULL
         CONSTRAINT {ALERT_RESPONSE_ACTION_CHECK} CHECK (action IN ({_ACTION_LIST_SQL})),
@@ -230,6 +231,30 @@ BEGIN
 END
 $$
 """
+
+# Signed decisions must outlive their alert row: an alert delete is refused
+# instead of cascading. Rebuilt only while the FK still cascades.
+ALERT_RESPONSE_FK_MIGRATION = f"""
+DO $$
+DECLARE
+    fk_name TEXT;
+BEGIN
+    SELECT conname INTO fk_name
+    FROM pg_constraint
+    WHERE conrelid = 'alert_response'::regclass
+      AND contype = 'f'
+      AND confrelid = 'alert'::regclass
+      AND confdeltype = 'c'
+    LIMIT 1;
+    IF fk_name IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE alert_response DROP CONSTRAINT %I', fk_name);
+        ALTER TABLE alert_response ADD CONSTRAINT {ALERT_RESPONSE_ALERT_FK}
+            FOREIGN KEY (alert_id) REFERENCES alert(id) ON DELETE RESTRICT;
+    END IF;
+END
+$$
+"""
+
 
 PRODUCTION_STATE_DDL = """
 CREATE TABLE IF NOT EXISTS production_state (
@@ -355,6 +380,7 @@ async def ensure_alert_response_table(db: _Executor) -> None:
     for step, sql in (
         ("audit columns", ALERT_RESPONSE_AUDIT_MIGRATION),
         ("action check", ALERT_RESPONSE_ACTION_MIGRATION),
+        ("delete rule", ALERT_RESPONSE_FK_MIGRATION),
     ):
         try:
             await db.execute(sql)
