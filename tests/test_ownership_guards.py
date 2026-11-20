@@ -1005,7 +1005,27 @@ def _request(headers: dict) -> SimpleNamespace:
     return SimpleNamespace(headers=headers, state=SimpleNamespace())
 
 
-def test_caller_email_never_trusts_an_unverified_jwt() -> None:
+APP_SP_CLIENT_ID = "app-sp-client"
+
+
+@pytest.fixture()
+def app_runtime_env(monkeypatch):
+    """Env as inside a Databricks App: the SP's OAuth credentials are ALWAYS set.
+
+    Uses the real SDK ``Config`` (offline: host metadata lookup disabled), so the
+    auth-method selection that broke in the live app is exercised for real.
+    """
+    from databricks.sdk.config import Config
+
+    monkeypatch.setenv("DATABRICKS_HOST", "https://example.cloud.databricks.com")
+    monkeypatch.setenv("DATABRICKS_CLIENT_ID", APP_SP_CLIENT_ID)
+    monkeypatch.setenv("DATABRICKS_CLIENT_SECRET", fake_credential("app-sp"))
+    for var in ("DATABRICKS_TOKEN", "DATABRICKS_CONFIG_PROFILE", "DATABRICKS_AUTH_TYPE"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(Config, "_resolve_host_metadata", lambda self: None)
+
+
+def test_caller_email_never_trusts_an_unverified_jwt(app_runtime_env) -> None:
     import base64
     import json
 
@@ -1014,17 +1034,14 @@ def test_caller_email_never_trusts_an_unverified_jwt() -> None:
     claims = base64.urlsafe_b64encode(json.dumps({"email": "admin@example.com"}).encode())
     forged = "x." + claims.decode().rstrip("=") + ".sig"
     req = _request({"x-forwarded-access-token": forged, "x-forwarded-email": "admin@example.com"})
-    with (
-        patch("databricks.sdk.WorkspaceClient") as ws,
-        patch("databricks.sdk.config.Config"),
-    ):
+    with patch("databricks.sdk.WorkspaceClient") as ws:
         ws.return_value.current_user.me.side_effect = RuntimeError("invalid token")
         assert ap._caller_email(req) is None
         assert ap._user_groups(req) == set()
     assert ws.call_count == 1  # one verified lookup per request, cached
 
 
-def test_caller_email_and_groups_come_from_verified_me() -> None:
+def test_caller_email_and_groups_come_from_verified_me(app_runtime_env) -> None:
     from iot_twin.services import app_permissions as ap
 
     me = SimpleNamespace(user_name="real@example.com", groups=[SimpleNamespace(display="g1")])
@@ -1034,11 +1051,99 @@ def test_caller_email_and_groups_come_from_verified_me() -> None:
             "x-forwarded-email": "spoof@example.com",
         }
     )
-    with (
-        patch("databricks.sdk.WorkspaceClient") as ws,
-        patch("databricks.sdk.config.Config"),
-    ):
+    with patch("databricks.sdk.WorkspaceClient") as ws:
         ws.return_value.current_user.me.return_value = me
         assert ap._caller_email(req) == "real@example.com"
         assert ap._user_groups(req) == {"g1"}
     assert ws.call_count == 1
+
+
+# --- verified identity inside the app runtime (live-deploy regression) ---------------------
+class _RecordingClient:
+    """Fake WorkspaceClient that records the auth header its config would send."""
+
+    seen: list[dict] = []
+
+    def __init__(self, *, config) -> None:
+        _RecordingClient.seen.append(
+            {"auth_type": config.auth_type, "headers": config.authenticate()}
+        )
+        self.current_user = SimpleNamespace(me=_RecordingClient.me)
+
+    me = staticmethod(lambda: SimpleNamespace(user_name="admin@example.com", groups=[]))
+
+
+@pytest.fixture()
+def recording_client(monkeypatch):
+    import databricks.sdk as sdk
+
+    _RecordingClient.seen = []
+    _RecordingClient.me = staticmethod(
+        lambda: SimpleNamespace(
+            user_name="admin@example.com", groups=[SimpleNamespace(display="g")]
+        )
+    )
+    monkeypatch.setattr(sdk, "WorkspaceClient", _RecordingClient)
+    return _RecordingClient
+
+
+def test_verification_client_uses_only_the_forwarded_token(app_runtime_env, recording_client):
+    """The SP's OAuth env must neither break verification nor be used for it."""
+    from iot_twin.services import app_permissions as ap
+
+    caller = fake_credential("caller")
+    req = _request({"x-forwarded-access-token": caller})
+    assert ap._caller_email(req) == "admin@example.com"
+    assert ap._user_groups(req) == {"g"}
+    assert recording_client.seen == [
+        {"auth_type": "pat", "headers": {"Authorization": f"Bearer {caller}"}}
+    ]
+
+
+def test_identity_resolving_to_the_app_sp_is_denied(app_runtime_env, recording_client):
+    from iot_twin.services import app_permissions as ap
+
+    recording_client.me = staticmethod(
+        lambda: SimpleNamespace(user_name=APP_SP_CLIENT_ID, groups=[SimpleNamespace(display="g")])
+    )
+    req = _request({"x-forwarded-access-token": fake_credential("caller")})
+    assert ap._caller_email(req) is None
+    assert ap._user_groups(req) == set()
+
+
+def test_header_mismatch_is_denied(app_runtime_env, monkeypatch, recording_client):
+    """If the client would send anything but the forwarded token, verification fails closed."""
+    from databricks.sdk.config import Config
+
+    from iot_twin.services import app_permissions as ap
+
+    monkeypatch.setattr(Config, "authenticate", lambda self: {"Authorization": "Bearer sp-token"})
+    req = _request({"x-forwarded-access-token": fake_credential("caller")})
+    assert ap._caller_email(req) is None
+    assert recording_client.seen == []  # no client was built, no API call made
+
+
+@pytest.mark.parametrize("token", ["", None])
+def test_missing_token_never_falls_back_to_the_app_sp(app_runtime_env, recording_client, token):
+    from iot_twin.services import app_permissions as ap
+
+    headers = {} if token is None else {"x-forwarded-access-token": token}
+    req = _request(headers)
+    assert ap._user_groups(req) == set()
+    assert recording_client.seen == []
+
+
+def test_admin_group_member_is_admin_inside_the_app(app_runtime_env, recording_client, monkeypatch):
+    """End to end through is_admin: an ADMIN_GROUP member is admin despite the SP env."""
+    from iot_twin.services import app_permissions as ap
+
+    monkeypatch.setenv("ADMIN_GROUP", "pharma-twin-admins")
+    monkeypatch.delenv("ADMIN_EMAILS", raising=False)
+    monkeypatch.setattr(ap, "_is_app_owner", lambda _r: False)
+    recording_client.me = staticmethod(
+        lambda: SimpleNamespace(
+            user_name="member@example.com", groups=[SimpleNamespace(display="pharma-twin-admins")]
+        )
+    )
+    req = _request({"x-forwarded-access-token": fake_credential("caller")})
+    assert ap.is_admin(req) is True

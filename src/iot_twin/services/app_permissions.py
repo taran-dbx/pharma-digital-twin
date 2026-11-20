@@ -62,6 +62,38 @@ def _forwarded_token(request: Any) -> str | None:
 _ME_CACHE_ATTR = "_pharma_twin_verified_me"
 
 
+class CallerVerificationError(RuntimeError):
+    """The forwarded token could not be verified as the caller's own identity."""
+
+
+def _me_for_forwarded_token(token: str) -> Any:
+    """Return ``current_user.me()`` authenticated ONLY with the caller's forwarded token.
+
+    ``auth_type="pat"`` is required: inside a Databricks App the SP's
+    ``DATABRICKS_CLIENT_ID`` / ``DATABRICKS_CLIENT_SECRET`` are always set too,
+    and without an explicit preference the SDK refuses two methods ("more than one
+    authorization method configured"). Two more checks make sure a failure denies
+    instead of resolving to the app's own identity:
+
+    - the header the client will send must be exactly ``Bearer <forwarded token>``;
+    - the returned identity must not be the app service principal itself.
+
+    Raises :class:`CallerVerificationError` (or the SDK's error) on any mismatch.
+    """
+    from databricks.sdk import WorkspaceClient
+    from databricks.sdk.config import Config
+
+    host = (os.getenv("DATABRICKS_HOST") or "").strip() or None
+    config = Config(host=host, token=token, auth_type="pat")
+    if config.authenticate().get("Authorization") != f"Bearer {token}":
+        raise CallerVerificationError("client is not authenticated with the forwarded token")
+    me = WorkspaceClient(config=config).current_user.me()
+    app_sp = (os.getenv("DATABRICKS_CLIENT_ID") or "").strip()
+    if app_sp and getattr(me, "user_name", None) == app_sp:
+        raise CallerVerificationError("forwarded token resolved to the app service principal")
+    return me
+
+
 def _verified_me(request: Any) -> Any | None:
     """Return ``current_user.me()`` for the caller's OWN forwarded token, or ``None``.
 
@@ -78,11 +110,7 @@ def _verified_me(request: Any) -> Any | None:
     me: Any = None
     if token:
         try:
-            from databricks.sdk import WorkspaceClient
-            from databricks.sdk.config import Config
-
-            host = (os.getenv("DATABRICKS_HOST") or "").strip() or None
-            me = WorkspaceClient(config=Config(host=host, token=token)).current_user.me()
+            me = _me_for_forwarded_token(token)
         except Exception as exc:
             logger.warning("Failed to verify caller identity (treating as unknown): %s", exc)
             me = None
