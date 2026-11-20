@@ -118,7 +118,7 @@ markers = [
 # Lenient baseline: start with core/ and models/ (src/iot_twin/), widen as types land.
 [tool.mypy]
 python_version = "3.11"
-files = ["src/iot_twin/core", "src/iot_twin/models"]
+files = ["src/iot_twin/core", "src/iot_twin/models", "src/iot_twin/ml", "src/iot_twin/services/ml"]
 ignore_missing_imports = true
 follow_imports = "silent"
 warn_unused_configs = true
