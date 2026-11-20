@@ -116,3 +116,37 @@ class TestVerifiedCallerInsideTheApp:
         )
         assert ap._caller_email(request) == "admin@example.com"
         assert seen["auth_type"] == "pat"
+
+    def test_verified_non_admin_is_denied_inside_the_app(self, monkeypatch) -> None:
+        """A verified caller outside ADMIN_EMAILS, the admin group and app ownership is denied."""
+        from types import SimpleNamespace
+
+        import databricks.sdk as sdk
+        from databricks.sdk.config import Config
+
+        from iot_twin.services import app_permissions as ap
+        from tests._fakes import fake_credential
+
+        monkeypatch.setenv("DATABRICKS_HOST", "https://example.cloud.databricks.com")
+        monkeypatch.setenv("DATABRICKS_CLIENT_ID", "app-sp-client")
+        monkeypatch.setenv("DATABRICKS_CLIENT_SECRET", fake_credential("app-sp"))
+        monkeypatch.setenv("ADMIN_GROUP", "pharma-twin-admins")
+        monkeypatch.setenv("ADMIN_EMAILS", "someone-else@example.com")
+        monkeypatch.setattr(Config, "_resolve_host_metadata", lambda self: None)
+        groups = [SimpleNamespace(display="users"), SimpleNamespace(display="pharma-twin-viewers")]
+
+        class FakeClient:
+            def __init__(self, *, config=None) -> None:
+                self.current_user = SimpleNamespace(
+                    me=lambda: SimpleNamespace(user_name="viewer@example.com", groups=groups)
+                )
+                self.apps = SimpleNamespace(
+                    get=lambda name: SimpleNamespace(creator="owner@example.com")
+                )
+
+        monkeypatch.setattr(sdk, "WorkspaceClient", FakeClient)
+        request = SimpleNamespace(
+            headers={"x-forwarded-access-token": fake_credential("viewer")}, state=SimpleNamespace()
+        )
+        assert ap._caller_email(request) == "viewer@example.com"  # the identity did verify
+        assert ap.is_admin(request) is False
