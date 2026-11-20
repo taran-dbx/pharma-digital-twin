@@ -13,7 +13,7 @@ from the risk-model pull request are in [`ml/`](ml/README.md).
 `mode: development`, URL `https://pharma-twin-dev-<workspace-id>.aws.databricksapps.com`) with its
 **own** service principal (`02ab07ab-…`), separate from the upstream apps and their principals.
 Code: `deploy/integration` with `feat/isolation-prefix` @571cce0, `feat/medtech-domain` @0cabab1,
-`feat/value-views` @5cf9843, `feat/risk-model` @922d0c0 and `feat/grounded-action-plan` @12c452a
+`feat/value-views` @5cf9843, `feat/risk-model` @922d0c0 (later @7a90b0a, see `17`) and `feat/grounded-action-plan` @12c452a
 merged. Pipeline: industry `manufacturing` (Trinity Medical implant cell), mode `realtime` (Kafka
 on MSK -> Spark Real-Time Mode -> Lakebase LakeTS ChronoTable -> Lakehouse Sync CDF -> Unity
 Catalog). The risk model is UC model `spindle_thermal_risk` v4, served by the bundle's dev endpoint
@@ -46,6 +46,7 @@ Files `01`-`12` were captured between 14:30 and 16:30 UTC (isolation + medtech c
 | `/api/ops/summary` returns real data, recaptured likewise; one percentile defect noted | [`14_ops_summary.json.txt`](2026-11-20/14_ops_summary.json.txt) |
 | A grounded AI action plan for a real Spindle 3 alert: grounding check, Lakebase audit row, UC mirror row, and Genie answering "which rows did the AI use?" | [`15_genai_action_plan.txt`](2026-11-20/15_genai_action_plan.txt) |
 | A predicted (model) alert appears and clears; its lead time measured honestly | [`16_predicted_alert.txt`](2026-11-20/16_predicted_alert.txt) |
+| Post-redeploy check after merging `feat/risk-model` @7a90b0a (head 64bd902, deployed 22:10:04 UTC): health ok, a predicted alert scored with model version 4 | [`17_post_redeploy_check.txt`](2026-11-20/17_post_redeploy_check.txt) |
 | Medical-device KPI notebook on live data: EXECUTIVE, OPERATIONS, MODEL RISK SCORE, AI ACTION PLANS | [`usecases/medtech/medtech_kpis.ipynb`](../../usecases/medtech/medtech_kpis.ipynb) |
 
 ### Measured latency (from `<catalog>.pharma_twin.manufacturing_metrics`, mode `realtime`)
