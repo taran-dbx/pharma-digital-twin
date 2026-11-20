@@ -21,7 +21,7 @@ dependencies = [
     "pydantic==2.13.4",
     "httpx==0.28.1",
     "requests==2.34.2",
-    "asyncpg==0.31.0",
+    "asyncpg==0.32.0",
     "psycopg2-binary==2.9.11",
     "databricks-sdk==0.133.0",
     "databricks-zerobus-ingest-sdk==0.2.0",
