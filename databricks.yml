@@ -52,6 +52,9 @@ variables:
   admin_group:
     description: Workspace group whose members are app admins.
     default: iot-admins
+  genai_endpoint:
+    description: "Foundation Model serving endpoint for the AI action plan (granted CAN_QUERY, injected as GENAI_ENDPOINT). Any READY chat endpoint works, e.g. databricks-claude-haiku-5-5 or databricks-meta-llama-3-3-70b-instruct."
+    default: databricks-claude-sonnet-5-5
   usage_tracking_enabled:
     description: Usage tracking via dbdemos-tracker ("false" to opt out).
     default: "true"

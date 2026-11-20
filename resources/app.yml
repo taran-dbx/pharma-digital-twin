@@ -44,6 +44,8 @@ resources:
             value: ${var.admin_group}
           - name: GENIE_SPACE_ID
             value_from: genie-space
+          - name: GENAI_ENDPOINT
+            value_from: genai-endpoint
           - name: USAGE_TRACKING_ENABLED
             value: ${var.usage_tracking_enabled}
       resources:
@@ -56,6 +58,10 @@ resources:
             name: iot-genie
             space_id: ${var.genie_space_id}
             permission: CAN_VIEW
+        - name: genai-endpoint
+          serving_endpoint:
+            name: ${var.genai_endpoint}
+            permission: CAN_QUERY
         - name: lakebase
           postgres:
             branch: projects/${var.lakebase_project}/branches/${var.lakebase_branch}

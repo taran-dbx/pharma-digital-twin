@@ -37,7 +37,9 @@ if set(get_args(ResponseAction)) != set(ALERT_RESPONSE_ACTIONS):  # pragma: no c
     raise RuntimeError("ResponseAction must list exactly ALERT_RESPONSE_ACTIONS")
 
 MAX_TEXT = 1200
-MAX_CITATIONS = 20
+MAX_CITATIONS = 120
+MAX_LOTS = 100
+MAX_SERIALS = 1500
 Citations = list[str]
 
 
@@ -51,15 +53,15 @@ class Claim(_Model):
 
 
 class Quarantine(_Model):
-    lots: list[str] = Field(default_factory=list, max_length=20)
-    serials: list[str] = Field(default_factory=list, max_length=200)
+    lots: list[str] = Field(default_factory=list, max_length=MAX_LOTS)
+    serials: list[str] = Field(default_factory=list, max_length=MAX_SERIALS)
     rationale: str = Field(min_length=1, max_length=MAX_TEXT)
     citations: Citations = Field(min_length=1, max_length=MAX_CITATIONS)
 
 
 class CmmInspection(_Model):
     scope: str = Field(min_length=1, max_length=MAX_TEXT)
-    serials: list[str] = Field(default_factory=list, max_length=200)
+    serials: list[str] = Field(default_factory=list, max_length=MAX_SERIALS)
     citations: Citations = Field(min_length=1, max_length=MAX_CITATIONS)
 
 

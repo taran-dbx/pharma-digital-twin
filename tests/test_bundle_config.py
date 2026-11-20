@@ -88,3 +88,16 @@ def test_deployment_doc_lists_exactly_the_required_variables() -> None:
     assert documented == required, (
         f"missing from docs: {required - documented}; stale in docs: {documented - required}"
     )
+
+
+def test_genai_endpoint_is_a_can_query_resource_injected_as_env() -> None:
+    data = yaml.safe_load((ROOT / "resources" / "app.yml").read_text(encoding="utf-8"))
+    app = data["resources"]["apps"]["iot_twin"]
+    resource = next(r for r in app["resources"] if r["name"] == "genai-endpoint")
+    assert resource["serving_endpoint"] == {
+        "name": "${var.genai_endpoint}",
+        "permission": "CAN_QUERY",
+    }
+    env = {e["name"]: e for e in app["config"]["env"]}
+    assert env["GENAI_ENDPOINT"] == {"name": "GENAI_ENDPOINT", "value_from": "genai-endpoint"}
+    assert _bundle_variables()["genai_endpoint"]["default"] == "databricks-claude-sonnet-5-5"
