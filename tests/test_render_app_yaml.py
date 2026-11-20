@@ -339,7 +339,11 @@ def test_bundle_env_matches_app_yaml() -> None:
         "UC_STORAGE_BASE",
         "UC_EXTERNAL_LOCATION",
     }
-    assert bundle - {"ADMIN_EMAILS"} == app_yaml - {"ADMIN_EMAILS"} - empty_only, (
+    # The thermal-risk scorer is wired only through the bundle: RISK_ENDPOINT_NAME
+    # comes from the bundle's serving-endpoint resource, which app.yaml deployments
+    # do not declare. Without it the scorer is off (docs/ml-risk-model.md).
+    bundle_only = {"RISK_ENDPOINT_NAME", "RISK_MODEL_NAME", "RISK_ALERT_THRESHOLD"}
+    assert bundle - {"ADMIN_EMAILS"} - bundle_only == app_yaml - {"ADMIN_EMAILS"} - empty_only, (
         f"drift: only in bundle={bundle - app_yaml}, only in app.yaml={app_yaml - bundle}"
     )
 
