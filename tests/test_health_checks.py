@@ -906,3 +906,51 @@ class TestRunApiHealthChecks:
         monkeypatch.setattr(hc.pipeline_setup_repo, "get_setup", fake_get_setup)
         with pytest.raises(ValueError):
             await hc.run_api_health_checks(MagicMock(), "nope", ws=MagicMock())
+
+
+@pytest.mark.asyncio
+class TestCdfSyncStall:
+    """[C9501] A STREAMING-but-stuck Lakehouse Sync is a FAIL, not "idle" [regression]."""
+
+    @staticmethod
+    def _row(write_age_s, hot_age_s, lsn="0/100"):
+        return {
+            "table_name": "lakets_cdf._shadow_manufacturing_sensor_readings",
+            "status": "STREAMING",
+            "committed_lsn": lsn,
+            "write_age_s": write_age_s,
+            "hot_age_s": hot_age_s,
+        }
+
+    async def _check(self, row):
+        return await hc.check_cdf_sync(
+            _cdf_conn([[dict(row)], [dict(row)]]),
+            shadow="_shadow_manufacturing_sensor_readings",
+            sleeper=AsyncMock(),
+        )
+
+    async def test_stall_fails_while_rows_keep_landing_c9501_regression(self):
+        # Stall 1 (2026-11-20): 146 min without a write, rows 1 s old.
+        res = await self._check(self._row(8_760.0, 1.0))
+        assert res["status"] == hc.FAIL
+        assert "STALLED" in res["detail"] and "146 min" in res["detail"]
+        assert "do not drop the slot" in res["detail"]
+
+    async def test_idle_pipeline_is_not_a_stall_c9502_regression(self):
+        # No rows for 20 min (pipeline stopped): the sync has nothing to write.
+        res = await self._check(self._row(1_200.0, 1_200.0))
+        assert res["status"] == hc.PASS
+        res = await self._check(self._row(1_200.0, None))  # no row in the last 15 min
+        assert res["status"] == hc.PASS
+
+    async def test_short_gap_between_commits_is_healthy_c9503_smoke(self):
+        # Normal: a commit every ~15 s; a 3 s check window may see no LSN change.
+        res = await self._check(self._row(12.0, 0.5))
+        assert res["status"] == hc.PASS
+
+    async def test_advancing_lsn_is_never_a_stall_c9504_smoke(self):
+        snaps = [[self._row(9_000.0, 1.0, "0/100")], [self._row(9_000.0, 1.0, "0/200")]]
+        res = await hc.check_cdf_sync(
+            _cdf_conn(snaps), shadow="_shadow_manufacturing_sensor_readings", sleeper=AsyncMock()
+        )
+        assert res["status"] == hc.PASS

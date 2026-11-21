@@ -23,14 +23,16 @@ rest of the admin surface).  Additive — this router is registered in
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from iot_twin.core.state import AppState, get_app_state
-from iot_twin.services import app_permissions, cdf_reconciliation_service
+from iot_twin.services import app_permissions, cdf_history_compaction, cdf_reconciliation_service
 from iot_twin.services.deployment import deployment_repo, deployment_service
 from iot_twin.services.genie import genie_provisioning
+from iot_twin.services.pipelines import pipeline_setup_repo
 
 logger = logging.getLogger("pharma_twin.routes.pipeline_deploy")
 
@@ -173,6 +175,32 @@ async def reconcile_realtime_cdf_endpoint(
     try:
         return await cdf_reconciliation_service.reconcile_realtime_cdf(db, setup_id)
     except cdf_reconciliation_service.RealtimeCdfError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/api/admin/pipelines/{setup_id}/realtime/optimize-history")
+async def optimize_history_endpoint(
+    setup_id: str,
+    request: Request,
+    state: AppState = Depends(get_app_state),
+):
+    """Opt-in stall remediation: OPTIMIZE this deployment's Lakehouse Sync history table.
+
+    Disabled unless ``CDF_HISTORY_OPTIMIZE_ENABLED=true``; the table is derived from the
+    setup's curated industry and the configured ``pharma_twin*`` schema (see
+    ``cdf_history_compaction``). Runbook: ops/README.md, stuck Lakehouse Sync.
+    """
+    _require_admin(request)
+    db = _require_db(state)
+    setup = await pipeline_setup_repo.get_setup(db, setup_id)
+    if setup is None:
+        raise HTTPException(status_code=404, detail="pipeline setup not found")
+    warehouse_id = setup.get("warehouse_id") or os.getenv("DATABRICKS_SQL_WAREHOUSE_ID", "")
+    try:
+        return await cdf_history_compaction.optimize_history_table(
+            setup.get("industry") or "", warehouse_id
+        )
+    except cdf_history_compaction.CompactionRefused as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 

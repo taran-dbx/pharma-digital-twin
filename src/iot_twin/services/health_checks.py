@@ -462,12 +462,36 @@ async def check_chronotable(conn: Any, *, table: str = CHRONOTABLE) -> dict:
 # ---------------------------------------------------------------------------
 # wal2delta.tables identifies each synced table by its Postgres OID (table_oid),
 # not a name column — join pg_class/pg_namespace to recover the schema.table name.
+# A STREAMING shadow whose writer has not written for STALL_WRITE_AGE_S while rows keep
+# landing in the hot tier is a stuck Lakehouse Sync (2026-11-20/21: three stalls of 10-354
+# min with status STREAMING throughout; docs/evidence/2026-11-21). An idle sync (no new
+# rows) is still a PASS.
+STALL_WRITE_AGE_S = 600
+HOT_TIER_FRESH_S = 120
 _WAL2DELTA_SQL = (
-    "SELECT (n.nspname || '.' || c.relname) AS table_name, t.status, t.committed_lsn "
+    "SELECT (n.nspname || '.' || c.relname) AS table_name, t.status, t.committed_lsn, "
+    "extract(epoch FROM now() - t.last_write_time) AS write_age_s, "
+    "(SELECT extract(epoch FROM now() - max(s.event_time)) FROM public.sensor_readings s "
+    " WHERE s.event_time > now() - interval '15 minutes') AS hot_age_s "
     "FROM wal2delta.tables t "
     "JOIN pg_class c ON c.oid = t.table_oid "
     "JOIN pg_namespace n ON n.oid = c.relnamespace"
 )
+
+
+def _stalled_detail(qualified: str, snap: tuple) -> str | None:
+    """Detail text when a STREAMING shadow is stuck (writer silent, rows still landing)."""
+    write_age, hot_age = (float(v) if v is not None else None for v in snap[2:4])
+    if write_age is None or hot_age is None:
+        return None
+    if write_age <= STALL_WRITE_AGE_S or hot_age >= HOT_TIER_FRESH_S:
+        return None
+    return (
+        f"{qualified} Lakehouse Sync STALLED: status STREAMING but no write for "
+        f"{write_age / 60:.0f} min while rows keep landing (newest {hot_age:.0f}s old). "
+        "WAL piles up behind the slot. Follow the stuck-sync runbook (ops/README.md); "
+        "do not drop the slot"
+    )
 
 
 def _shadow_match(table_name: Any, shadow: str, qualified: str) -> bool:
@@ -492,7 +516,12 @@ async def check_cdf_sync(
     async def _snap() -> dict[str, tuple[Any, Any]]:
         rows = await conn.fetch(_WAL2DELTA_SQL)
         return {
-            str(r.get("table_name")): (r.get("status"), r.get("committed_lsn"))
+            str(r.get("table_name")): (
+                r.get("status"),
+                r.get("committed_lsn"),
+                r.get("write_age_s"),
+                r.get("hot_age_s"),
+            )
             for r in (rows or [])
             if _shadow_match(r.get("table_name"), shadow, qualified)
         }
@@ -507,9 +536,9 @@ async def check_cdf_sync(
                 FAIL,
                 f"{qualified} not found in wal2delta.tables — enable managed Lakebase CDF sync",
             )
-        streaming = [t for t, (s, _) in second.items() if str(s).upper() == "STREAMING"]
+        streaming = [t for t, (s, *_rest) in second.items() if str(s).upper() == "STREAMING"]
         if not streaming:
-            statuses = {t: s for t, (s, _) in second.items()}
+            statuses = {t: s for t, (s, *_rest) in second.items()}
             return _result(
                 CDF_SYNC_CHECK,
                 FAIL,
@@ -521,6 +550,10 @@ async def check_cdf_sync(
         # sync (no realtime traffic during the check window) is still a PASS — we
         # note whether it advanced rather than failing on an idle sync.
         advanced = [t for t in streaming if first.get(t, (None, None))[1] != second[t][1]]
+        if not advanced:
+            stalled = _stalled_detail(qualified, second[streaming[0]])
+            if stalled:
+                return _result(CDF_SYNC_CHECK, FAIL, stalled)
         note = (
             "STREAMING + advancing" if advanced else "STREAMING (idle — no new writes during check)"
         )
