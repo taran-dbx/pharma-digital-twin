@@ -87,11 +87,16 @@ def _spindle_samples(ns: dict, ticks: int) -> list[float]:
     return values
 
 
-def _cycle_start(ns: dict, s: dict, kind: str, precursor: str | None = None) -> int:
+def _cycle_start(
+    ns: dict, s: dict, kind: str, precursor: str | None = None, quiet_next: bool = False
+) -> int:
     """Start of the first cycle from 1_800_000_000 whose shared plan matches."""
     first = 1_800_000_000 // s["cycleSeconds"]
     for index in range(first, first + 500):
         plan = ns["spindle_cycle_plan"](index)
+        upcoming = ns["spindle_cycle_plan"](index + 1)
+        if quiet_next and upcoming.precursor != "none":
+            continue
         if plan.kind == kind and (precursor is None or plan.precursor == precursor):
             return index * s["cycleSeconds"]
     raise AssertionError(f"no {kind}/{precursor} cycle found")
@@ -126,7 +131,8 @@ class TestProducerSignal:
         """[C7322][smoke] The scheduled event crosses the limit and returns to normal."""
         ns, s = _namespace("manufacturing")
         threshold, hysteresis = _spindle_limit()
-        cycle_start = _cycle_start(ns, s, "excursion")
+        cycle_start = _cycle_start(ns, s, "excursion", precursor="none")
+        ramp = ns["spindle_cycle_plan"](cycle_start // s["cycleSeconds"]).ramp_start_s
 
         def at(offset: float, value: float = 45.0) -> dict:
             payload = {
@@ -147,13 +153,13 @@ class TestProducerSignal:
             "phase": "normal",
         }
 
-        overheat_start = s["normalSeconds"] + s["rampSeconds"]
+        overheat_start = ramp + s["rampSeconds"]
         overheat = at(overheat_start + 1)
         assert overheat["metadata"]["phase"] == "overheat"
         assert overheat["fault_active"] is True
         assert overheat["value"] - 3 * 2.0 > threshold
 
-        cooled = at(s["cycleSeconds"] - 1)
+        cooled = at(ramp + s["rampSeconds"] + s["holdSeconds"] + s["coolSeconds"] - 1)
         assert cooled["metadata"]["phase"] == "cooling"
         assert cooled["value"] < threshold - hysteresis
 
@@ -165,7 +171,7 @@ class TestProducerSignal:
         payload = {
             "sensor_name": "cnc_1_vibration",
             "value": 2.0,
-            "timestamp": float(_cycle_start(ns, s, "quiet") + s["normalSeconds"] + 40),
+            "timestamp": float(_cycle_start(ns, s, "quiet", quiet_next=True) + 250),
         }
         out = ns["_apply_scenario"](dict(payload))
         assert out["value"] == 2.0
@@ -176,7 +182,8 @@ class TestProducerSignal:
         """[C7323][regression] A strong precursor lifts vibration and power before the ramp, unflagged."""
         ns, s = _namespace("manufacturing")
         start = _cycle_start(ns, s, "excursion", precursor="strong")
-        at = float(start + s["normalSeconds"] - 2)
+        ramp = ns["spindle_cycle_plan"](start // s["cycleSeconds"]).ramp_start_s
+        at = float(start + ramp - 2)
         vib = ns["_apply_scenario"](
             {"sensor_name": "cnc_1_vibration", "value": 2.0, "timestamp": at}
         )

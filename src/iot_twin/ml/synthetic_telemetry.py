@@ -31,7 +31,8 @@ from iot_twin.scenario_engine.engine import ScenarioEngine
 
 DATA_ORIGIN = "synthetic"
 
-# Mirrors SPINDLE_HEAT_SCENARIO in client/src/lib/manufacturing-scenario.ts.
+# The fixed schedule the producer ran before the jittered shared scenario
+# (scenario_engine/spindle_scenario.py); kept so v1-v4 training is reproducible.
 HEAT_CYCLE_S = 300
 HEAT_NORMAL_S = 210
 HEAT_RAMP_S = 30

@@ -1,4 +1,4 @@
-"""The shared, SIMULATED Spindle 3 scenario: randomness bounds, mix, embedding and TS parity."""
+"""The shared, SIMULATED Spindle 3 scenario: randomness bounds, mix, caps, embedding and TS parity."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from iot_twin.domain.catalog import list_alert_rules
 from iot_twin.ml.lead_metrics import breach_episodes
 from iot_twin.ml.live_format_telemetry import live_format_readings
 from iot_twin.ml.spindle_features import SpindleSeries
@@ -24,6 +25,8 @@ ESBUILD = CLIENT / "node_modules" / ".bin" / "esbuild"
 WHEEL = ROOT / "lib" / "iot_data_simulator-0.1.0-py3-none-any.whl"
 FIRST = 1_796_000_000 // sc.SPINDLE_CYCLE_S
 PLANS = [sc.spindle_cycle_plan(i) for i in range(FIRST, FIRST + 20_000)]
+# Simulator temperature: nominal 45 °C, drift up to ±5 %, noise sigma 2 °C.
+TEMP_4_SIGMA_MAX = 45.0 * 1.05 + 4 * 2.0
 
 needs_node = pytest.mark.skipif(
     shutil.which("node") is None or not ESBUILD.exists(),
@@ -33,6 +36,10 @@ needs_node = pytest.mark.skipif(
 
 def _share(predicate) -> float:
     return sum(1 for plan in PLANS if predicate(plan)) / len(PLANS)
+
+
+def _rule(rule_id: str):
+    return next(r for r in list_alert_rules("manufacturing") if r.rule_id == rule_id)
 
 
 class TestCyclePlan:
@@ -61,6 +68,18 @@ class TestCyclePlan:
         assert fades == pytest.approx(0.60, abs=0.03)
         assert {p.precursor for p in alarms} == {"fade", "bump"}
 
+    def test_ramp_start_is_jittered_across_the_cycle(self) -> None:
+        starts = [p.ramp_start_s for p in PLANS]
+        assert min(starts) >= 30.0 and max(starts) <= 210.0
+        assert statistics.pstdev(starts) > 45.0  # ~52 s for U(30, 210): no fixed phase
+        thirds = [sum(1 for s in starts if lo <= s < lo + 60) / len(starts) for lo in (30, 90, 150)]
+        assert all(share == pytest.approx(1 / 3, abs=0.02) for share in thirds)
+        assert all(
+            p.ramp_start_s + sc.SPINDLE_EPISODE_S <= sc.SPINDLE_CYCLE_S
+            for p in PLANS
+            if p.kind == "excursion"
+        )
+
     def test_randomised_lead_amplitude_and_peak_stay_in_bounds(self) -> None:
         leads = [p.lead_s for p in PLANS]
         assert min(leads) >= 30.0 and max(leads) <= 180.0
@@ -71,16 +90,22 @@ class TestCyclePlan:
         for plan in PLANS:
             assert 0.0 <= plan.vibration_rise <= sc.SPINDLE_VIBRATION_RISE * 1.4 + 1e-9
             assert 0.0 <= plan.power_rise <= sc.SPINDLE_POWER_RISE * 1.4 + 1e-9
-            assert plan.gamma * 2 >= 1.0 and plan.gamma <= 2.0
+            assert 0.5 <= plan.gamma <= 2.0
         strong = [p.vibration_rise for p in PLANS if p.precursor == "strong"]
         weak = [p.vibration_rise for p in PLANS if p.precursor == "weak"]
         assert statistics.mean(strong) > 2 * statistics.mean(weak)
         assert all(p.vibration_rise == 0.0 for p in PLANS if p.precursor == "none")
 
+    def test_precursor_never_overlaps_the_previous_cycles_episode(self) -> None:
+        for prev, plan in zip(PLANS, PLANS[1:], strict=False):
+            start = plan.index * 300 + plan.ramp_start_s - plan.lead_s
+            prev_end = prev.index * 300 + sc._episode_end_s(prev.index)
+            assert start >= prev_end - 1e-6
+
     def test_only_excursion_cycles_heat_up(self) -> None:
         for plan in PLANS[:400]:
             phases = {
-                sc.spindle_heat_phase(plan.index * 300 + t, plan)[0] for t in range(0, 300, 5)
+                sc.spindle_heat_phase(plan.index * 300 + t, plan)[0] for t in range(0, 300, 2)
             }
             if plan.kind == "excursion":
                 assert phases == {"normal", "heating", "overheat", "cooling"}
@@ -88,13 +113,55 @@ class TestCyclePlan:
                 assert phases == {"normal"}
 
     def test_precursor_envelope_starts_lead_s_before_the_ramp(self) -> None:
-        plan = next(p for p in PLANS if p.precursor == "strong")
-        base = plan.index * sc.SPINDLE_CYCLE_S
-        start = sc.SPINDLE_NORMAL_S - plan.lead_s
-        assert sc.spindle_precursor_level(base + start - 1, plan) == 0.0
-        assert sc.spindle_precursor_level(base + sc.SPINDLE_NORMAL_S - 1, plan) > 0.3
+        plan = next(p for p in PLANS if p.precursor == "strong" and p.ramp_start_s > 190)
+        ramp = plan.index * sc.SPINDLE_CYCLE_S + plan.ramp_start_s
+        assert sc.spindle_precursor_level(ramp - plan.lead_s - 1) == 0.0
+        assert sc.spindle_precursor_level(ramp - 1) > 0.3
         for t in range(300):
-            assert 0.0 <= sc.spindle_precursor_level(base + t, plan) <= 1.5
+            assert 0.0 <= sc.spindle_precursor_level(plan.index * 300 + t) <= sc.SPINDLE_WOBBLE_MAX
+
+    def test_an_early_ramp_takes_its_precursor_from_the_previous_cycle(self) -> None:
+        plan = next(
+            p
+            for p in PLANS
+            if p.precursor == "strong" and p.ramp_start_s < 60 and p.lead_s > p.ramp_start_s + 10
+        )
+        assert sc.spindle_precursor_level(plan.index * 300 - 5.0) > 0.0
+
+
+class TestCaps:
+    def test_vibration_precursor_stays_below_the_vibration_alert(self) -> None:
+        rule = _rule("mfg-alert-vibration")
+        assert rule.threshold > sc.SPINDLE_VIBRATION_CEILING
+        rng = random.Random(7)
+        strongest = sorted(PLANS, key=lambda p: -p.vibration_rise)[:20]
+        peak = 0.0
+        for plan in strongest:
+            for tenth in range(0, 3000):
+                at = plan.index * 300 + tenth / 10
+                payload = {
+                    "sensor_name": sc.SPINDLE_VIBRATION_SENSOR,
+                    "value": 3.5,
+                    "timestamp": at,
+                }
+                peak = max(peak, sc.apply_spindle_scenario(payload, rng)["value"])
+        assert peak <= sc.SPINDLE_VIBRATION_CEILING < rule.threshold
+        # Analytic: a 6-sigma simulator reading (2.1 + 6 * 0.25) plus the capped offset.
+        assert rule.threshold > 2.0 * 1.05 + 6 * 0.25 + sc.SPINDLE_VIBRATION_PRECURSOR_MAX
+
+    def test_false_alarm_cycles_stay_clearly_under_the_thermal_limit(self) -> None:
+        limit = _rule("mfg-alert-spindle-temp").threshold
+        alarms = [p for p in PLANS if p.kind != "excursion"]
+        worst = max(sc.spindle_max_temp_offset(p) for p in alarms)
+        assert TEMP_4_SIGMA_MAX + worst < limit - 1.0
+        for plan in alarms[:200]:
+            nxt = sc.spindle_cycle_plan(plan.index + 1)
+            bound = max(sc.spindle_max_temp_offset(plan), nxt.temp_creep_c + nxt.bump_c)
+            for t in range(0, 300, 3):
+                offset, *_ = sc.spindle_offsets(
+                    sc.SPINDLE_TEMP_SENSOR, plan.index * 300 + t, random.Random(0)
+                )
+                assert offset <= bound + 1e-9
 
 
 class TestApplyScenario:
@@ -110,7 +177,8 @@ class TestApplyScenario:
 
     def test_returns_a_new_payload_and_keeps_existing_metadata(self) -> None:
         plan = next(p for p in PLANS if p.kind == "excursion")
-        payload = self._payload(sc.SPINDLE_TEMP_SENSOR, 45.0, plan.index * 300 + 240.0)
+        at = plan.index * 300 + plan.ramp_start_s + 40.0
+        payload = self._payload(sc.SPINDLE_TEMP_SENSOR, 45.0, at)
         out = sc.apply_spindle_scenario(payload, random.Random(1))
         assert payload["value"] == 45.0 and "phase" not in payload["metadata"]
         assert out["metadata"] == {
@@ -123,7 +191,7 @@ class TestApplyScenario:
 
     def test_precursor_noise_comes_from_the_callers_rng(self) -> None:
         plan = next(p for p in PLANS if p.precursor == "strong")
-        at = plan.index * 300 + sc.SPINDLE_NORMAL_S - 5.0
+        at = plan.index * 300 + plan.ramp_start_s - 5.0
         payload = self._payload(sc.SPINDLE_VIBRATION_SENSOR, 2.0, at)
         a = sc.apply_spindle_scenario(payload, random.Random(1))["value"]
         b = sc.apply_spindle_scenario(payload, random.Random(1))["value"]
@@ -138,7 +206,7 @@ class TestApplyScenario:
 
 @pytest.mark.skipif(not WHEEL.exists(), reason="simulator wheel unavailable")
 class TestLiveFormatEpisodes:
-    def test_breaches_only_happen_in_excursion_cycles(self) -> None:
+    def test_breaches_only_in_excursion_cycles_and_vibration_never_alerts(self) -> None:
         if str(WHEEL) not in sys.path:
             sys.path.insert(0, str(WHEEL))
         start = FIRST * 300.0
@@ -151,6 +219,10 @@ class TestLiveFormatEpisodes:
         )
         assert set(kinds) == {"excursion"}
         assert len(breaches) == expected  # one breach per excursion, none from noise
+        vibration = [
+            r["value"] for r in readings if r["sensor_name"] == sc.SPINDLE_VIBRATION_SENSOR
+        ]
+        assert max(vibration) < _rule("mfg-alert-vibration").threshold
 
 
 class TestEmbedding:
@@ -184,18 +256,22 @@ class TestDashboardParity:
         out = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
         return json.loads(out.stdout)
 
-    def test_ts_port_agrees_with_python_on_which_cycles_have_an_excursion(self) -> None:
+    def test_ts_port_agrees_with_python_on_excursions_and_ramp_starts(self) -> None:
         indices = list(range(FIRST, FIRST + 3000))
         ts = self._ts(f"{json.dumps(indices)}.map((i) => m.spindleCycleHasExcursion(i))")
         assert ts == [sc.spindle_cycle_kind(i) == "excursion" for i in indices]
-        draws = self._ts(f"{json.dumps(indices[:50])}.map((i) => m.spindleCycleDraw(i))")
-        assert draws == pytest.approx([sc.spindle_cycle_draws(i, 1)[0] for i in indices[:50]])
+        starts = self._ts(f"{json.dumps(indices[:200])}.map((i) => m.spindleRampStart(i))")
+        assert starts == pytest.approx([sc.spindle_ramp_start(i) for i in indices[:200]])
+        assert [sc.spindle_ramp_start(i) for i in indices[:200]] == [
+            sc.spindle_cycle_plan(i).ramp_start_s for i in indices[:200]
+        ]
 
-    def test_countdown_points_at_the_next_excursion(self) -> None:
+    def test_countdown_points_at_the_next_excursion_ramp(self) -> None:
         constants = self._ts("m.SPINDLE_HEAT_SCENARIO")
         assert constants["planSeed"] == sc.SPINDLE_PLAN_SEED
         assert constants["excursionShare"] == sc.SPINDLE_EXCURSION_SHARE
         assert constants["cycleSeconds"] == sc.SPINDLE_CYCLE_S
+        assert constants["rampStartRangeSeconds"] == list(sc.SPINDLE_RAMP_START_RANGE_S)
         quiet = next(p.index for p in PLANS if p.kind != "excursion")
         at = quiet * 300 + 250
         state = self._ts(f"m.spindleHeatStateAt({at})")
@@ -203,4 +279,10 @@ class TestDashboardParity:
             i for i in range(quiet + 1, quiet + 64) if sc.spindle_cycle_kind(i) == "excursion"
         )
         assert state["phase"] == "normal"
-        assert state["secondsToNextEvent"] == nxt * 300 + sc.SPINDLE_NORMAL_S - at
+        assert state["secondsToNextEvent"] == pytest.approx(
+            nxt * 300 + sc.spindle_ramp_start(nxt) - at
+        )
+        hot = next(p for p in PLANS if p.kind == "excursion")
+        mid = hot.index * 300 + hot.ramp_start_s + 45
+        assert self._ts(f"m.spindleHeatStateAt({mid})")["phase"] == "overheat"
+        assert sc.spindle_heat_phase(mid, hot)[0] == "overheat"

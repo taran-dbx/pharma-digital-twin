@@ -270,8 +270,10 @@ class TestSynthetic:
         block = re.search(r"SPINDLE_HEAT_SCENARIO = \{(.*?)\}", text, re.S)
         assert block
         values = dict(re.findall(r"(\w+): ([\d.]+)", block.group(1)))
+        # The legacy 1 Hz generator (v1-v4) keeps the old fixed ramp at HEAT_NORMAL_S;
+        # the producer now jitters the ramp start within rampStartRangeSeconds.
         assert float(values["cycleSeconds"]) == st.HEAT_CYCLE_S
-        assert float(values["normalSeconds"]) == st.HEAT_NORMAL_S
+        assert st.HEAT_NORMAL_S == 210
         assert float(values["rampSeconds"]) == st.HEAT_RAMP_S
         assert float(values["holdSeconds"]) == st.HEAT_HOLD_S
         assert float(values["peakDeltaC"]) == st.HEAT_PEAK_DELTA_C
