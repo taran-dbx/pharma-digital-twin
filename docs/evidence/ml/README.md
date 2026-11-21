@@ -1,55 +1,53 @@
 # Thermal-risk model: evidence
 
-## 2026-11-21: fresh-data retrain on the jittered scenario (v7 champion)
+## 2026-11-21: pooled, CI-based gate; v7 champion
 
 These files are redacted: `<workspace-host>`, `<user>`, `<catalog>`. The scenario
-physics is **SIMULATED** (`src/iot_twin/scenario_engine/spindle_scenario.py`; see
-[../../ml-risk-model.md](../../ml-risk-model.md#the-simulated-spindle-3-scenario-one-generator-for-live-and-training)).
-The ramp start is jittered 30–210 s into each 300 s cycle. The training data is
-`data_origin=live_format_simulated`: the live producer's code path, run offline on a
-virtual clock at 25 Hz.
+physics is **SIMULATED** (`src/iot_twin/scenario_engine/spindle_scenario.py`), and
+the ramp start is jittered 30–210 s into each 300 s cycle. All data is
+`data_origin=live_format_simulated`: the live producer's code path, run offline at
+25 Hz.
 
-**Fresh data, used for no earlier selection:**
+**The result to quote** (rules frozen before this run; seeds used by no earlier
+selection):
 
 | File | What it shows |
 | --- | --- |
-| `training_run_v7.json` | The gated run that registered **v7**: seed 11, 36 × 1 h runs from epoch 1,800,000,000. Per version (4, 6, 7, all on the same validation and test rows): qualification metrics (steady-running floor, duty-matched and any-duty clock, cycle-permutation p, discrimination), problems and `qualifies`; then the decision (`champion_version_before: 6`, `champion_version_after: 7`). The null counts are the run artifact `null_counts.json` |
-| `replay_fresh_v7_v6_v4_clock.json` | A 4 h replay (seed 9002, epoch 1,802,000,000; 48 cycles, 26 breaches) through the scorer's feature path. v7 and v6 were scored on the dev endpoint (v6 before the repoint) and v4 on `pharma-twin-spindle-risk`. The three clock baselines use the training job's validation-chosen windows. It holds per-breach leads, the per-plan cycle table, false alarms by plan, and the permutation and shift null counts |
-| `registered_model_v7.json` | Aliases (`champion` → 7) and versions 4–7 |
+| `training_run_v12.json` | The v12 run: training seed 101 (epochs from 1,832,000,000) and a fresh 12 h replay, seed 111 (epoch 1,836,000,000), on the scorer path. It pools 231 cycles with 166 breaches. For v4, v6, v7, v11 and v12 on the same cycles it holds: qualification metrics with bootstrap 95 % CIs (warned ≥ 30 s, false alarms per hour, plan-mix-standardised discrimination), cycle permutation, duty-matched and any-duty clocks, the calm-running floor, per-group cycle counts and problems. The decision is champion v7 kept, because v12's paired gain of +0.075 [−0.001, +0.149] is not significant. Cycle records and null counts are the run artifact `null_counts.json` |
+| `diagnosis_offline_vs_replay.json` | Why the 4 h endpoint replay showed about 2× the test false-alarm rate. The test path and the replay path agree. The gap is the clipped catalog maintenance age (a spurious feature dependence) plus an alarm-heavy sample. It also holds the v4/v7 false-alarm spot check |
+| `registered_model_current.json` | Aliases (`champion` → 7) and versions 4–12 |
 | `endpoint_dev_v7.json` | `dev_<user>_pharma-twin-spindle-risk`: `READY`, serving version 7 |
 
-**History (selection-contaminated, fixed-phase scenario; do not quote):**
+**History** (each run below changed a rule, so these results are selection-contaminated; do not quote them):
 
 | File | Status |
 | --- | --- |
-| `training_run_v5.json` | v5, **rolled back**: clear level 0.14, below steady-running scores. MLflow tags `superseded_by=6`, `status=rolled_back` |
-| `training_run_v6.json` | v6: the same booster as v5 with a corrected clear level. It was selected on this seed-7 test split, and it fails the steady-running floor on fresh data. MLflow tag `superseded_by=7` |
-| `replay_v4_vs_v6.json` | A seed-9001 replay of the fixed 210 s scenario. A sensor-blind clock warned 38 of 38 there, so its "beats chance" claim does not show precursor detection |
+| `training_run_v5.json`, `training_run_v6.json`, `replay_v4_vs_v6.json` | The fixed-phase scenario, where a clock warned 38 of 38. v5 was rolled back and v6 superseded |
+| `training_run_v7.json`, `replay_fresh_v7_v6_v4_clock.json` | Seed 11 and the 4 h endpoint replay (seed 9002); the gate was then test-only, with a 0.30 discrimination floor |
+| `training_run_v8.json` | `rejected`: average-precision early stopping stopped at 5 trees |
+| `training_run_v9.json` | `rejected`: the p95 clear margin gave a cut-off of 0.91 |
+| `training_run_v10.json` | `rejected` by the gate; the plan-free calm floor swung there |
+| `training_run_v11.json` | `promotion_reverted`: promoted over v7 by 0.003 before the paired rule |
 
-**How it was produced.**
+**How the final run was produced.**
 
 ```bash
 python scripts/submit_risk_model_training.py --profile <cli-profile> --catalog <catalog> \
   --schema pharma_twin --data-source live_format --promote if_better \
   --workspace-dir /Workspace/Users/<user>/pharma-twin-risk-model-live-lead \
   --experiment /Users/<user>/pharma-twin-risk-model/experiment \
-  --extra=--seed=11 --extra=--live-start-epoch=1800000000 --extra=--compare-versions=4,6
-python scripts/replay_risk_endpoint.py --profile <cli-profile> \
-  --endpoint dev_<user>_pharma-twin-spindle-risk --endpoint pharma-twin-spindle-risk \
-  --clock 140:90 --clock 120:100 --clock 0:230 --hours 4 --seed 9002 --start-epoch 1802000000
-databricks serving-endpoints update-config dev_<user>_pharma-twin-spindle-risk --json \
-  '{"served_entities":[{"entity_name":"<catalog>.pharma_twin.spindle_thermal_risk","entity_version":"7","workload_size":"Small","scale_to_zero_enabled":true}]}'
+  --extra=--seed=101 --extra=--live-start-epoch=1832000000 \
+  --extra=--compare-versions=4,6,7,11 --extra=--replay-hours=12 \
+  --extra=--replay-seed=111 --extra=--replay-start-epoch=1836000000
 ```
 
-**Why the endpoint was updated directly.** The dev endpoint was updated with
-`update-config` and the same entity config the bundle declares, not with
-`bundle deploy`. A `bundle deploy -t dev` from this branch plans updates to the app
-and the training job as well. It also re-syncs the bundle `files/` folder, which is
-the app's source path, and another session owns redeploying the app. The PR sets
-`risk_model_version` to `7`, so the next bundle deploy keeps the endpoint on v7.
+**How `champion` and the endpoint changed.** The registry and the dev endpoint were
+changed directly, by the gated runs and by hand (alias moves and tags). The dev
+endpoint was set with `serving-endpoints update-config` and the bundle's own entity
+config; `bundle deploy` would update the app and re-sync its source folder, which
+another session owns. The PR sets `risk_model_version=7`.
 
-**Not live.** When this was measured, the producer job's notebook still had the old
-ramp-only heat event (no `apply_spindle_scenario`).
+**Not live.** The producer job's notebook still had the old ramp-only heat event.
 
 ## 2026-11-20: v1–v4 (synthetic, 1 Hz)
 

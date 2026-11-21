@@ -1,0 +1,236 @@
+{
+  "question": "Why did the 4 h endpoint replay (seed 9002) show more false alarms than the seed-11 test split?",
+  "method": "Regenerate the seed-11 test runs (runs 27-35, epochs from 1,800,000,000) and score v7's logged booster three ways, then count false alarms and warned breaches per scenario plan group.",
+  "paths": {
+    "A_test_path": "training/test rows: feature_rows every 5 s, rows inside a breach dropped, each run's random maintenance age",
+    "B_replay_path_run_age": "replay_rows (the scorer's path: build_features on the last 120 s every 5 s, in-breach rows scored), each run's maintenance age",
+    "C_replay_path_catalog_age": "replay_rows with the catalog maintenance age, as the endpoint replay and the live scorer use (clipped to 3000 h at these epochs)"
+  },
+  "results_v7": {
+    "A_test_path": {
+      "false_alarms": 12,
+      "alert_episodes": 108,
+      "breaches": 76,
+      "warned_30s": {
+        "strong": "36/39",
+        "weak": "15/17",
+        "none": "0/14"
+      },
+      "false_alarm_cycles": {
+        "fade": "8/9",
+        "bump": "1/6",
+        "quiet": "0/14"
+      }
+    },
+    "B_replay_path_run_age": {
+      "false_alarms": 12,
+      "alert_episodes": 136,
+      "breaches": 76,
+      "warned_30s": {
+        "strong": "36/39",
+        "weak": "15/17",
+        "none": "0/14"
+      },
+      "false_alarm_cycles": {
+        "fade": "8/9",
+        "bump": "1/6",
+        "quiet": "0/14"
+      }
+    },
+    "C_replay_path_catalog_age": {
+      "false_alarms": 17,
+      "alert_episodes": 162,
+      "breaches": 76,
+      "warned_30s": {
+        "strong": "31/39",
+        "weak": "7/17",
+        "none": "0/14"
+      },
+      "false_alarm_cycles": {
+        "fade": "6/9",
+        "bump": "2/6",
+        "quiet": "0/14"
+      }
+    }
+  },
+  "finding": [
+    "A vs B: the feature window, 5 s cadence, hysteresis, buffer and sample rate agree; false alarms and warnings are identical. The replay has more alert EPISODES because it also scores rows inside a breach (the test path drops them), so an alert can clear and reopen during a breach or cool-down. Those episodes are not false alarms (they open inside a breach).",
+    "B vs C: the difference is hours_since_maintenance. Training drew it at random per run (0-3000 h) although the simulated producer has no wear, and the trees learned a spurious dependence. At the replay epochs the catalog age is clipped to 3000 h, the edge of that range: false alarms +42 %, weak-precursor warnings halve. That, plus an alarm-heavy 4 h sample (13 false-alarm cycles vs ~7 expected), explains the replay gap.",
+    "Fix: live-format training rows now pin hours_since_maintenance to 3000 h (a constant column is never split on, and older versions see the same value on test and replay); the gate pools the test split with a fresh 12 h replay on the scorer path."
+  ],
+  "spot_check_v4_vs_v7_test_false_alarms": {
+    "note": "Both have 12 false alarms on the seed-11 test runs, but at different times: a coincidence of counts on the same fade/bump cycles, not a shared scoring bug.",
+    "v4": [
+      {
+        "run": 27,
+        "s_into_cycle": 10,
+        "plan": "false_alarm",
+        "precursor": "fade",
+        "open_s": 80
+      },
+      {
+        "run": 27,
+        "s_into_cycle": 60,
+        "plan": "false_alarm",
+        "precursor": "fade",
+        "open_s": 135
+      },
+      {
+        "run": 28,
+        "s_into_cycle": 175,
+        "plan": "false_alarm",
+        "precursor": "fade",
+        "open_s": 25
+      },
+      {
+        "run": 28,
+        "s_into_cycle": 295,
+        "plan": "false_alarm",
+        "precursor": "fade",
+        "open_s": 65
+      },
+      {
+        "run": 29,
+        "s_into_cycle": 70,
+        "plan": "false_alarm",
+        "precursor": "bump",
+        "open_s": 35
+      },
+      {
+        "run": 29,
+        "s_into_cycle": 75,
+        "plan": "false_alarm",
+        "precursor": "bump",
+        "open_s": 60
+      },
+      {
+        "run": 31,
+        "s_into_cycle": 150,
+        "plan": "false_alarm",
+        "precursor": "fade",
+        "open_s": 45
+      },
+      {
+        "run": 32,
+        "s_into_cycle": 35,
+        "plan": "false_alarm",
+        "precursor": "fade",
+        "open_s": 85
+      },
+      {
+        "run": 34,
+        "s_into_cycle": 35,
+        "plan": "false_alarm",
+        "precursor": "fade",
+        "open_s": 70
+      },
+      {
+        "run": 34,
+        "s_into_cycle": 55,
+        "plan": "false_alarm",
+        "precursor": "fade",
+        "open_s": 95
+      },
+      {
+        "run": 34,
+        "s_into_cycle": 280,
+        "plan": "excursion",
+        "precursor": "none",
+        "open_s": 95
+      },
+      {
+        "run": 34,
+        "s_into_cycle": 165,
+        "plan": "false_alarm",
+        "precursor": "fade",
+        "open_s": 50
+      }
+    ],
+    "v7": [
+      {
+        "run": 27,
+        "s_into_cycle": 0,
+        "plan": "false_alarm",
+        "precursor": "fade",
+        "open_s": 90
+      },
+      {
+        "run": 27,
+        "s_into_cycle": 40,
+        "plan": "false_alarm",
+        "precursor": "fade",
+        "open_s": 15
+      },
+      {
+        "run": 27,
+        "s_into_cycle": 70,
+        "plan": "false_alarm",
+        "precursor": "fade",
+        "open_s": 125
+      },
+      {
+        "run": 28,
+        "s_into_cycle": 160,
+        "plan": "false_alarm",
+        "precursor": "fade",
+        "open_s": 55
+      },
+      {
+        "run": 28,
+        "s_into_cycle": 5,
+        "plan": "false_alarm",
+        "precursor": "fade",
+        "open_s": 60
+      },
+      {
+        "run": 29,
+        "s_into_cycle": 70,
+        "plan": "false_alarm",
+        "precursor": "bump",
+        "open_s": 25
+      },
+      {
+        "run": 31,
+        "s_into_cycle": 155,
+        "plan": "false_alarm",
+        "precursor": "fade",
+        "open_s": 40
+      },
+      {
+        "run": 32,
+        "s_into_cycle": 50,
+        "plan": "false_alarm",
+        "precursor": "fade",
+        "open_s": 70
+      },
+      {
+        "run": 34,
+        "s_into_cycle": 15,
+        "plan": "false_alarm",
+        "precursor": "fade",
+        "open_s": 90
+      },
+      {
+        "run": 34,
+        "s_into_cycle": 65,
+        "plan": "false_alarm",
+        "precursor": "fade",
+        "open_s": 85
+      },
+      {
+        "run": 34,
+        "s_into_cycle": 265,
+        "plan": "excursion",
+        "precursor": "none",
+        "open_s": 115
+      },
+      {
+        "run": 34,
+        "s_into_cycle": 160,
+        "plan": "false_alarm",
+        "precursor": "fade",
+        "open_s": 60
+      }
+    ]
+  }
+}

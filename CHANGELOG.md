@@ -6,23 +6,28 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
-- Spindle 3 risk model: an early warning on a SIMULATED, noisy precursor,
-  measured on fresh data.
-  - `scenario_engine/spindle_scenario.py` is the single generator for the live
-    producer (embedded in the notebook) and for training.
-  - Excursions start at a random point of the 300 s cycle and have a random
-    30–180 s vibration / power precursor (strong, weak or none). The scenario adds
-    false alarms and quiet cycles. Vibration is capped under the vibration alert.
-  - Training runs the producer's own simulator path at the live ~25 Hz rate, with
-    breach-episode labels.
-  - The cut-off and clear level are chosen on validation for discrimination within
-    a false-alarm budget.
-  - A version becomes `champion` only if it qualifies: clear level above steady
-    running, beats a sensor-blind clock, cycle-permutation p < 0.05 and
-    discrimination ≥ 0.30. It must also beat a qualifying champion.
-  - v7 is champion. On fresh data it warned 72 % of breaches ≥ 30 s ahead at 1.4
-    false alarms/h. Measured offline on simulated data, not live; see
-    docs/ml-risk-model.md.
+- Spindle 3 risk model: an early warning on a SIMULATED, noisy precursor, measured
+  offline on fresh simulated data, not live.
+  - **Champion v7.** On 231 pooled held-out cycles (test plus a fresh 12 h replay)
+    it warned 59 % [95 % CI 54–65 %] of breaches ≥ 30 s ahead at 1.9 [1.5–2.4] false
+    alarms/h. Its plan-mix-standardised discrimination is 0.21 [0.12–0.30] (a
+    plan-aware oracle scores 0.30, a clock about 0). Cycle permutation gives
+    p ≤ 0.001, the floor of 1,000 permutations.
+  - **An earlier 4 h endpoint replay** gave v7 19 / 26 breaches warned at 5.0 false
+    alarms/h. Its raw discrimination was 0.16 [0.04, 0.29], or 0.24 [0.14, 0.34]
+    standardised to the plan mix. The gap is diagnosed: a spurious maintenance-age
+    dependence at the clipped catalog value, plus an alarm-heavy sample.
+  - **One generator.** `scenario_engine/spindle_scenario.py` feeds the live producer
+    (embedded in the notebook) and training. The ramp start is jittered, precursors
+    are strong, weak or none, and the scenario adds false alarms and quiet cycles.
+    Vibration is capped under the vibration alert.
+  - **Training.** The producer's simulator path at about 25 Hz, breach-episode
+    labels, and the maintenance age pinned.
+  - **Promotion gate.** It pools test and replay cycles with bootstrap CIs and
+    needs: the clear level above calm running, ≤ 3 false alarms/h, a beaten clock,
+    permutation p < 0.05, and a lower 95 % bound of standardised discrimination
+    above 0. A challenger also needs a significant paired gain over the champion.
+    See docs/ml-risk-model.md.
 - Grounded AI action plan for an alert episode (`POST /api/alerts/{alert_id}/action-plan`).
   It calls a Foundation Model endpoint (`GENAI_ENDPOINT`, default
   `databricks-claude-sonnet-5-5`, as a `CAN_QUERY` app resource). Every claim cites its
