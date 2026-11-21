@@ -40,7 +40,16 @@ def _args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--schema", default="pharma_twin")
     parser.add_argument("--model-name", default="spindle_thermal_risk")
     parser.add_argument("--telemetry-table", default="")
-    parser.add_argument("--data-source", default="auto", choices=("auto", "synthetic", "real"))
+    parser.add_argument(
+        "--data-source", default="auto", choices=("auto", "live_format", "synthetic", "real")
+    )
+    parser.add_argument("--promote", default="if_better", choices=("if_better", "always", "never"))
+    parser.add_argument(
+        "--extra",
+        action="append",
+        default=[],
+        help="extra training-task argument, repeatable (e.g. --extra=--live-runs=36)",
+    )
     parser.add_argument("--endpoint-name", default="")
     parser.add_argument("--create-endpoint", action="store_true")
     parser.add_argument("--workspace-dir", default="", help="default: ~/pharma-twin-risk-model")
@@ -103,6 +112,9 @@ def task_parameters(args: argparse.Namespace, root: str) -> list[str]:
         "true" if args.create_endpoint else "false",
         "--experiment",
         args.experiment or f"{root.removeprefix('/Workspace')}/experiment",
+        "--promote",
+        args.promote,
+        *args.extra,
     ]
     return params
 

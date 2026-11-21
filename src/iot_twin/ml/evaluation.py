@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 
 def precision_recall_at(
@@ -141,3 +141,46 @@ def choose_threshold(
     if best_f1 is None:
         raise ValueError("no threshold candidates")
     return best_f1[0], "max_f1"
+
+
+# A challenger may raise false alarms by at most this much per hour of running.
+FALSE_ALARM_TOLERANCE_PER_H = 1.0
+
+
+def warning_skill(metrics: Mapping[str, float]) -> float:
+    """Breaches warned >= 30 s ahead beyond what the same alerts would warn by luck."""
+    return metrics["warned_30s_share"] - metrics["chance_warned_30s_mean"]
+
+
+def challenger_beats_champion(
+    challenger: Mapping[str, float],
+    champion: Mapping[str, float] | None,
+    *,
+    false_alarm_tolerance_per_h: float = FALSE_ALARM_TOLERANCE_PER_H,
+) -> tuple[bool, str]:
+    """Promotion rule on the same held-out rows: ``(beats, reason)``.
+
+    Both maps carry ``warned_30s_share``, ``chance_warned_30s_mean``,
+    ``false_alarms_per_hour`` and ``pr_auc``, each model at its own shipped
+    cut-off and clear level. The challenger must warn strictly more breaches
+    >= 30 s ahead *and* more beyond its chance baseline (so an alert that is
+    simply open more often cannot win), keep false alarms within
+    ``false_alarm_tolerance_per_h`` of the champion, and not rank worse.
+    """
+    if champion is None:
+        return True, "no champion to compare against"
+    warned = challenger["warned_30s_share"] > champion["warned_30s_share"]
+    skill = warning_skill(challenger) > warning_skill(champion)
+    alarms = (
+        challenger["false_alarms_per_hour"]
+        <= champion["false_alarms_per_hour"] + false_alarm_tolerance_per_h
+    )
+    ranking = challenger["pr_auc"] >= champion["pr_auc"]
+    summary = (
+        f"warned>=30s {challenger['warned_30s_share']:.3f} vs {champion['warned_30s_share']:.3f}, "
+        f"skill over chance {warning_skill(challenger):.3f} vs {warning_skill(champion):.3f}, "
+        f"false alarms/h {challenger['false_alarms_per_hour']:.2f} vs "
+        f"{champion['false_alarms_per_hour']:.2f}, "
+        f"PR-AUC {challenger['pr_auc']:.3f} vs {champion['pr_auc']:.3f}"
+    )
+    return warned and skill and alarms and ranking, summary

@@ -88,7 +88,7 @@ variables:
     default: spindle_thermal_risk
   risk_model_version:
     description: "Model version the endpoint serves after a bundle deploy (keep it at the current @champion: every training run prints the --var to use)."
-    default: "4"
+    default: "6"
   risk_endpoint_name:
     description: Model Serving endpoint for the thermal-risk model.
     default: pharma-twin-spindle-risk
@@ -96,7 +96,7 @@ variables:
     description: Training job name.
     default: pharma-twin-risk-model-train
   risk_training_data_source:
-    description: "auto (real telemetry when it has enough excursions, else synthetic), synthetic or real."
+    description: "auto (real telemetry when it has enough excursions, else live_format: the live producer's simulator and SIMULATED Spindle 3 scenario on a virtual clock), live_format, synthetic (older 1 Hz generator) or real."
     default: auto
   risk_alert_threshold:
     description: "Predicted-alert cut-off. \"model\" uses the decision_threshold the served model version ships; a number overrides it."

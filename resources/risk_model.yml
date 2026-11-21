@@ -9,10 +9,11 @@ resources:
       name: ${var.risk_job_name}
       description: >-
         Builds windowed Spindle 3 features (shared with the app scorer), labels
-        excursions beyond the validated limit within the horizon, trains LightGBM
+        breaches of the validated limit within the horizon, trains LightGBM
         with a time-based split, logs to MLflow, registers
         ${var.uc_catalog}.${var.risk_model_schema}.${var.risk_model_short_name}
-        with alias champion and repoints the serving endpoint.
+        as challenger, and moves champion (and repoints the serving endpoint)
+        only when it beats the current champion on the same held-out rows.
       tags:
         project: pharma-twin
         component: spindle-risk-model

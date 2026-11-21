@@ -5,16 +5,21 @@ Run by the ``pharma-twin-risk-model-train`` job (resources/risk_model.yml) as a
 
 1. Load labelled rows. ``--data-source auto`` trains on real
    ``manufacturing_realtime`` telemetry when it has enough labelled rows and
-   excursions, and otherwise on SYNTHETIC runs from the repo's simulator and
-   scenario engine (``iot_twin.ml.synthetic_telemetry``). The choice is logged
-   as the ``data_origin`` param and tag.
+   excursions, and otherwise on LIVE-FORMAT runs: the live producer's own
+   simulator, calibration, sample rate and shared Spindle 3 scenario
+   (``iot_twin.ml.live_format_telemetry``), on a virtual clock. ``synthetic``
+   is the older 1 Hz generator (``iot_twin.ml.synthetic_telemetry``). The
+   choice is logged as the ``data_origin`` param and tag.
 2. Features and labels come from ``iot_twin.ml.spindle_features``, the same
    code the app's scorer runs, so training and serving cannot drift.
 3. Time-based split (train → validation → test, in time order), LightGBM,
    cut-off chosen on validation, metrics on test.
-4. Log to MLflow (params, metrics, signature, input example), register in Unity
-   Catalog, move the ``champion`` alias, and optionally point the serving
-   endpoint at the new version.
+4. Log to MLflow (params, metrics, signature, input example) and register in
+   Unity Catalog with the ``challenger`` alias.
+5. ``--promote if_better`` (default) scores the current ``champion`` on the
+   same held-out test rows and moves ``champion`` (and the serving endpoint)
+   only when the new version beats it (``challenger_beats_champion``).
+   ``--promote always`` moves it unconditionally; ``never`` never does.
 """
 
 from __future__ import annotations
@@ -46,7 +51,9 @@ def _args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--schema", default="pharma_twin")
     parser.add_argument("--model-name", default="spindle_thermal_risk")
     parser.add_argument("--telemetry-table", default="", help="catalog.schema.table or empty")
-    parser.add_argument("--data-source", choices=("auto", "synthetic", "real"), default="auto")
+    parser.add_argument(
+        "--data-source", choices=("auto", "live_format", "synthetic", "real"), default="auto"
+    )
     parser.add_argument("--real-days", type=int, default=14)
     parser.add_argument("--horizon-s", type=float, default=120.0)
     parser.add_argument("--step-s", type=float, default=5.0)
@@ -58,11 +65,24 @@ def _args(argv: list[str]) -> argparse.Namespace:
         "--clear-hysteresis",
         type=float,
         default=0.05,
-        help="predicted alerts clear at cut-off minus this",
+        help="clear band (cut-off minus this) for --threshold-rule precision; the event rule chooses its own band",
     )
     parser.add_argument("--synthetic-runs", type=int, default=24)
     parser.add_argument("--synthetic-run-s", type=int, default=7200)
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--live-runs", type=int, default=36)
+    parser.add_argument("--live-run-s", type=float, default=3600.0)
+    parser.add_argument("--live-rate-hz", type=float, default=25.0)
+    parser.add_argument(
+        "--threshold-rule",
+        choices=("event", "precision"),
+        default="event",
+        help="event: most breaches warned >= 30 s ahead within --false-alarm-budget "
+        "(live-format data only); precision: highest recall at --min-precision",
+    )
+    parser.add_argument("--false-alarm-budget", type=float, default=3.0, help="per hour")
+    parser.add_argument("--promote", choices=("if_better", "always", "never"), default="if_better")
+    parser.add_argument("--challenger-alias", default="challenger")
     parser.add_argument("--experiment", default="", help="MLflow experiment path")
     parser.add_argument("--alias", default="champion")
     parser.add_argument("--endpoint-name", default="", help="Serving endpoint to repoint")
@@ -136,6 +156,21 @@ def load_training_set(args: argparse.Namespace) -> Any:
             logger.info("real telemetry: %d rows, %d excursions", len(real.rows), events)
             if enough or args.data_source == "real":
                 return real
+    if args.data_source in {"auto", "live_format"}:
+        from iot_twin.ml.live_format_telemetry import build_live_format_training_set
+        from iot_twin.ml.spindle_features import threshold_rule_delay_s
+
+        return build_live_format_training_set(
+            n_runs=args.live_runs,
+            duration_s=args.live_run_s,
+            seed=args.seed,
+            limit_c=limit,
+            hysteresis_c=threshold_rule_hysteresis_c(),
+            rule_delay_s=threshold_rule_delay_s(),
+            horizon_s=args.horizon_s,
+            step_s=args.step_s,
+            rate_hz=args.live_rate_hz,
+        )
     runs = generate_runs(
         n_runs=args.synthetic_runs, duration_s=args.synthetic_run_s, seed=args.seed
     )
@@ -193,7 +228,14 @@ def train_and_evaluate(training_set: Any, args: argparse.Namespace) -> dict[str,
         threshold_rule_hysteresis_c,
         validated_limit_c,
     )
-    from iot_twin.ml.training_set import onsets_in_period, time_split
+    from iot_twin.ml.training_set import (
+        CALM_CLEAR_QUANTILE,
+        calm_mask,
+        choose_event_threshold,
+        onsets_in_period,
+        period_event_report,
+        time_split,
+    )
 
     # Rows whose window or horizon straddles a boundary would leak across it.
     embargo = WINDOW_S + args.horizon_s
@@ -216,10 +258,31 @@ def train_and_evaluate(training_set: Any, args: argparse.Namespace) -> dict[str,
         callbacks=[lgb.early_stopping(40, verbose=False)],
     )
     val_scores = model.predict_proba(x_val)[:, 1]
-    threshold, rule = choose_threshold(
-        list(y_val), list(val_scores), min_precision=args.min_precision
-    )
-    clear = clear_threshold_for(threshold, args.clear_hysteresis)
+    band = args.clear_hysteresis
+    min_clear = 0.0
+    if args.threshold_rule == "event" and training_set.breaches_by_run:
+        steady = calm_mask(training_set, val_rows)
+        min_clear = quantile(
+            [float(s) for s, calm in zip(val_scores, steady, strict=True) if calm],
+            CALM_CLEAR_QUANTILE,
+        )
+        chosen = choose_event_threshold(
+            training_set,
+            val_rows,
+            [float(score) for score in val_scores],
+            min_clear=min_clear,
+            limit_c=validated_limit_c(),
+            hysteresis_c=threshold_rule_hysteresis_c(),
+            rule_delay_s=threshold_rule_delay_s(),
+            false_alarm_budget_per_h=args.false_alarm_budget,
+            step_s=args.step_s,
+        )
+        threshold, band, rule = chosen.threshold, chosen.clear_band, chosen.rule
+    else:
+        threshold, rule = choose_threshold(
+            list(y_val), list(val_scores), min_precision=args.min_precision
+        )
+    clear = clear_threshold_for(threshold, band)
     calm_mask = [
         is_calm(int(y), float(margin), float(slope))
         for y, margin, slope in zip(y_val, x_val["temp_margin_c"], x_val["temp_slope"], strict=True)
@@ -239,9 +302,18 @@ def train_and_evaluate(training_set: Any, args: argparse.Namespace) -> dict[str,
     at_cut = precision_recall_at(list(y_test), list(test_scores), threshold)
 
     limit = validated_limit_c()
-    onsets = onsets_in_period(
-        training_set, test_rows, limit_c=limit, hysteresis_c=threshold_rule_hysteresis_c()
-    )
+    if training_set.breaches_by_run:
+        start = min(row.at for row in test_rows)
+        onsets = sorted(
+            onset
+            for episodes in training_set.breaches_by_run.values()
+            for onset, _ in episodes
+            if onset >= start
+        )
+    else:
+        onsets = onsets_in_period(
+            training_set, test_rows, limit_c=limit, hysteresis_c=threshold_rule_hysteresis_c()
+        )
     lead = lead_time_report(
         [row.at for row in test_rows],
         list(test_scores),
@@ -258,13 +330,27 @@ def train_and_evaluate(training_set: Any, args: argparse.Namespace) -> dict[str,
         }
     else:
         logger.warning("test split has a single class; ROC-AUC / PR-AUC not logged")
+    events = period_event_report(
+        training_set,
+        test_rows,
+        [float(score) for score in test_scores],
+        open_at=threshold,
+        clear_at=clear,
+        limit_c=limit,
+        hysteresis_c=threshold_rule_hysteresis_c(),
+        rule_delay_s=threshold_rule_delay_s(),
+        step_s=args.step_s,
+    )
     metrics = {
         **ranking,
+        **events.as_metrics("test_event_"),
         "test_precision_at_threshold": at_cut["precision"],
         "test_recall_at_threshold": at_cut["recall"],
         "test_f1_at_threshold": at_cut["f1"],
         "decision_threshold": float(threshold),
         "clear_threshold": float(clear),
+        "clear_band": float(band),
+        "val_calm_steady_clear_floor": float(min_clear),
         **calm_metrics,
         "calm_check_problems": float(len(calm_problems)),
         "embargo_s": float(embargo),
@@ -282,6 +368,9 @@ def train_and_evaluate(training_set: Any, args: argparse.Namespace) -> dict[str,
         "metrics": metrics,
         "threshold_rule": rule,
         "x_test": x_test,
+        "y_test": y_test,
+        "test_scores": test_scores,
+        "test_rows": test_rows,
     }
 
 
@@ -379,7 +468,7 @@ def log_and_register(
         run_id = run.info.run_id
     version = str(info.registered_model_version)
     client = MlflowClient(registry_uri="databricks-uc")
-    client.set_registered_model_alias(full_name, args.alias, version)
+    client.set_registered_model_alias(full_name, args.challenger_alias, version)
     for key, value in {
         "data_origin": training_set.data_origin,
         "decision_threshold": f"{metrics['decision_threshold']:.2f}",
@@ -389,6 +478,102 @@ def log_and_register(
     }.items():
         client.set_model_version_tag(full_name, version, key, value)
     return {"model_name": full_name, "model_version": version, "run_id": run_id}
+
+
+def comparison_metrics(
+    result: dict[str, Any],
+    training_set: Any,
+    args: argparse.Namespace,
+    scores: list[float],
+    open_at: float,
+    clear_at: float,
+) -> dict[str, float]:
+    """Event and ranking metrics of one model's test scores at its own cut-off."""
+    from sklearn.metrics import average_precision_score
+
+    from iot_twin.ml.spindle_features import (
+        threshold_rule_delay_s,
+        threshold_rule_hysteresis_c,
+        validated_limit_c,
+    )
+    from iot_twin.ml.training_set import period_event_report
+
+    events = period_event_report(
+        training_set,
+        result["test_rows"],
+        scores,
+        open_at=open_at,
+        clear_at=clear_at,
+        limit_c=validated_limit_c(),
+        hysteresis_c=threshold_rule_hysteresis_c(),
+        rule_delay_s=threshold_rule_delay_s(),
+        step_s=args.step_s,
+    )
+    return {
+        "warned_30s_share": events.warned_30s_share,
+        "false_alarms_per_hour": events.false_alarms_per_hour,
+        "median_lead_s": events.median_lead_s,
+        "chance_warned_30s_mean": events.chance_warned_30s_mean,
+        "alert_open_fraction": events.alert_open_fraction,
+        "pr_auc": float(average_precision_score(result["y_test"], scores)),
+        "decision_threshold": float(open_at),
+        "clear_threshold": float(clear_at),
+    }
+
+
+def champion_metrics(
+    result: dict[str, Any], training_set: Any, args: argparse.Namespace, full_name: str
+) -> tuple[str, dict[str, float]] | None:
+    """The current champion's metrics on the challenger's test rows, or None if none exists."""
+    import mlflow
+    from mlflow.exceptions import MlflowException
+    from mlflow.tracking import MlflowClient
+
+    client = MlflowClient(registry_uri="databricks-uc")
+    try:
+        version = str(client.get_model_version_by_alias(full_name, args.alias).version)
+    except MlflowException:
+        return None
+    model = mlflow.pyfunc.load_model(f"models:/{full_name}/{version}")
+    output = model.predict(result["x_test"])
+    scores = [float(score) for score in output["risk_score"]]
+    return version, comparison_metrics(
+        result,
+        training_set,
+        args,
+        scores,
+        float(output["decision_threshold"].iloc[0]),
+        float(output["clear_threshold"].iloc[0]),
+    )
+
+
+def decide_promotion(
+    result: dict[str, Any], training_set: Any, args: argparse.Namespace, full_name: str
+) -> dict[str, Any]:
+    """Compare challenger vs champion on the same held-out rows and apply ``--promote``."""
+    from iot_twin.ml.evaluation import challenger_beats_champion
+
+    metrics = result["metrics"]
+    challenger = comparison_metrics(
+        result,
+        training_set,
+        args,
+        [float(score) for score in result["test_scores"]],
+        metrics["decision_threshold"],
+        metrics["clear_threshold"],
+    )
+    champion = champion_metrics(result, training_set, args, full_name)
+    champion_version, champion_values = champion if champion else (None, None)
+    beats, reason = challenger_beats_champion(challenger, champion_values)
+    promote = args.promote == "always" or (args.promote == "if_better" and beats)
+    return {
+        "champion_version_before": champion_version,
+        "challenger_metrics": challenger,
+        "champion_metrics": champion_values,
+        "challenger_beats_champion": beats,
+        "comparison": reason,
+        "promoted": promote,
+    }
 
 
 def ensure_schema(catalog: str, schema: str) -> None:
@@ -459,6 +644,24 @@ def deploy_champion(
     return "updating"
 
 
+def _log_decision(run_id: str, decision: dict[str, Any]) -> None:
+    import mlflow
+
+    values = {f"challenger_{k}": v for k, v in decision["challenger_metrics"].items()}
+    if decision["champion_metrics"]:
+        values.update({f"champion_{k}": v for k, v in decision["champion_metrics"].items()})
+    values["challenger_beats_champion"] = float(decision["challenger_beats_champion"])
+    values["promoted"] = float(decision["promoted"])
+    with mlflow.start_run(run_id=run_id):
+        mlflow.log_metrics(values)
+        mlflow.set_tags(
+            {
+                "comparison": decision["comparison"],
+                "champion_version_before": str(decision["champion_version_before"]),
+            }
+        )
+
+
 def main(argv: list[str] | None = None) -> dict[str, Any]:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     args = _args(list(sys.argv[1:] if argv is None else argv))
@@ -476,16 +679,30 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
     )
     result = train_and_evaluate(training_set, args)
     registered = log_and_register(result, training_set, args, workspace)
-    endpoint = deploy_champion(
-        workspace, args, registered["model_name"], registered["model_version"]
-    )
+    decision = decide_promotion(result, training_set, args, registered["model_name"])
+    _log_decision(registered["run_id"], decision)
+    endpoint = "not_promoted"
+    if decision["promoted"]:
+        from mlflow.tracking import MlflowClient
+
+        MlflowClient(registry_uri="databricks-uc").set_registered_model_alias(
+            registered["model_name"], args.alias, registered["model_version"]
+        )
+        endpoint = deploy_champion(
+            workspace, args, registered["model_name"], registered["model_version"]
+        )
     summary = {
         **registered,
-        "alias": args.alias,
+        **decision,
+        "alias": args.alias if decision["promoted"] else args.challenger_alias,
         "data_origin": training_set.data_origin,
         "endpoint": args.endpoint_name or None,
         "endpoint_action": endpoint,
-        "bundle_override": f"--var risk_model_version={registered['model_version']}",
+        "bundle_override": (
+            f"--var risk_model_version={registered['model_version']}"
+            if decision["promoted"]
+            else None
+        ),
         "metrics": result["metrics"],
     }
     print(json.dumps(summary, indent=2, sort_keys=True))
