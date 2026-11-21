@@ -96,7 +96,7 @@ function StatusChip({ health }: { health: HealthState }) {
 export function heatEventText(state: SpindleHeatState): string {
   switch (state.phase) {
     case "normal":
-      return `next in ${formatCountdown(state.secondsToNextEvent)}`;
+      return `next scheduled in ${formatCountdown(state.secondsToNextEvent)}`;
     case "heating":
       return "in progress · heating";
     case "overheat":
@@ -346,7 +346,7 @@ function SpindleCard({
               <span className="cell-card__action">{limit.action}</span>
             </Field>
           )}
-          <Field label="Prepared thermal excursion" testId="heat-event">
+          <Field label="Scheduled demo excursion (simulator clock, not a model output)" testId="heat-event">
             {heatEventText(heatEvent)}
           </Field>
         </div>

@@ -221,7 +221,7 @@ export function IncidentPanel({
           <b>{state === "clear" ? "Cell in its validated state" : "Spindle 3 back inside its validated limit"}</b>
           <span>
             Spindle 3 {value === undefined ? "—" : `${formatNumber(value, 1)} °C`} · limit{" "}
-            {limit ? `${formatNumber(limit.threshold, 0)} °C` : "—"} · prepared thermal excursion{" "}
+            {limit ? `${formatNumber(limit.threshold, 0)} °C` : "—"} · scheduled demo excursion (simulator clock){" "}
             {heatEventText(model.heatEvent)}
           </span>
           {lastEpisode && (
