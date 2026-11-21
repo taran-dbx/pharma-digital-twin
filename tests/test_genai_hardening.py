@@ -261,7 +261,7 @@ class TestLiveFindings:
 
     def test_triggering_part_from_producer_metadata_is_a_lot_row_identifier(self) -> None:
         grounding = _ground()  # fixture metadata names lot ...-121 / serial ...-121-03
-        rows = {item.key: item.data for item in grounding.by_source("lot")}
+        rows = {item.ref: item.data for item in grounding.by_source("lot")}
         assert rows["TM-HS12-261120-121"]["triggering_part_serial"] == "TM-HS12-261120-121-03"
         plan = valid_plan(grounding)
         plan["disposition"]["cmm_inspection"]["serials"].append("TM-HS12-261120-121-03")

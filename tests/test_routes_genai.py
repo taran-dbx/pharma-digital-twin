@@ -32,7 +32,7 @@ def grounded_answer(**kwargs):
     user = kwargs["messages"][1].content
     body = user.split(f"[{UNTRUSTED_TAG}]\n", 1)[1].split(f"\n[/{UNTRUSTED_TAG}]", 1)[0]
     rows = json.loads(body.split("\n", 1)[1])
-    items = tuple(GroundingItem(r["id"], r["source"], r["key"], r["data"]) for r in rows)
+    items = tuple(GroundingItem(r["id"], r["source"], r["ref"], r["data"]) for r in rows)
     return reply(plan_text(GroundingSet(alert_id="x", items=items)))
 
 

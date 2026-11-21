@@ -75,15 +75,20 @@ ReadingsRunner = Callable[[str], Awaitable[list[dict[str, Any]]]]
 
 @dataclass(frozen=True)
 class GroundingItem:
-    """One cited row. ``id`` is the citation id the model must quote."""
+    """One cited row. ``id`` is the citation id the model must quote.
+
+    ``ref`` is the row's own key within its source (a UUID, rule id, lot id…).
+    It was called ``key`` until 2026-11-20; it was renamed because secret
+    scanners read ``"key": "<uuid>"`` in stored audit JSON as an API key.
+    """
 
     id: str
     source: str
-    key: str
+    ref: str
     data: dict[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
-        return {"id": self.id, "source": self.source, "key": self.key, "data": dict(self.data)}
+        return {"id": self.id, "source": self.source, "ref": self.ref, "data": dict(self.data)}
 
 
 @dataclass(frozen=True)
@@ -288,12 +293,12 @@ def _with_triggering_part(items: list[GroundingItem], alert: AlertRecord) -> lis
     serial = str(alert.metadata.get("part_serial") or "")
     if not lot_id or not serial:
         return items
-    if any(item.key == lot_id for item in items):
+    if any(item.ref == lot_id for item in items):
         return [
             GroundingItem(
-                item.id, item.source, item.key, {**item.data, "triggering_part_serial": serial}
+                item.id, item.source, item.ref, {**item.data, "triggering_part_serial": serial}
             )
-            if item.key == lot_id
+            if item.ref == lot_id
             else item
             for item in items
         ]

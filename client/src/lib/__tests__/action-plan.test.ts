@@ -74,7 +74,7 @@ describe("action plan helpers", () => {
   });
 
   it("resolves cited rows and flags ids missing from the grounding set", () => {
-    const rows = [{ id: "alert:a1", source: "alert", key: "a1", data: { value: 64.2 } }];
+    const rows = [{ id: "alert:a1", source: "alert", ref: "a1", data: { value: 64.2 } }];
     expect(citedRows(rows, ["alert:a1", "lot:nope"])).toEqual([
       { id: "alert:a1", row: rows[0] },
       { id: "lot:nope", row: null },

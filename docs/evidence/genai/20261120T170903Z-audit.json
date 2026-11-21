@@ -173,7 +173,7 @@
     {
       "id": "alert:b19a8884-f97c-443c-a4f1-e0b0f713fb1b",
       "source": "alert",
-      "key": "b19a8884-f97c-443c-a4f1-e0b0f713fb1b",
+      "ref": "b19a8884-f97c-443c-a4f1-e0b0f713fb1b",
       "data": {
         "rule_id": "mfg-alert-spindle-temp",
         "sensor_id": "mfg-sns-cnc_1_spindle_temp",
@@ -194,7 +194,7 @@
     {
       "id": "readings:54982bec9e5c#0",
       "source": "readings",
-      "key": "54982bec9e5c#0",
+      "ref": "54982bec9e5c#0",
       "data": {
         "bucket": "T-10s",
         "min_value": 57.8,
@@ -205,7 +205,7 @@
     {
       "id": "readings:54982bec9e5c#1",
       "source": "readings",
-      "key": "54982bec9e5c#1",
+      "ref": "54982bec9e5c#1",
       "data": {
         "bucket": "T+0s",
         "min_value": 59.1,
@@ -216,7 +216,7 @@
     {
       "id": "readings:54982bec9e5c#2",
       "source": "readings",
-      "key": "54982bec9e5c#2",
+      "ref": "54982bec9e5c#2",
       "data": {
         "bucket": "T+10s",
         "min_value": 60.9,
@@ -227,7 +227,7 @@
     {
       "id": "readings:54982bec9e5c#3",
       "source": "readings",
-      "key": "54982bec9e5c#3",
+      "ref": "54982bec9e5c#3",
       "data": {
         "bucket": "T+20s",
         "min_value": 62.5,
@@ -238,7 +238,7 @@
     {
       "id": "readings:54982bec9e5c#4",
       "source": "readings",
-      "key": "54982bec9e5c#4",
+      "ref": "54982bec9e5c#4",
       "data": {
         "bucket": "T+30s",
         "min_value": 61.0,
@@ -249,7 +249,7 @@
     {
       "id": "lot:TM-HS12-261120-205",
       "source": "lot",
-      "key": "TM-HS12-261120-205",
+      "ref": "TM-HS12-261120-205",
       "data": {
         "lot_id": "TM-HS12-261120-205",
         "dhr_ref": "DHR-TM-HS12-261120-205",
@@ -269,7 +269,7 @@
     {
       "id": "projected_rft:b19a8884-f97c-443c-a4f1-e0b0f713fb1b",
       "source": "projected_rft",
-      "key": "b19a8884-f97c-443c-a4f1-e0b0f713fb1b",
+      "ref": "b19a8884-f97c-443c-a4f1-e0b0f713fb1b",
       "data": {
         "pct": 76.92,
         "good": 10,
@@ -284,7 +284,7 @@
     {
       "id": "alert_rule:mfg-alert-spindle-temp",
       "source": "alert_rule",
-      "key": "mfg-alert-spindle-temp",
+      "ref": "mfg-alert-spindle-temp",
       "data": {
         "sensor_id": "mfg-sns-cnc_1_spindle_temp",
         "operator": "gt",
@@ -306,7 +306,7 @@
     {
       "id": "maintenance:mfg-mnt-001",
       "source": "maintenance",
-      "key": "mfg-mnt-001",
+      "ref": "mfg-mnt-001",
       "data": {
         "asset_id": "mfg-asset-cnc-1",
         "component_id": "mfg-comp-spindle",
@@ -320,7 +320,7 @@
     {
       "id": "risk_score:b19a8884-f97c-443c-a4f1-e0b0f713fb1b",
       "source": "risk_score",
-      "key": "b19a8884-f97c-443c-a4f1-e0b0f713fb1b",
+      "ref": "b19a8884-f97c-443c-a4f1-e0b0f713fb1b",
       "data": {
         "alert_id": "b19a8884-f97c-443c-a4f1-e0b0f713fb1b",
         "rule_id": "mfg-alert-spindle-temp",
