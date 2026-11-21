@@ -8,7 +8,7 @@
 # (matches pypi-proxy.dev.databricks.com). Its deps (requests, databricks-sdk) are
 # pinned below.
 ./lib/dbdemos_tracker-0.1.12-py3-none-any.whl
-fastapi==0.141.1
+fastapi==0.163.1
 uvicorn==0.52.4
 pydantic==2.13.4
 httpx==0.28.1
