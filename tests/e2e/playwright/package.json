@@ -10,7 +10,7 @@
     "report:shadow": "qa-shadow-report playwright --csv"
   },
   "devDependencies": {
-    "@playwright/test": "1.62.1",
+    "@playwright/test": "1.65.1",
     "qa-shadow-report": "2.1.7"
   },
   "overrides": {
