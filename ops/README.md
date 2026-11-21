@@ -179,3 +179,36 @@ the stream held e2e p50 7 ms and p99 median 13 ms (worst 29 ms) over 41 batches 
 19:27. The `metrics_batch_duration` FAIL threshold (60 s) also flags Real-Time Mode's normal 300 s
 trigger. The measurements are in [`docs/evidence/2026-11-20/`](../docs/evidence/README.md). The
 first attempt of a run on serverless can abort with the known psycopg2 SIGABRT; re-run it.
+
+## Runbook: stuck Lakehouse Sync (`lakets_sync_slot` WARN/FAIL)
+
+Lakehouse Sync (`wal2delta`) commits to the UC history table every ~15 s while rows flow. The
+health check reads the slot from `pg_replication_slots` and the shadow's
+`wal2delta.tables.last_write_time`. It WARNs after 2 min without a write, FAILs after 10 min,
+and also FAILs when the slot retains >= 1 GB of WAL. On 2026-11-20/21 the sync stopped twice,
+right after Delta versions 1000 and 1800. Both are multiples of `wal2delta.checkpoint_interval`
+(200), and nothing in Postgres showed an error. Both times the slot held WAL until the writer
+resumed on its own: after 146 min, and after 354 min. The second stall lasted through a compute
+restart. Details: [`docs/evidence/2026-11-21/`](../docs/evidence/README.md).
+
+1. **Confirm the stall from both sides** (read-only, as a `databricks_superuser` member):
+   `SELECT slot_name, active, restart_lsn, confirmed_flush_lsn,
+   pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) FROM pg_replication_slots;`,
+   `SELECT * FROM wal2delta.tables WHERE status <> 'SKIPPED';`, `databricks postgres
+   list-cdf-statuses <cdf-config> --profile <p>` (`last_sync_time`), and `DESCRIBE HISTORY` on the
+   `lb__shadow_<industry>_sensor_readings_history` table (newest version and timestamp).
+   Hot-tier freshness PASS while all of these stand still means the sync is stuck, not idle.
+2. **Keep the primary alive while WAL accumulates.** At ~600 B of WAL per row (statement
+   triggers), 2,000 rows/s retains ~4.3 GB/h. If the retained WAL nears the compute's local
+   disk, stop the producer (the Kafka topic buffers the data; the consumer resumes from its
+   checkpoint) rather than letting the compute restart.
+3. **Do not drop the `wal2delta_main_slot_*` slot or delete the CDF config** as a first
+   response. Both force a full re-snapshot of the shadow, which holds every row ever synced
+   (6.6 GB on 2026-11-21), and the slot is owned by the managed service, not by us. Dropping it is
+   only safe after the Lakebase owners confirm the sync for that slot is dead.
+4. **Escalate** to the Lakebase / Lakehouse Sync owners with the slot name, the committed LSN, the
+   last Delta version and timestamp, and `SHOW wal2delta.checkpoint_interval`.
+   `wal2delta.info()` is not readable by workspace users.
+5. **After it resumes**, check that `DESCRIBE HISTORY` advances every ~15 s again and the
+   retained WAL drains, then re-run the health check. `xc_reconciliation` passes once the backlog
+   has been committed.
