@@ -1,0 +1,724 @@
+{
+  "data_origin": "live_format_simulated",
+  "models": [
+    {
+      "breaches": [
+        {
+          "cleared_after_s": 52.7,
+          "lead_s": 96.8,
+          "onset_s_into_cycle": 231.8,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 98.7
+        },
+        {
+          "cleared_after_s": 48.0,
+          "lead_s": 104.3,
+          "onset_s_into_cycle": 234.3,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 103.7
+        },
+        {
+          "cleared_after_s": 50.5,
+          "lead_s": 10.1,
+          "onset_s_into_cycle": 230.1,
+          "plan_kind": "excursion",
+          "precursor": "none",
+          "precursor_lead_s": null
+        },
+        {
+          "cleared_after_s": 53.2,
+          "lead_s": 159.9,
+          "onset_s_into_cycle": 229.9,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 179.1
+        },
+        {
+          "cleared_after_s": 46.0,
+          "lead_s": 109.2,
+          "onset_s_into_cycle": 234.2,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 126.0
+        },
+        {
+          "cleared_after_s": 53.0,
+          "lead_s": 95.6,
+          "onset_s_into_cycle": 230.6,
+          "plan_kind": "excursion",
+          "precursor": "weak",
+          "precursor_lead_s": 109.0
+        },
+        {
+          "cleared_after_s": 51.4,
+          "lead_s": 107.3,
+          "onset_s_into_cycle": 232.3,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 111.8
+        },
+        {
+          "cleared_after_s": 43.5,
+          "lead_s": 17.0,
+          "onset_s_into_cycle": 237.0,
+          "plan_kind": "excursion",
+          "precursor": "none",
+          "precursor_lead_s": null
+        },
+        {
+          "cleared_after_s": 59.5,
+          "lead_s": 53.0,
+          "onset_s_into_cycle": 228.0,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 68.8
+        },
+        {
+          "cleared_after_s": 56.0,
+          "lead_s": 38.2,
+          "onset_s_into_cycle": 228.2,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 62.9
+        },
+        {
+          "cleared_after_s": 56.3,
+          "lead_s": 69.4,
+          "onset_s_into_cycle": 229.4,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 70.8
+        },
+        {
+          "cleared_after_s": 50.8,
+          "lead_s": 46.6,
+          "onset_s_into_cycle": 231.6,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 32.2
+        },
+        {
+          "cleared_after_s": 45.8,
+          "lead_s": 115.4,
+          "onset_s_into_cycle": 235.4,
+          "plan_kind": "excursion",
+          "precursor": "weak",
+          "precursor_lead_s": 140.5
+        },
+        {
+          "cleared_after_s": 44.9,
+          "lead_s": 56.4,
+          "onset_s_into_cycle": 236.4,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 35.9
+        },
+        {
+          "cleared_after_s": 60.6,
+          "lead_s": 45.6,
+          "onset_s_into_cycle": 225.6,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 47.8
+        },
+        {
+          "cleared_after_s": 55.6,
+          "lead_s": 70.4,
+          "onset_s_into_cycle": 230.4,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 69.7
+        },
+        {
+          "cleared_after_s": 56.6,
+          "lead_s": 163.8,
+          "onset_s_into_cycle": 228.8,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 171.5
+        },
+        {
+          "cleared_after_s": 55.5,
+          "lead_s": 94.9,
+          "onset_s_into_cycle": 229.9,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 94.3
+        },
+        {
+          "cleared_after_s": 56.2,
+          "lead_s": 14.4,
+          "onset_s_into_cycle": 229.4,
+          "plan_kind": "excursion",
+          "precursor": "none",
+          "precursor_lead_s": null
+        },
+        {
+          "cleared_after_s": 51.3,
+          "lead_s": 101.6,
+          "onset_s_into_cycle": 231.6,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 122.2
+        },
+        {
+          "cleared_after_s": 55.9,
+          "lead_s": 129.6,
+          "onset_s_into_cycle": 229.6,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 137.4
+        },
+        {
+          "cleared_after_s": 41.9,
+          "lead_s": 47.9,
+          "onset_s_into_cycle": 237.9,
+          "plan_kind": "excursion",
+          "precursor": "weak",
+          "precursor_lead_s": 48.0
+        },
+        {
+          "cleared_after_s": 56.6,
+          "lead_s": 114.1,
+          "onset_s_into_cycle": 229.1,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 155.2
+        },
+        {
+          "cleared_after_s": 53.3,
+          "lead_s": 60.4,
+          "onset_s_into_cycle": 230.4,
+          "plan_kind": "excursion",
+          "precursor": "weak",
+          "precursor_lead_s": 72.3
+        },
+        {
+          "cleared_after_s": 54.8,
+          "lead_s": 40.6,
+          "onset_s_into_cycle": 230.6,
+          "plan_kind": "excursion",
+          "precursor": "weak",
+          "precursor_lead_s": 30.2
+        },
+        {
+          "cleared_after_s": 47.6,
+          "lead_s": 100.3,
+          "onset_s_into_cycle": 235.3,
+          "plan_kind": "excursion",
+          "precursor": "weak",
+          "precursor_lead_s": 138.3
+        },
+        {
+          "cleared_after_s": 50.7,
+          "lead_s": 46.8,
+          "onset_s_into_cycle": 231.8,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 43.4
+        },
+        {
+          "cleared_after_s": 52.7,
+          "lead_s": 16.2,
+          "onset_s_into_cycle": 231.2,
+          "plan_kind": "excursion",
+          "precursor": "none",
+          "precursor_lead_s": null
+        },
+        {
+          "cleared_after_s": 41.3,
+          "lead_s": 46.3,
+          "onset_s_into_cycle": 236.3,
+          "plan_kind": "excursion",
+          "precursor": "weak",
+          "precursor_lead_s": 65.3
+        },
+        {
+          "cleared_after_s": 56.8,
+          "lead_s": 109.0,
+          "onset_s_into_cycle": 229.0,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 133.5
+        },
+        {
+          "cleared_after_s": 50.8,
+          "lead_s": 107.8,
+          "onset_s_into_cycle": 232.8,
+          "plan_kind": "excursion",
+          "precursor": "weak",
+          "precursor_lead_s": 113.1
+        },
+        {
+          "cleared_after_s": 57.0,
+          "lead_s": 134.4,
+          "onset_s_into_cycle": 229.4,
+          "plan_kind": "excursion",
+          "precursor": "weak",
+          "precursor_lead_s": 167.6
+        },
+        {
+          "cleared_after_s": 55.4,
+          "lead_s": 97.4,
+          "onset_s_into_cycle": 227.4,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 126.7
+        },
+        {
+          "cleared_after_s": 45.7,
+          "lead_s": 95.3,
+          "onset_s_into_cycle": 235.3,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 105.8
+        },
+        {
+          "cleared_after_s": 54.3,
+          "lead_s": 45.0,
+          "onset_s_into_cycle": 230.0,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 39.2
+        },
+        {
+          "cleared_after_s": 58.2,
+          "lead_s": 88.0,
+          "onset_s_into_cycle": 228.0,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 92.6
+        },
+        {
+          "cleared_after_s": 57.3,
+          "lead_s": 33.7,
+          "onset_s_into_cycle": 228.7,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 38.9
+        },
+        {
+          "cleared_after_s": 54.5,
+          "lead_s": 95.6,
+          "onset_s_into_cycle": 230.6,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 111.0
+        }
+      ],
+      "clear_threshold": 0.35,
+      "decision_threshold": 0.4,
+      "endpoint": "dev_<user>_pharma-twin-spindle-risk",
+      "false_alarms_by_cycle_plan": {
+        "false_alarm/bump": 4,
+        "false_alarm/fade": 5
+      },
+      "metrics": {
+        "alert_open_fraction": 0.3832,
+        "breaches": 38.0,
+        "breaches_warned": 38.0,
+        "breaches_warned_30s": 34.0,
+        "chance_warned_30s_mean": 0.283,
+        "chance_warned_30s_p95": 0.7368,
+        "false_alarms": 9.0,
+        "false_alarms_per_hour": 2.2594,
+        "hours": 3.9833,
+        "lead_p25_s": 46.36,
+        "lead_p75_s": 106.56,
+        "median_lead_s": 91.42,
+        "predicted_alerts": 50.0,
+        "rule_lead_s": -2.0,
+        "warned_30s_share": 0.8947
+      },
+      "model_version": "6",
+      "ready": "READY",
+      "warned_by_precursor": {
+        "none": {
+          "breaches": 4,
+          "warned_30s": 0
+        },
+        "strong": {
+          "breaches": 25,
+          "warned_30s": 25
+        },
+        "weak": {
+          "breaches": 9,
+          "warned_30s": 9
+        }
+      }
+    },
+    {
+      "breaches": [
+        {
+          "cleared_after_s": 52.7,
+          "lead_s": 96.8,
+          "onset_s_into_cycle": 231.8,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 98.7
+        },
+        {
+          "cleared_after_s": 48.0,
+          "lead_s": 109.3,
+          "onset_s_into_cycle": 234.3,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 103.7
+        },
+        {
+          "cleared_after_s": 50.5,
+          "lead_s": 5.1,
+          "onset_s_into_cycle": 230.1,
+          "plan_kind": "excursion",
+          "precursor": "none",
+          "precursor_lead_s": null
+        },
+        {
+          "cleared_after_s": 53.2,
+          "lead_s": 159.9,
+          "onset_s_into_cycle": 229.9,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 179.1
+        },
+        {
+          "cleared_after_s": 46.0,
+          "lead_s": 104.2,
+          "onset_s_into_cycle": 234.2,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 126.0
+        },
+        {
+          "cleared_after_s": 53.0,
+          "lead_s": 0.6,
+          "onset_s_into_cycle": 230.6,
+          "plan_kind": "excursion",
+          "precursor": "weak",
+          "precursor_lead_s": 109.0
+        },
+        {
+          "cleared_after_s": 51.4,
+          "lead_s": 107.3,
+          "onset_s_into_cycle": 232.3,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 111.8
+        },
+        {
+          "cleared_after_s": 43.5,
+          "lead_s": 7.0,
+          "onset_s_into_cycle": 237.0,
+          "plan_kind": "excursion",
+          "precursor": "none",
+          "precursor_lead_s": null
+        },
+        {
+          "cleared_after_s": 59.5,
+          "lead_s": 53.0,
+          "onset_s_into_cycle": 228.0,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 68.8
+        },
+        {
+          "cleared_after_s": 56.0,
+          "lead_s": 43.2,
+          "onset_s_into_cycle": 228.2,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 62.9
+        },
+        {
+          "cleared_after_s": 56.3,
+          "lead_s": 69.4,
+          "onset_s_into_cycle": 229.4,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 70.8
+        },
+        {
+          "cleared_after_s": 50.8,
+          "lead_s": 46.6,
+          "onset_s_into_cycle": 231.6,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 32.2
+        },
+        {
+          "cleared_after_s": 45.8,
+          "lead_s": 40.4,
+          "onset_s_into_cycle": 235.4,
+          "plan_kind": "excursion",
+          "precursor": "weak",
+          "precursor_lead_s": 140.5
+        },
+        {
+          "cleared_after_s": 44.9,
+          "lead_s": 51.4,
+          "onset_s_into_cycle": 236.4,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 35.9
+        },
+        {
+          "cleared_after_s": 60.6,
+          "lead_s": 45.6,
+          "onset_s_into_cycle": 225.6,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 47.8
+        },
+        {
+          "cleared_after_s": 55.6,
+          "lead_s": 70.4,
+          "onset_s_into_cycle": 230.4,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 69.7
+        },
+        {
+          "cleared_after_s": 56.6,
+          "lead_s": 158.8,
+          "onset_s_into_cycle": 228.8,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 171.5
+        },
+        {
+          "cleared_after_s": 55.5,
+          "lead_s": 94.9,
+          "onset_s_into_cycle": 229.9,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 94.3
+        },
+        {
+          "cleared_after_s": 56.2,
+          "lead_s": 4.4,
+          "onset_s_into_cycle": 229.4,
+          "plan_kind": "excursion",
+          "precursor": "none",
+          "precursor_lead_s": null
+        },
+        {
+          "cleared_after_s": 51.3,
+          "lead_s": 101.6,
+          "onset_s_into_cycle": 231.6,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 122.2
+        },
+        {
+          "cleared_after_s": 55.9,
+          "lead_s": 109.6,
+          "onset_s_into_cycle": 229.6,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 137.4
+        },
+        {
+          "cleared_after_s": 41.9,
+          "lead_s": 42.9,
+          "onset_s_into_cycle": 237.9,
+          "plan_kind": "excursion",
+          "precursor": "weak",
+          "precursor_lead_s": 48.0
+        },
+        {
+          "cleared_after_s": 56.6,
+          "lead_s": 114.1,
+          "onset_s_into_cycle": 229.1,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 155.2
+        },
+        {
+          "cleared_after_s": 53.3,
+          "lead_s": 30.4,
+          "onset_s_into_cycle": 230.4,
+          "plan_kind": "excursion",
+          "precursor": "weak",
+          "precursor_lead_s": 72.3
+        },
+        {
+          "cleared_after_s": 54.8,
+          "lead_s": 35.6,
+          "onset_s_into_cycle": 230.6,
+          "plan_kind": "excursion",
+          "precursor": "weak",
+          "precursor_lead_s": 30.2
+        },
+        {
+          "cleared_after_s": 47.6,
+          "lead_s": 45.3,
+          "onset_s_into_cycle": 235.3,
+          "plan_kind": "excursion",
+          "precursor": "weak",
+          "precursor_lead_s": 138.3
+        },
+        {
+          "cleared_after_s": 50.7,
+          "lead_s": 46.8,
+          "onset_s_into_cycle": 231.8,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 43.4
+        },
+        {
+          "cleared_after_s": 52.7,
+          "lead_s": 6.2,
+          "onset_s_into_cycle": 231.2,
+          "plan_kind": "excursion",
+          "precursor": "none",
+          "precursor_lead_s": null
+        },
+        {
+          "cleared_after_s": 41.3,
+          "lead_s": 11.3,
+          "onset_s_into_cycle": 236.3,
+          "plan_kind": "excursion",
+          "precursor": "weak",
+          "precursor_lead_s": 65.3
+        },
+        {
+          "cleared_after_s": 56.8,
+          "lead_s": 94.0,
+          "onset_s_into_cycle": 229.0,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 133.5
+        },
+        {
+          "cleared_after_s": 50.8,
+          "lead_s": 22.8,
+          "onset_s_into_cycle": 232.8,
+          "plan_kind": "excursion",
+          "precursor": "weak",
+          "precursor_lead_s": 113.1
+        },
+        {
+          "cleared_after_s": 57.0,
+          "lead_s": 9.4,
+          "onset_s_into_cycle": 229.4,
+          "plan_kind": "excursion",
+          "precursor": "weak",
+          "precursor_lead_s": 167.6
+        },
+        {
+          "cleared_after_s": 55.4,
+          "lead_s": 102.4,
+          "onset_s_into_cycle": 227.4,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 126.7
+        },
+        {
+          "cleared_after_s": 45.7,
+          "lead_s": 100.3,
+          "onset_s_into_cycle": 235.3,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 105.8
+        },
+        {
+          "cleared_after_s": 54.3,
+          "lead_s": 40.0,
+          "onset_s_into_cycle": 230.0,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 39.2
+        },
+        {
+          "cleared_after_s": 58.2,
+          "lead_s": 68.0,
+          "onset_s_into_cycle": 228.0,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 92.6
+        },
+        {
+          "cleared_after_s": 57.3,
+          "lead_s": 38.7,
+          "onset_s_into_cycle": 228.7,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 38.9
+        },
+        {
+          "cleared_after_s": 54.5,
+          "lead_s": 90.6,
+          "onset_s_into_cycle": 230.6,
+          "plan_kind": "excursion",
+          "precursor": "strong",
+          "precursor_lead_s": 111.0
+        }
+      ],
+      "clear_threshold": 0.42,
+      "decision_threshold": 0.47,
+      "endpoint": "pharma-twin-spindle-risk",
+      "false_alarms_by_cycle_plan": {
+        "false_alarm/bump": 5,
+        "false_alarm/fade": 4
+      },
+      "metrics": {
+        "alert_open_fraction": 0.3424,
+        "breaches": 38.0,
+        "breaches_warned": 38.0,
+        "breaches_warned_30s": 30.0,
+        "chance_warned_30s_mean": 0.237,
+        "chance_warned_30s_p95": 0.6592,
+        "false_alarms": 9.0,
+        "false_alarms_per_hour": 2.2594,
+        "hours": 3.9833,
+        "lead_p25_s": 36.34,
+        "lead_p75_s": 99.42,
+        "median_lead_s": 49.1,
+        "predicted_alerts": 54.0,
+        "rule_lead_s": -2.0,
+        "warned_30s_share": 0.7895
+      },
+      "model_version": "4",
+      "ready": "READY",
+      "warned_by_precursor": {
+        "none": {
+          "breaches": 4,
+          "warned_30s": 0
+        },
+        "strong": {
+          "breaches": 25,
+          "warned_30s": 25
+        },
+        "weak": {
+          "breaches": 9,
+          "warned_30s": 5
+        }
+      }
+    }
+  ],
+  "note": "SIMULATED scenario physics; held-out cycles replayed through the serving path",
+  "replay": {
+    "breaches": 38,
+    "cycle_plan_mix": {
+      "excursion/none": 4,
+      "excursion/strong": 25,
+      "excursion/weak": 9,
+      "false_alarm/bump": 3,
+      "false_alarm/fade": 4,
+      "quiet/none": 3
+    },
+    "cycles": 48,
+    "hours": 4.0,
+    "sample_rate_hz": 25.0,
+    "scoring_interval_s": 5.0,
+    "scoring_rounds": 2868,
+    "seed": 9001
+  },
+  "threshold_rule": {
+    "lead_s": -2.0,
+    "note": "opens duration_s after each onset",
+    "warned_30s_share": 0.0
+  }
+}

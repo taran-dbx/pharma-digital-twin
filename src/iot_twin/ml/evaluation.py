@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 
 def precision_recall_at(
@@ -141,3 +141,133 @@ def choose_threshold(
     if best_f1 is None:
         raise ValueError("no threshold candidates")
     return best_f1[0], "max_f1"
+
+
+# A challenger may raise false alarms by at most this much per hour of running.
+FALSE_ALARM_TOLERANCE_PER_H = 1.0
+# Qualification: what any version must show on pooled held-out cycles (the
+# test split plus a fresh replay; see iot_twin.ml.gate_stats).
+SIGNIFICANCE_P = 0.05
+FALSE_ALARM_CEILING_PER_H = 3.0  # the design budget, counting every flap
+GATE_METRIC = "discrimination_std_lo95"
+# Input invariance: re-scored with a non-signal input (hours_since_maintenance)
+# at INVARIANCE_HOURS, the same cycles must give the same answer within these.
+INVARIANCE_HOURS = (1500.0, 2500.0, 3000.0)
+INVARIANCE_DISCRIMINATION_TOL = 0.03
+INVARIANCE_FALSE_ALARM_TOL_PER_H = 0.3
+
+
+def qualifies(metrics: Mapping[str, float]) -> tuple[bool, list[str]]:
+    """Absolute checks for one model: ``(passes, problems)``. All are blocking.
+
+    * ``clear_threshold`` >= ``steady_clear_floor`` (steady-running p90 on
+      validation), else the alert would stay open through calm running;
+    * pooled ``false_alarms_per_hour`` <= ``FALSE_ALARM_CEILING_PER_H``;
+    * pooled ``warned_30s_share`` > ``clock_warned_30s_share`` (the best fixed
+      in-cycle window chosen on validation at this model's alert duty);
+    * pooled cycle-permutation ``permutation_p`` < ``SIGNIFICANCE_P``;
+    * ``discrimination_std_lo95`` > 0: the lower 95 % bootstrap bound of
+      discrimination standardised to the scenario's nominal plan mix;
+    * input invariance: re-scored with ``hours_since_maintenance`` at each of
+      ``INVARIANCE_HOURS`` (it carries no signal in the simulated scenario and
+      the live scorer sends a value that grows by 24 h a day), the ranges of
+      standardised discrimination and false alarms per hour stay within
+      ``INVARIANCE_DISCRIMINATION_TOL`` and ``INVARIANCE_FALSE_ALARM_TOL_PER_H``.
+    """
+    problems: list[str] = []
+    disc_range = metrics["invariance_discrimination_std_range"]
+    fa_range = metrics["invariance_false_alarms_per_hour_range"]
+    if disc_range > INVARIANCE_DISCRIMINATION_TOL or fa_range > INVARIANCE_FALSE_ALARM_TOL_PER_H:
+        problems.append(
+            "not invariant to hours_since_maintenance "
+            f"({'/'.join(f'{h:g}' for h in INVARIANCE_HOURS)} h): discrimination range "
+            f"{disc_range:.3f} (tol {INVARIANCE_DISCRIMINATION_TOL}), false alarms/h range "
+            f"{fa_range:.2f} (tol {INVARIANCE_FALSE_ALARM_TOL_PER_H})"
+        )
+    if metrics["clear_threshold"] < metrics["steady_clear_floor"]:
+        problems.append(
+            f"clear level {metrics['clear_threshold']:.3f} < steady-running p90 "
+            f"{metrics['steady_clear_floor']:.3f}"
+        )
+    if metrics["false_alarms_per_hour"] > FALSE_ALARM_CEILING_PER_H:
+        problems.append(
+            f"false alarms {metrics['false_alarms_per_hour']:.2f}/h > "
+            f"{FALSE_ALARM_CEILING_PER_H:g}/h"
+        )
+    if metrics["warned_30s_share"] <= metrics["clock_warned_30s_share"]:
+        problems.append(
+            f"warned>=30s {metrics['warned_30s_share']:.3f} <= clock baseline "
+            f"{metrics['clock_warned_30s_share']:.3f}"
+        )
+    if metrics["permutation_p"] >= SIGNIFICANCE_P:
+        problems.append(f"cycle-permutation p {metrics['permutation_p']:.4f} >= {SIGNIFICANCE_P}")
+    if metrics[GATE_METRIC] <= 0.0:
+        problems.append(
+            f"standardised discrimination lower 95 % bound {metrics[GATE_METRIC]:.3f} <= 0"
+        )
+    return not problems, problems
+
+
+def challenger_beats_champion(
+    challenger: Mapping[str, float],
+    champion: Mapping[str, float] | None,
+    *,
+    paired: tuple[float, float, float] | None = None,
+    false_alarm_tolerance_per_h: float = FALSE_ALARM_TOLERANCE_PER_H,
+) -> tuple[bool, str]:
+    """Promotion rule on the same pooled held-out cycles: ``(beats, reason)``.
+
+    The challenger must pass ``qualifies``. A champion that fails it is beaten
+    by any qualifying challenger. Against a qualifying champion the improvement
+    must be real, not noise: ``paired`` is the paired-bootstrap difference
+    (challenger minus champion) of standardised discrimination on the same
+    cycles, ``(estimate, lo95, hi95)``, and its lower bound must be above 0;
+    false alarms must stay within ``false_alarm_tolerance_per_h``. Ties keep
+    the incumbent.
+    """
+    ok, problems = qualifies(challenger)
+    if not ok:
+        return False, "challenger does not qualify: " + "; ".join(problems)
+    if champion is None:
+        return True, "challenger qualifies; no champion to compare against"
+    champion_ok, champion_problems = qualifies(champion)
+    if not champion_ok:
+        return True, "champion does not qualify: " + "; ".join(champion_problems)
+    if paired is None:
+        return False, "no paired comparison available; keeping the qualifying champion"
+    better = paired[1] > 0.0
+    alarms = (
+        challenger["false_alarms_per_hour"]
+        <= champion["false_alarms_per_hour"] + false_alarm_tolerance_per_h
+    )
+    summary = (
+        f"paired discrimination_std difference {paired[0]:+.3f} "
+        f"(95 % CI {paired[1]:+.3f} to {paired[2]:+.3f}), false alarms/h "
+        f"{challenger['false_alarms_per_hour']:.2f} vs {champion['false_alarms_per_hour']:.2f}"
+    )
+    return better and alarms, summary
+
+
+def best_by_gate(table: Mapping[str, Mapping[str, float]]) -> str | None:
+    """Version with the highest gate metric (ties: the newer version)."""
+    if not table:
+        return None
+    return max(table, key=lambda version: (table[version][GATE_METRIC], int(version)))
+
+
+def neutral_winner(table: Mapping[str, Mapping[str, float]]) -> str | None:
+    """Champion by neutral selection: among versions that pass ``qualifies``, the
+    highest standardised discrimination (point estimate) on the shared pooled
+    cycles; ties go to fewer false alarms, then the newer version. Incumbency
+    plays no part. ``None`` when no version qualifies."""
+    passing = [v for v, metrics in table.items() if qualifies(metrics)[0]]
+    if not passing:
+        return None
+    return max(
+        passing,
+        key=lambda v: (
+            table[v]["discrimination_std"],
+            -table[v]["false_alarms_per_hour"],
+            int(v),
+        ),
+    )

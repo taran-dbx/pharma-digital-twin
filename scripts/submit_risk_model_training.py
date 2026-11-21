@@ -40,7 +40,16 @@ def _args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--schema", default="pharma_twin")
     parser.add_argument("--model-name", default="spindle_thermal_risk")
     parser.add_argument("--telemetry-table", default="")
-    parser.add_argument("--data-source", default="auto", choices=("auto", "synthetic", "real"))
+    parser.add_argument(
+        "--data-source", default="auto", choices=("auto", "live_format", "synthetic", "real")
+    )
+    parser.add_argument("--promote", default="if_better", choices=("if_better", "always", "never"))
+    parser.add_argument(
+        "--extra",
+        action="append",
+        default=[],
+        help="extra training-task argument, repeatable (e.g. --extra=--live-runs=36)",
+    )
     parser.add_argument("--endpoint-name", default="")
     parser.add_argument("--create-endpoint", action="store_true")
     parser.add_argument("--workspace-dir", default="", help="default: ~/pharma-twin-risk-model")
@@ -83,6 +92,26 @@ def _upload(workspace, root: str, files: list[Path]) -> None:
         )
 
 
+def code_provenance() -> tuple[str, str, str]:
+    """``(git SHA, "true"/"false" dirty, source hash)`` of the tree being uploaded."""
+    import subprocess
+
+    sys.path.insert(0, str(REPO_ROOT / "src"))
+    from iot_twin.ml.provenance import source_hash
+
+    def git(*cmd: str) -> str:
+        try:
+            return subprocess.run(
+                ["git", *cmd], cwd=REPO_ROOT, check=True, capture_output=True, text=True
+            ).stdout.strip()
+        except (OSError, subprocess.CalledProcessError):
+            return ""
+
+    sha = git("rev-parse", "HEAD") or "unknown"
+    dirty = "true" if git("status", "--porcelain", "--", "ml", "src") else "false"
+    return sha, dirty, source_hash(REPO_ROOT)
+
+
 def task_parameters(args: argparse.Namespace, root: str) -> list[str]:
     params = [
         "--src-root",
@@ -103,6 +132,15 @@ def task_parameters(args: argparse.Namespace, root: str) -> list[str]:
         "true" if args.create_endpoint else "false",
         "--experiment",
         args.experiment or f"{root.removeprefix('/Workspace')}/experiment",
+        "--promote",
+        args.promote,
+        "--code-sha",
+        args.code_sha,
+        "--code-dirty",
+        args.code_dirty,
+        "--source-hash",
+        args.source_hash,
+        *args.extra,
     ]
     return params
 
@@ -116,6 +154,9 @@ def main(argv: list[str]) -> int:
         print("pass --profile <cli-profile> (or set DATABRICKS_CONFIG_PROFILE)", file=sys.stderr)
         return 2
     args = _args(rest)
+    args.code_sha, args.code_dirty, args.source_hash = code_provenance()
+    if args.code_dirty == "true":
+        print("warning: ml/ or src/ has uncommitted changes; the run logs code_dirty=true")
     workspace = WorkspaceClient(profile=profile)
     user = workspace.current_user.me().user_name
     root = args.workspace_dir or f"/Workspace/Users/{user}/pharma-twin-risk-model"

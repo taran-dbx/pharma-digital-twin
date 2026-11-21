@@ -1,0 +1,16 @@
+{
+  "name": "dev_<user>_pharma-twin-spindle-risk",
+  "served_entities": [
+    {
+      "entity_name": "<catalog>.pharma_twin.spindle_thermal_risk",
+      "entity_version": "7",
+      "name": "spindle_thermal_risk-7",
+      "scale_to_zero_enabled": true,
+      "workload_size": "Small"
+    }
+  ],
+  "state": {
+    "config_update": "NOT_UPDATING",
+    "ready": "READY"
+  }
+}
