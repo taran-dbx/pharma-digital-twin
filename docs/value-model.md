@@ -74,13 +74,17 @@ decision) minus `opened_at`. Signing a decision implies the alert was seen. The 
 TTA and is left out, never counted as 0 s. The response reports the coverage next to the
 statistics: `acknowledged_count` of `episodes_total`, `unacknowledged_count`, and
 `oldest_open_unacknowledged_age_s` (window end − `opened_at` of the oldest excursion that is still
-open and unacknowledged, `null` when there is none). With nothing acknowledged, `p50` / `p90` /
+open and unacknowledged, `null` when there is none). Like every open excursion, that age is capped
+at `max_open_excursion_s` (24 h, returned as `open_age_cap_s`), and
+`open_unacknowledged_past_cap_count` says how many open, unacknowledged excursions are older than
+the cap. With nothing acknowledged, `p50` / `p90` /
 `mean` / `max` are `null` and the view shows "None of *n* excursions acknowledged".
 
 **Time to disposition.** The first **containment** decision (`quarantine_lot` or
 `request_cmm_inspection`, or the legacy `hold_batch` / `send_to_inspect`) minus `opened_at`.
 Like TTA, it covers only contained excursions and reports `dispositioned_count` of
-`episodes_total`, `undispositioned_count` and `oldest_open_undispositioned_age_s`.
+`episodes_total`, `undispositioned_count`, `oldest_open_undispositioned_age_s` (capped the same
+way) and `open_undispositioned_past_cap_count`.
 
 **Release deadline.** `max(end of the onset part's lot cycle, opened_at + grace)`. The lot
 cycle end is when the lot leaves the mill for CMM and clean / pack. The grace
@@ -120,10 +124,16 @@ response reports `cleared_count` and `open_count` of `episodes_total`.
 
 **Coverage rule for every duration.** TTD, TTA, time to disposition and MTTR are computed over
 the excursions whose end event exists. Missing timestamps are excluded (`NULL`), never
-zero-filled, in both the SQL totals (`percentile_cont`, `AVG`, `MAX` with
-`FILTER (WHERE … IS NOT NULL)`) and the Python episode path (`ops_metrics.duration_stats`), and a
-parity test keeps the two equal. `count` is the number of excursions a statistic covers. TTD
-always covers every excursion, because every excursion has an onset.
+zero-filled. The summary always uses the SQL totals (`percentile_cont`, `AVG`, `MAX` with
+`FILTER (WHERE … IS NOT NULL)`). `ops_metrics.duration_stats` and `ops_metrics.open_waiting` are
+the Python reference for those columns: they are not a runtime path. The parity tests feed them
+each episode's `Episode.signed_durations` and check they equal the SQL. `count` is the number of
+excursions a statistic covers. TTD always covers every excursion, because every excursion has an
+onset.
+
+**Clock skew.** An end event stamped before the start (e.g. an acknowledgement or decision
+recorded before `opened_at` by a skewed clock) clamps to 0 s and is counted in that statistic's
+`clock_skew_count`, in SQL and Python alike.
 
 ## Savings model
 

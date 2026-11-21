@@ -105,6 +105,8 @@ export interface DurationStats {
   p50: number | null;
   p90: number | null;
   max: number | null;
+  /** Excursions whose end event is stamped before the start; counted, clamped to 0 s. */
+  clock_skew_count: number;
 }
 
 export interface RecentEvent {
@@ -148,6 +150,9 @@ export interface OpsSummary {
     unacknowledged_count: number;
     /** Seconds since the oldest still-open, unacknowledged excursion opened; null when none. */
     oldest_open_unacknowledged_age_s: number | null;
+    /** Open, unacknowledged excursions older than `open_age_cap_s` (the age is capped there). */
+    open_unacknowledged_past_cap_count: number;
+    open_age_cap_s: number | null;
     samples: number[];
   };
   time_to_disposition: DurationStats & {
@@ -155,6 +160,8 @@ export interface OpsSummary {
     dispositioned_count: number;
     undispositioned_count: number;
     oldest_open_undispositioned_age_s: number | null;
+    open_undispositioned_past_cap_count: number;
+    open_age_cap_s: number | null;
   };
   mttr: DurationStats & { episodes_total: number; cleared_count: number; open_count: number };
   ncrs_opened: number;

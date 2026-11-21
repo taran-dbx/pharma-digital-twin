@@ -38,7 +38,7 @@ from iot_twin.services.value.episodes import (
 )
 from iot_twin.services.value.ops_metrics import (
     duration_stats,
-    oldest_open_age,
+    open_waiting,
     ops_summary,
     percentile,
 )
@@ -526,9 +526,10 @@ class TestDurationCoverage:
         window = await fetch_episode_window(pg, _scope(pid), LOT_START - timedelta(hours=1), end)
         t = window.totals
         assert t.episodes == 4 and t.open_episodes == 2
-        assert t.tta == {"count": 2, "mean": 20.5, "p50": 20.5, "p90": 28.1, "max": 30.0}
-        assert t.ttdisp == {"count": 1, "mean": 30.0, "p50": 30.0, "p90": 30.0, "max": 30.0}
-        assert t.restore == {"count": 2, "mean": 50.0, "p50": 50.0, "p90": 58.0, "max": 60.0}
+        ok = {"clock_skew_count": 0}
+        assert t.tta == {"count": 2, "mean": 20.5, "p50": 20.5, "p90": 28.1, "max": 30.0, **ok}
+        assert t.ttdisp == {"count": 1, "mean": 30.0, "p50": 30.0, "p90": 30.0, "max": 30.0, **ok}
+        assert t.restore == {"count": 2, "mean": 50.0, "p50": 50.0, "p90": 58.0, "max": 60.0, **ok}
         assert t.ttd["count"] == 4 and t.ttd["p50"] == pytest.approx(3)
         idle_age = (end - opened["open_idle"]).total_seconds()
         assert t.oldest_open_unacknowledged_s == pytest.approx(idle_age)
@@ -552,6 +553,9 @@ class TestDurationCoverage:
             2,
         )
         assert tta["oldest_open_unacknowledged_age_s"] == idle_age
+        assert tta["open_unacknowledged_past_cap_count"] == 0
+        assert tta["open_age_cap_s"] == definitions().max_open_excursion_s
+        assert tta["clock_skew_count"] == 0
         disp = summary["time_to_disposition"]
         assert (
             disp["episodes_total"],
@@ -574,17 +578,7 @@ class TestDurationCoverage:
         window = await fetch_episode_window(pg, _scope(pid), LOT_START - timedelta(hours=1), end)
         recent = window.recent
         assert len(recent) == window.totals.episodes == 6
-        t = window.totals
-        assert t.ttd == duration_stats(e.time_to_detect_s for e in recent)
-        assert t.tta == duration_stats(e.time_to_acknowledge_s for e in recent)
-        assert t.ttdisp == duration_stats(e.time_to_disposition_s for e in recent)
-        assert t.restore == duration_stats(e.time_to_restore_s for e in recent)
-        assert t.oldest_open_unacknowledged_s == pytest.approx(
-            oldest_open_age(recent, end, lambda e: e.time_to_acknowledge_s)
-        )
-        assert t.oldest_open_undispositioned_s == pytest.approx(
-            oldest_open_age(recent, end, lambda e: e.time_to_disposition_s)
-        )
+        _assert_parity(window, end)
 
     @pytest.mark.asyncio
     async def test_nothing_acknowledged_is_null_not_zero_c7963_regression(self, pg) -> None:
@@ -615,6 +609,109 @@ class TestDurationCoverage:
         assert summary["mttr"]["mean"] == 20.0
 
 
+def _assert_parity(window, end: datetime) -> None:
+    """SQL totals equal the Python reference over every episode (recent must hold them all)."""
+    recent = window.recent
+    t = window.totals
+    assert len(recent) == t.episodes
+    for key, block in (
+        ("ttd", t.ttd),
+        ("tta", t.tta),
+        ("ttdisp", t.ttdisp),
+        ("restore", t.restore),
+    ):
+        assert block == duration_stats(e.signed_durations[key] for e in recent), key
+    cap = definitions().max_open_excursion_s
+    for measure, age, past in (
+        (
+            lambda e: e.time_to_acknowledge_s,
+            t.oldest_open_unacknowledged_s,
+            t.open_unacknowledged_past_cap,
+        ),
+        (
+            lambda e: e.time_to_disposition_s,
+            t.oldest_open_undispositioned_s,
+            t.open_undispositioned_past_cap,
+        ),
+    ):
+        py_age, py_past = open_waiting(recent, end, measure, cap)
+        assert (age is None) == (py_age is None)
+        if age is not None:
+            assert age == pytest.approx(py_age)
+        assert past == py_past
+    assert t.open_age_cap_s == cap
+
+
+class TestCapsAndSkew:
+    @pytest.mark.asyncio
+    async def test_waiting_age_capped_at_max_open_excursion_c7968_regression(self, pg) -> None:
+        """[C7968][regression] An episode open past max_open_excursion_s caps the age and is counted."""
+        pid = str(uuid.uuid4())
+        cap = definitions().max_open_excursion_s
+        t0 = LOT_START + timedelta(seconds=40)
+        stale, fresh = await _alert(pg, pid), await _alert(pg, pid)
+        await _event(pg, stale, "opened", t0, t0)
+        late = t0 + timedelta(seconds=cap + 3600)
+        await _event(pg, fresh, "opened", late, late)
+        end = late + timedelta(minutes=5)
+        window = await fetch_episode_window(pg, _scope(pid), t0 - timedelta(hours=1), end)
+        t = window.totals
+        assert t.oldest_open_unacknowledged_s == cap
+        assert t.open_unacknowledged_past_cap == 1
+        assert t.oldest_open_undispositioned_s == cap and t.open_undispositioned_past_cap == 1
+        tta = ops_summary(window)["time_to_acknowledge"]
+        assert tta["oldest_open_unacknowledged_age_s"] == cap
+        assert tta["open_unacknowledged_past_cap_count"] == 1
+        _assert_parity(window, end)
+
+    @pytest.mark.asyncio
+    async def test_clock_skew_counted_per_statistic_c7969_regression(self, pg) -> None:
+        """[C7969][regression] End events stamped before opening clamp to 0 and are counted."""
+        pid = str(uuid.uuid4())
+        t0 = LOT_START + timedelta(seconds=40)
+        a = await _alert(pg, pid)
+        await _event(pg, a, "opened", t0, t0)
+        await _event(pg, a, "acknowledged", t0 - timedelta(seconds=4), t0)
+        await _event(pg, a, "cleared", t0 + timedelta(seconds=30), t0)
+        await _decision(pg, a, t0, "quarantine_lot", t0 - timedelta(seconds=2))
+        b = await _alert(pg, pid)
+        t1 = t0 + timedelta(seconds=LOT_CYCLE_S * 5)
+        await _event(pg, b, "opened", t1, t1)
+        await _event(pg, b, "acknowledged", t1 + timedelta(seconds=10), t1)
+        end = t1 + timedelta(minutes=5)
+        window = await fetch_episode_window(pg, _scope(pid), t0 - timedelta(hours=1), end)
+        t = window.totals
+        assert t.tta["clock_skew_count"] == 1 and t.tta["count"] == 2
+        assert t.tta["p50"] == 5.0  # (0 + 10) / 2: the skewed one clamps to 0
+        assert t.ttdisp["clock_skew_count"] == 1 and t.ttdisp["max"] == 0.0
+        assert t.restore["clock_skew_count"] == 0
+        assert ops_summary(window)["time_to_acknowledge"]["clock_skew_count"] == 1
+        _assert_parity(window, end)
+
+    @pytest.mark.asyncio
+    async def test_only_older_episodes_acknowledged_c7970_regression(self, pg) -> None:
+        """[C7970][regression] Over 200 episodes, only older ones acked: totals count them, samples don't."""
+        pid = str(uuid.uuid4())
+        a = await _alert(pg, pid)
+        t0 = LOT_START + timedelta(seconds=10)
+        older = 30
+        for i in range(MAX_SAMPLES + older):
+            opened = t0 + timedelta(seconds=LOT_CYCLE_S * i)
+            await _event(pg, a, "opened", opened, opened)
+            if i < older:
+                await _event(pg, a, "acknowledged", opened + timedelta(seconds=7), opened)
+            await _event(pg, a, "cleared", opened + timedelta(seconds=30), opened)
+        window = await fetch_episode_window(
+            pg, _scope(pid), t0 - timedelta(hours=1), t0 + timedelta(days=2)
+        )
+        assert window.totals.tta["count"] == older
+        assert window.totals.tta["p50"] == 7.0
+        assert window.tta_samples == ()
+        assert window.meta()["samples_shown"] == MAX_SAMPLES
+        tta = ops_summary(window)["time_to_acknowledge"]
+        assert tta["acknowledged_count"] == older and tta["samples"] == []
+
+
 class TestPythonStats:
     def test_duration_stats_skip_missing_c7964_regression(self) -> None:
         """[C7964][regression] None is excluded; negatives clamp to 0 like the SQL."""
@@ -624,6 +721,7 @@ class TestPythonStats:
             "p50": None,
             "p90": None,
             "max": None,
+            "clock_skew_count": 0,
         }
         assert duration_stats([11.0, None, 30.0, None]) == {
             "count": 2,
@@ -631,10 +729,12 @@ class TestPythonStats:
             "p50": 20.5,
             "p90": 28.1,
             "max": 30.0,
+            "clock_skew_count": 0,
         }
-        assert duration_stats([-2.0, 4.0])["p50"] == 2.0
+        skewed = duration_stats([-2.0, 4.0])
+        assert skewed["p50"] == 2.0 and skewed["clock_skew_count"] == 1
 
-    def test_oldest_open_age_ignores_cleared_and_measured_c7965_regression(self) -> None:
+    def test_open_waiting_ignores_cleared_and_measured_c7965_regression(self) -> None:
         """[C7965][regression] Only open episodes still missing the end event have an age."""
         opened = LOT_START + timedelta(seconds=10)
         end = opened + timedelta(minutes=5)
@@ -645,8 +745,18 @@ class TestPythonStats:
         def tta(e: Episode) -> float | None:
             return e.time_to_acknowledge_s
 
-        assert oldest_open_age([cleared, acked], end, tta) is None
-        assert oldest_open_age([cleared, acked, idle], end, tta) == 240.0
+        assert open_waiting([cleared, acked], end, tta, 3600) == (None, 0)
+        assert open_waiting([cleared, acked, idle], end, tta, 3600) == (240.0, 0)
+        # capped like every open excursion, and counted past the cap
+        assert open_waiting([cleared, acked, idle], end, tta, 100) == (100.0, 1)
+
+    def test_signed_durations_keep_clock_skew_c7971_regression(self) -> None:
+        """[C7971][regression] An end event stamped before opening is negative, clamped elsewhere."""
+        opened = LOT_START + timedelta(seconds=10)
+        ep = _ep(opened, acknowledged_at=opened - timedelta(seconds=4))
+        assert ep.signed_durations["tta"] == -4.0
+        assert ep.time_to_acknowledge_s == 0.0
+        assert ep.signed_durations["ttdisp"] is None
 
 
 class TestPredictedAlertsAreNotExcursions:

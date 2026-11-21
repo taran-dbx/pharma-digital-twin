@@ -147,8 +147,11 @@ class TestEnvelope:
             "tta_max": 11.0,
             "restore_count": 71,
             "restore_mean": 40.0,
+            "tta_clock_skew_count": 2,
             "oldest_open_unacknowledged_s": 125.5,
             "oldest_open_undispositioned_s": 125.5,
+            "oldest_open_undispositioned_past_cap": 1,
+            "open_age_cap_s": 86400.0,
         }
         data = (await client.get("/api/ops/summary", params=_q())).json()["data"]
         tta = data["time_to_acknowledge"]
@@ -157,10 +160,15 @@ class TestEnvelope:
         assert tta["acknowledged_count"] == 1
         assert tta["unacknowledged_count"] == 72
         assert tta["oldest_open_unacknowledged_age_s"] == 125.5
+        assert tta["clock_skew_count"] == 2
+        assert tta["open_unacknowledged_past_cap_count"] == 0
+        assert tta["open_age_cap_s"] == 86400
         disp = data["time_to_disposition"]
         assert disp["count"] == 0 and disp["p50"] is None and disp["mean"] is None
         assert (disp["dispositioned_count"], disp["undispositioned_count"]) == (0, 73)
         assert disp["oldest_open_undispositioned_age_s"] == 125.5
+        assert disp["open_undispositioned_past_cap_count"] == 1
+        assert disp["clock_skew_count"] == 0
         mttr = data["mttr"]
         assert (mttr["cleared_count"], mttr["open_count"], mttr["episodes_total"]) == (71, 2, 73)
         assert data["time_to_detect"]["episodes_total"] == 73

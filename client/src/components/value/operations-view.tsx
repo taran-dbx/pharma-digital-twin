@@ -53,8 +53,8 @@ export function OperationsView({ scope, nonce }: { scope: SummaryScope; nonce: n
         <DurationHistogram
           title="Time to acknowledge"
           samples={data.time_to_acknowledge.samples}
-          caption={ackChart(data).caption}
-          emptyText={ackChart(data).empty}
+          caption={ackChart(data, meta.samples_shown).caption}
+          emptyText={ackChart(data, meta.samples_shown).empty}
         />
       </div>
       <RecentEvents events={data.recent_events} />

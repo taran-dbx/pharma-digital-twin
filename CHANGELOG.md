@@ -114,6 +114,16 @@ All notable changes to this project are documented here. The format follows
   operations view shows the coverage next to TTA, time to disposition and MTTR, and an
   empty state instead of "0 s" when nothing was acknowledged or contained. See
   `docs/value-model.md`.
+- Ops summary follow-ups:
+  - The waiting ages are capped at `max_open_excursion_s` (24 h, `open_age_cap_s`), with
+    `open_unacknowledged_past_cap_count` / `open_undispositioned_past_cap_count` for
+    open excursions past the cap.
+  - Each duration statistic has a `clock_skew_count` (end event stamped before the
+    start, clamped to 0 s).
+  - The acknowledge chart's empty state says "None of the latest *n* excursions
+    acknowledged" when only older ones were acknowledged. The tiles show the waiting
+    note with partial coverage too.
+  - `usecases/medtech/medtech_kpis.ipynb` notes where its TTA differs from the app.
 
 ### Removed
 - Legacy static pages and `/legacy` routes, unused modules, the duplicate simulator wheel,

@@ -11,8 +11,12 @@ episodes and say so in ``meta``.
 * **MTTR** = mean ``cleared_at - opened_at`` over cleared episodes.
 * Every duration statistic covers only the episodes whose end event exists
   (never zero-filled) and reports that coverage: e.g. ``acknowledged_count`` of
-  ``episodes_total``, ``unacknowledged_count`` and the age of the oldest open
-  episode still waiting (``oldest_open_unacknowledged_age_s``).
+  ``episodes_total``, ``unacknowledged_count``, the age of the oldest open
+  episode still waiting (``oldest_open_unacknowledged_age_s``, capped at
+  ``open_age_cap_s`` = ``max_open_excursion_s``), how many waiting episodes are
+  past that cap, and ``clock_skew_count`` (end event stamped before the start).
+* ``duration_stats`` / ``open_waiting`` are the Python references the parity
+  tests compare with the SQL; the summary itself always uses the SQL totals.
 * **projected right-first-time** = ``PROJECTED_RFT_DEFINITION`` with lots and
   parts deduped across the window's excursions.
 """
@@ -41,12 +45,18 @@ def percentile(values: Sequence[float], pct: float) -> float | None:
 
 
 def duration_stats(values: Iterable[float | None]) -> dict[str, Any]:
-    """count / mean / p50 / p90 / max over the measured values, as the SQL totals.
+    """Python reference for the SQL duration statistics (``episodes._stats``).
 
-    ``None`` (the end event never happened) is excluded, never counted as 0 s;
-    negative durations clamp to 0, as ``GREATEST(x, 0)`` does in SQL.
+    Not a runtime path: the summary always uses the SQL totals. The parity
+    tests feed it each episode's ``Episode.signed_durations`` and check it
+    equals the SQL block, so the two definitions cannot drift.
+
+    ``None`` (the end event never happened) is excluded, never counted as 0 s.
+    A negative value (end event stamped before the start: clock skew) is
+    counted in ``clock_skew_count`` and clamps to 0, as ``GREATEST(x, 0)``.
     """
-    measured = [max(0.0, float(v)) for v in values if v is not None]
+    signed = [float(v) for v in values if v is not None]
+    measured = [max(0.0, v) for v in signed]
 
     def r(value: float | None) -> float | None:
         return round(value, 3) if value is not None else None
@@ -57,19 +67,30 @@ def duration_stats(values: Iterable[float | None]) -> dict[str, Any]:
         "p50": r(percentile(measured, 50)),
         "p90": r(percentile(measured, 90)),
         "max": r(max(measured)) if measured else None,
+        "clock_skew_count": sum(1 for v in signed if v < 0),
     }
 
 
-def oldest_open_age(
-    episodes: Iterable[Episode], now: datetime, measure: Callable[[Episode], float | None]
-) -> float | None:
-    """Seconds since the oldest still-open episode whose ``measure`` is missing opened."""
+def open_waiting(
+    episodes: Iterable[Episode],
+    now: datetime,
+    measure: Callable[[Episode], float | None],
+    cap_s: float,
+) -> tuple[float | None, int]:
+    """Python reference for the SQL ``oldest_open_*`` columns (parity tests only).
+
+    Returns the age of the oldest still-open episode whose ``measure`` is
+    missing, clamped to [0, ``cap_s``] (``max_open_excursion_s``), or None
+    when there is none; and how many such episodes are older than the cap.
+    """
     ages = [
-        max(0.0, (now - e.opened_at).total_seconds())
+        (now - e.opened_at).total_seconds()
         for e in episodes
         if e.cleared_at is None and measure(e) is None
     ]
-    return max(ages) if ages else None
+    if not ages:
+        return None, 0
+    return min(max(0.0, max(ages)), cap_s), sum(1 for a in ages if a > cap_s)
 
 
 def _coverage(stats: dict[str, Any], total: int, measured: str, missing: str) -> dict[str, Any]:
@@ -151,11 +172,15 @@ def ops_summary(window: EpisodeWindow) -> dict[str, Any]:
         "time_to_acknowledge": {
             **_coverage(t.tta, t.episodes, "acknowledged_count", "unacknowledged_count"),
             "oldest_open_unacknowledged_age_s": _age(t.oldest_open_unacknowledged_s),
+            "open_unacknowledged_past_cap_count": t.open_unacknowledged_past_cap,
+            "open_age_cap_s": t.open_age_cap_s,
             "samples": [round(v, 3) for v in window.tta_samples],
         },
         "time_to_disposition": {
             **_coverage(t.ttdisp, t.episodes, "dispositioned_count", "undispositioned_count"),
             "oldest_open_undispositioned_age_s": _age(t.oldest_open_undispositioned_s),
+            "open_undispositioned_past_cap_count": t.open_undispositioned_past_cap,
+            "open_age_cap_s": t.open_age_cap_s,
         },
         "mttr": _coverage(t.restore, t.episodes, "cleared_count", "open_count"),
         "ncrs_opened": t.ncrs_opened,

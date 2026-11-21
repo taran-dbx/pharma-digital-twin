@@ -111,7 +111,9 @@ function measuredMedian(stats: { count: number; p50: number | null }): string {
   return stats.count > 0 ? formatDuration(stats.p50) : EMPTY;
 }
 
-function waitingNote(ageS: number | null): string {
+/** " · oldest open waiting 2.5 min", or " · 2 open over 24 h" once the capped age is reached. */
+function waitingNote(ageS: number | null, pastCap: number, capS: number | null): string {
+  if (pastCap > 0) return ` · ${pastCap} open over ${formatDuration(capS ?? ageS)}`;
   return ageS === null ? "" : ` · oldest open waiting ${formatDuration(ageS)}`;
 }
 
@@ -119,18 +121,20 @@ function waitingNote(ageS: number | null): string {
 function ttaFoot(ops: OpsSummary): string {
   const t = ops.time_to_acknowledge;
   if (t.episodes_total === 0) return "No excursions yet";
-  if (t.count === 0) return `None of ${plural(t.episodes_total, "excursion")} acknowledged${waitingNote(t.oldest_open_unacknowledged_age_s)}`;
+  const waiting = waitingNote(t.oldest_open_unacknowledged_age_s, t.open_unacknowledged_past_cap_count, t.open_age_cap_s);
+  if (t.count === 0) return `None of ${plural(t.episodes_total, "excursion")} acknowledged${waiting}`;
   const missing = t.unacknowledged_count ? ` · ${t.unacknowledged_count} not acknowledged` : "";
-  return `median over ${t.acknowledged_count} of ${t.episodes_total} acknowledged · p90 ${formatDuration(t.p90)}${missing}`;
+  return `median over ${t.acknowledged_count} of ${t.episodes_total} acknowledged · p90 ${formatDuration(t.p90)}${missing}${waiting}`;
 }
 
 function ttdispFoot(ops: OpsSummary): string {
   const d = ops.time_to_disposition;
   const lotGone = ops.deadline_before_alert ? ` · ${ops.deadline_before_alert} with the lot gone before the alert` : "";
   if (d.episodes_total === 0) return "No excursions yet";
-  if (d.count === 0) return `None of ${plural(d.episodes_total, "excursion")} contained${waitingNote(d.oldest_open_undispositioned_age_s)}${lotGone}`;
+  const waiting = waitingNote(d.oldest_open_undispositioned_age_s, d.open_undispositioned_past_cap_count, d.open_age_cap_s);
+  if (d.count === 0) return `None of ${plural(d.episodes_total, "excursion")} contained${waiting}${lotGone}`;
   const missing = d.undispositioned_count ? ` · ${d.undispositioned_count} not contained` : "";
-  return `median over ${d.dispositioned_count} of ${d.episodes_total} contained${missing} · ${ops.caught_in_time} in time${lotGone}`;
+  return `median over ${d.dispositioned_count} of ${d.episodes_total} contained${missing}${waiting} · ${ops.caught_in_time} in time${lotGone}`;
 }
 
 function mttrFoot(ops: OpsSummary): string {
@@ -139,13 +143,20 @@ function mttrFoot(ops: OpsSummary): string {
   return `Mean over ${m.cleared_count} of ${m.episodes_total} cleared${m.open_count ? ` · ${m.open_count} still open` : ""}`;
 }
 
-/** Caption and empty state for the time-to-acknowledge distribution. */
-export function ackChart(ops: OpsSummary): { caption: string; empty: string } {
+/**
+ * Caption and empty state for the time-to-acknowledge distribution. The
+ * samples are only the latest `samplesShown` excursions, so an empty chart
+ * with acknowledgements in the totals means only older ones were acknowledged.
+ */
+export function ackChart(ops: OpsSummary, samplesShown: number): { caption: string; empty: string } {
   const t = ops.time_to_acknowledge;
   const base = "Alert open to the first acknowledgement or signed decision.";
+  let empty = "No excursions in this window yet.";
+  if (t.episodes_total && t.acknowledged_count === 0) empty = `None of ${plural(t.episodes_total, "excursion")} acknowledged yet.`;
+  else if (t.episodes_total) empty = `None of the latest ${plural(samplesShown, "excursion")} acknowledged.`;
   return {
     caption: t.episodes_total ? `${base} ${t.acknowledged_count} of ${t.episodes_total} acknowledged.` : base,
-    empty: t.episodes_total ? `None of ${plural(t.episodes_total, "excursion")} acknowledged yet.` : "No excursions in this window yet.",
+    empty,
   };
 }
 
