@@ -87,6 +87,16 @@ def _spindle_samples(ns: dict, ticks: int) -> list[float]:
     return values
 
 
+def _cycle_start(ns: dict, s: dict, kind: str, precursor: str | None = None) -> int:
+    """Start of the first cycle from 1_800_000_000 whose shared plan matches."""
+    first = 1_800_000_000 // s["cycleSeconds"]
+    for index in range(first, first + 500):
+        plan = ns["spindle_cycle_plan"](index)
+        if plan.kind == kind and (precursor is None or plan.precursor == precursor):
+            return index * s["cycleSeconds"]
+    raise AssertionError(f"no {kind}/{precursor} cycle found")
+
+
 def _spindle_limit() -> tuple[float, float]:
     rule = next(
         r for r in list_alert_rules("manufacturing") if r.rule_id == "mfg-alert-spindle-temp"
@@ -116,7 +126,7 @@ class TestProducerSignal:
         """[C7322][smoke] The scheduled event crosses the limit and returns to normal."""
         ns, s = _namespace("manufacturing")
         threshold, hysteresis = _spindle_limit()
-        cycle_start = 1_800_000_000 - (1_800_000_000 % s["cycleSeconds"])
+        cycle_start = _cycle_start(ns, s, "excursion")
 
         def at(offset: float, value: float = 45.0) -> dict:
             payload = {
@@ -150,17 +160,32 @@ class TestProducerSignal:
         assert at(overheat_start + 1, value=74.0)["value"] == 75.0
 
     def test_other_sensors_keep_their_values_c7323_regression(self) -> None:
-        """[C7323][regression] Only Spindle 3 temperature carries the thermal excursion."""
+        """[C7323][regression] Outside a precursor, spindle vibration is untouched and never flagged."""
         ns, s = _namespace("manufacturing")
         payload = {
             "sensor_name": "cnc_1_vibration",
             "value": 2.0,
-            "timestamp": float(s["normalSeconds"] + 40),
+            "timestamp": float(_cycle_start(ns, s, "quiet") + s["normalSeconds"] + 40),
         }
         out = ns["_apply_scenario"](dict(payload))
         assert out["value"] == 2.0
         assert "fault_active" not in out
         assert "phase" not in out["metadata"]
+
+    def test_precursor_raises_vibration_and_power_without_a_tell_c7323_regression(self) -> None:
+        """[C7323][regression] A strong precursor lifts vibration and power before the ramp, unflagged."""
+        ns, s = _namespace("manufacturing")
+        start = _cycle_start(ns, s, "excursion", precursor="strong")
+        at = float(start + s["normalSeconds"] - 2)
+        vib = ns["_apply_scenario"](
+            {"sensor_name": "cnc_1_vibration", "value": 2.0, "timestamp": at}
+        )
+        power = ns["_apply_scenario"](
+            {"sensor_name": "cnc_1_spindle_power", "value": 20.0, "timestamp": at}
+        )
+        assert vib["value"] > 2.0
+        assert power["value"] > 20.0
+        assert "fault_active" not in vib and "phase" not in vib.get("metadata", {})
 
     def test_mill_readings_carry_the_python_lot_clock_c7814_smoke(self) -> None:
         """[C7814][smoke] The producer stamps the same lot/part/UDI/DHR as lot_context.py."""

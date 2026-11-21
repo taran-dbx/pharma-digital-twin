@@ -1,12 +1,18 @@
+import { SPINDLE_SCENARIO_PYTHON } from "./generated/spindle-scenario-python";
 import { lotContextPython } from "./manufacturing-lot";
 
 /**
- * Scheduled Spindle 3 thermal excursion for the implant cell's realtime producer.
+ * Scheduled Spindle 3 thermal episodes for the implant cell's realtime producer.
  *
- * The producer notebook applies this schedule to `cnc_1_spindle_temp` on the
- * wall clock, so every consumer (Lakebase, SSE, alert engine) sees the same
- * device readings. The dashboard reads the same constants to show when the
- * next prepared event fires; it never synthesizes readings itself.
+ * The episodes are SIMULATED physics. The generator is the Python module
+ * `src/iot_twin/scenario_engine/spindle_scenario.py`, which the producer notebook
+ * embeds verbatim and the risk model's training data imports, so live and
+ * training data come from one generator. Each 300 s cycle draws a plan from a
+ * deterministic per-cycle PRNG: most cycles have an excursion (often with a
+ * noisy vibration / power precursor of random lead), some are false alarms
+ * and some are quiet. The dashboard ports only the PRNG and the first draw
+ * (excursion or not) to show when the next excursion is due; a Python test
+ * checks that the two agree. It never synthesizes readings itself.
  */
 
 export const SPINDLE_HEAT_SCENARIO = {
@@ -17,13 +23,15 @@ export const SPINDLE_HEAT_SCENARIO = {
   rampSeconds: 30,
   holdSeconds: 30,
   peakDeltaC: 25,
+  planSeed: 20261121,
+  excursionShare: 0.7,
 } as const;
 
 export type SpindleHeatPhase = "normal" | "heating" | "overheat" | "cooling";
 
 export interface SpindleHeatState {
   phase: SpindleHeatPhase;
-  /** Seconds until the next heat event starts (0 while one is in progress). */
+  /** Seconds until the next excursion starts (0 while one is in progress). */
   secondsToNextEvent: number;
   /** Seconds until the current phase ends. */
   secondsLeftInPhase: number;
@@ -35,12 +43,41 @@ const COOL_SECONDS =
   SPINDLE_HEAT_SCENARIO.rampSeconds -
   SPINDLE_HEAT_SCENARIO.holdSeconds;
 
+/** Cycles searched ahead for the next excursion (the share makes a long gap unlikely). */
+const MAX_LOOKAHEAD_CYCLES = 64;
+
+/** First mulberry32 draw of cycle `index`; mirrors `spindle_cycle_draws` in Python. */
+export function spindleCycleDraw(index: number): number {
+  let state = (SPINDLE_HEAT_SCENARIO.planSeed ^ Math.imul(index | 0, 0x9e3779b1)) >>> 0;
+  state = (state + 0x6d2b79f5) >>> 0;
+  let t = Math.imul(state ^ (state >>> 15), state | 1);
+  t = (t + Math.imul(t ^ (t >>> 7), t | 61)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+
+/** True when cycle `index` (`floor(epoch / cycleSeconds)`) has a heat excursion. */
+export function spindleCycleHasExcursion(index: number): boolean {
+  return spindleCycleDraw(index) < SPINDLE_HEAT_SCENARIO.excursionShare;
+}
+
+function secondsToNextExcursion(cycle: number, t: number): number {
+  const { cycleSeconds, normalSeconds } = SPINDLE_HEAT_SCENARIO;
+  if (t < normalSeconds && spindleCycleHasExcursion(cycle)) return normalSeconds - t;
+  for (let ahead = 1; ahead <= MAX_LOOKAHEAD_CYCLES; ahead += 1) {
+    if (spindleCycleHasExcursion(cycle + ahead)) {
+      return ahead * cycleSeconds + normalSeconds - t;
+    }
+  }
+  return MAX_LOOKAHEAD_CYCLES * cycleSeconds + normalSeconds - t;
+}
+
 export function spindleHeatStateAt(epochSeconds: number): SpindleHeatState {
   const { cycleSeconds, normalSeconds, rampSeconds, holdSeconds } = SPINDLE_HEAT_SCENARIO;
-  const t = ((epochSeconds % cycleSeconds) + cycleSeconds) % cycleSeconds;
-  if (t < normalSeconds) {
-    const left = normalSeconds - t;
-    return { phase: "normal", secondsToNextEvent: left, secondsLeftInPhase: left };
+  const cycle = Math.floor(epochSeconds / cycleSeconds);
+  const t = epochSeconds - cycle * cycleSeconds;
+  if (t < normalSeconds || !spindleCycleHasExcursion(cycle)) {
+    const next = secondsToNextExcursion(cycle, t);
+    return { phase: "normal", secondsToNextEvent: next, secondsLeftInPhase: next };
   }
   const heatingEnd = normalSeconds + rampSeconds;
   if (t < heatingEnd) {
@@ -148,36 +185,20 @@ def _production_allows(payload):
     return True`;
   }
 
-  const s = SPINDLE_HEAT_SCENARIO;
   return `${calibrate}
 
-# Scheduled Spindle 3 thermal excursion on the wall clock: the spindle drifts
-# past its validated limit, putting the stems cut meanwhile at risk of a
-# dimensional nonconformance. Random simulator faults are disabled so this is
-# the only fault the dashboard narrates.
+# Scheduled Spindle 3 thermal episodes (SIMULATED physics): most cycles drift
+# past the validated limit, putting the stems cut meanwhile at risk of a
+# dimensional nonconformance, often after a noisy vibration / power precursor.
+# The generator below is src/iot_twin/scenario_engine/spindle_scenario.py,
+# embedded verbatim; the risk model trains on the same code. Random simulator
+# faults are disabled so these are the only faults the dashboard narrates.
 SCENARIO_ENABLED = True
-SCENARIO_ID = "${s.id}"
-SCENARIO_SENSOR = "${s.sensorName}"
-SCENARIO_CYCLE_S = ${s.cycleSeconds}
-SCENARIO_NORMAL_S = ${s.normalSeconds}
-SCENARIO_RAMP_S = ${s.rampSeconds}
-SCENARIO_HOLD_S = ${s.holdSeconds}
-SCENARIO_COOL_S = ${COOL_SECONDS}
-SCENARIO_PEAK_DELTA = ${s.peakDeltaC.toFixed(1)}
 
+${SPINDLE_SCENARIO_PYTHON}
 
-def _scenario_phase(now):
-    t = now % SCENARIO_CYCLE_S
-    if t < SCENARIO_NORMAL_S:
-        return "normal", 0.0
-    t -= SCENARIO_NORMAL_S
-    if t < SCENARIO_RAMP_S:
-        return "heating", SCENARIO_PEAK_DELTA * t / SCENARIO_RAMP_S
-    t -= SCENARIO_RAMP_S
-    if t < SCENARIO_HOLD_S:
-        return "overheat", SCENARIO_PEAK_DELTA
-    t -= SCENARIO_HOLD_S
-    return "cooling", SCENARIO_PEAK_DELTA * max(0.0, 1.0 - t / SCENARIO_COOL_S)
+# Per-sample precursor noise; the per-cycle plan itself is deterministic.
+_scenario_rng = random.Random()
 
 
 ${lotContextPython()}
@@ -186,23 +207,11 @@ ${lotContextPython()}
 def _apply_scenario(payload):
     name = str(payload.get("sensor_name") or "")
     if name.startswith(LOT_SENSOR_PREFIX):
-        payload["metadata"] = {
-            **(payload.get("metadata") or {}),
-            **_lot_context(payload["timestamp"]),
+        payload = {
+            **payload,
+            "metadata": {**(payload.get("metadata") or {}), **_lot_context(payload["timestamp"])},
         }
-    if name != SCENARIO_SENSOR:
-        return payload
-    phase, delta = _scenario_phase(payload["timestamp"])
-    value = payload["value"] + delta
-    ceiling = payload.get("max_value")
-    payload["value"] = min(ceiling, value) if ceiling is not None else value
-    payload["fault_active"] = phase != "normal"
-    payload["metadata"] = {
-        **(payload.get("metadata") or {}),
-        "scenario_id": SCENARIO_ID,
-        "phase": phase,
-    }
-    return payload
+    return apply_spindle_scenario(payload, _scenario_rng)
 
 
 ${PRODUCTION_CONTROL_PYTHON}`;
