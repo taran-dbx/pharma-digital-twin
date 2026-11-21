@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { envelopeError, summaryQuery, type Actuals, type OpsSummary, type Projection, type SummaryMeta, type ValueSummary } from "@/lib/value-api";
 import {
+  ackChart,
   binDurations,
   compactUsd,
   decisionsText,
@@ -126,13 +127,45 @@ describe("executive tiles", () => {
 });
 
 describe("operations tiles and bins", () => {
+  const NONE = { count: 0, mean: null, p50: null, p90: null, max: null, clock_skew_count: 0 };
+  const tta = (over: Partial<OpsSummary["time_to_acknowledge"]> = {}): OpsSummary["time_to_acknowledge"] => ({
+    count: 1,
+    mean: 20,
+    p50: 20,
+    p90: 20,
+    max: 20,
+    episodes_total: 2,
+    acknowledged_count: 1,
+    unacknowledged_count: 1,
+    oldest_open_unacknowledged_age_s: null,
+    open_unacknowledged_past_cap_count: 0,
+    open_age_cap_s: 86_400,
+    clock_skew_count: 0,
+    samples: [20],
+    ...over,
+  });
+  const ttdisp = (over: Partial<OpsSummary["time_to_disposition"]> = {}): OpsSummary["time_to_disposition"] => ({
+    count: 1,
+    mean: 25,
+    p50: 25,
+    p90: 25,
+    max: 25,
+    episodes_total: 2,
+    dispositioned_count: 1,
+    undispositioned_count: 1,
+    oldest_open_undispositioned_age_s: null,
+    open_undispositioned_past_cap_count: 0,
+    open_age_cap_s: 86_400,
+    clock_skew_count: 0,
+    ...over,
+  });
   const ops = (over: Partial<OpsSummary> = {}): OpsSummary => ({
     episodes: 2,
     open_episodes: 0,
-    time_to_detect: { count: 2, mean: 3, p50: 3, p90: 4, max: 4, from_first_reading: 1, from_rule_duration: 1, samples: [2, 4] },
-    time_to_acknowledge: { count: 1, mean: 20, p50: 20, p90: 20, max: 20, samples: [20] },
-    time_to_disposition: { count: 1, mean: 25, p50: 25, p90: 25, max: 25 },
-    mttr: { count: 2, mean: 95, p50: 95, p90: 95, max: 100 },
+    time_to_detect: { count: 2, mean: 3, p50: 3, p90: 4, max: 4, clock_skew_count: 0, episodes_total: 2, from_first_reading: 1, from_rule_duration: 1, samples: [2, 4] },
+    time_to_acknowledge: tta(),
+    time_to_disposition: ttdisp(),
+    mttr: { count: 2, mean: 95, p50: 95, p90: 95, max: 100, clock_skew_count: 0, episodes_total: 2, cleared_count: 2, open_count: 0 },
     ncrs_opened: 1,
     cmm_inspections: 2,
     lots_quarantined_events: 1,
@@ -162,8 +195,10 @@ describe("operations tiles and bins", () => {
     const empty = opsTiles(
       ops({
         episodes: 0,
-        time_to_detect: { count: 0, mean: null, p50: null, p90: null, max: null, from_first_reading: 0, from_rule_duration: 0, samples: [] },
-        mttr: { count: 0, mean: null, p50: null, p90: null, max: null },
+        time_to_detect: { ...NONE, episodes_total: 0, from_first_reading: 0, from_rule_duration: 0, samples: [] },
+        time_to_acknowledge: tta({ ...NONE, episodes_total: 0, acknowledged_count: 0, unacknowledged_count: 0, samples: [] }),
+        time_to_disposition: ttdisp({ ...NONE, episodes_total: 0, dispositioned_count: 0, undispositioned_count: 0 }),
+        mttr: { ...NONE, episodes_total: 0, cleared_count: 0, open_count: 0 },
         projected_rft: { label: "Projected right-first-time", pct: null, parts_started: 0, parts_at_risk: 0, lots: 0 },
       }),
     );
@@ -172,6 +207,74 @@ describe("operations tiles and bins", () => {
     expect(byId.inspections.value).toBe("—");
     expect(byId.rft.value).toBe("—");
     expect(byId.mttr.foot).toBe("No excursion cleared yet");
+  });
+
+  it("shows TTA coverage: the median covers only the acknowledged excursions", () => {
+    const byId = Object.fromEntries(
+      opsTiles(ops({ episodes: 73, time_to_acknowledge: tta({ p50: 11, p90: 11, episodes_total: 73, acknowledged_count: 1, unacknowledged_count: 72 }) })).map((t) => [t.id, t]),
+    );
+    expect(byId.tta.value).toBe("11 s");
+    expect(byId.tta.foot).toBe("median over 1 of 73 acknowledged · p90 11 s · 72 not acknowledged");
+  });
+
+  it("shows an empty TTA, never 0 s, when nothing was acknowledged", () => {
+    const none = tta({ ...NONE, p50: 0, episodes_total: 73, acknowledged_count: 0, unacknowledged_count: 73, oldest_open_unacknowledged_age_s: 150, samples: [] });
+    const byId = Object.fromEntries(opsTiles(ops({ episodes: 73, time_to_acknowledge: none })).map((t) => [t.id, t]));
+    expect(byId.tta.value).toBe("—");
+    expect(byId.tta.foot).toBe("None of 73 excursions acknowledged · oldest open waiting 2.5 min");
+    expect(ackChart(ops({ episodes: 73, time_to_acknowledge: none }), 73)).toEqual({
+      caption: "Alert open to the first acknowledgement or signed decision. 0 of 73 acknowledged.",
+      empty: "None of 73 excursions acknowledged yet.",
+    });
+  });
+
+  it("over 200 excursions with only older ones acknowledged, names the latest sample, not 'none'", () => {
+    const olderOnly = tta({ count: 30, p50: 7, p90: 7, episodes_total: 230, acknowledged_count: 30, unacknowledged_count: 200, samples: [] });
+    const chart = ackChart(ops({ episodes: 230, time_to_acknowledge: olderOnly }), 200);
+    expect(chart.empty).toBe("None of the latest 200 excursions acknowledged.");
+    expect(chart.caption).toBe("Alert open to the first acknowledgement or signed decision. 30 of 230 acknowledged.");
+  });
+
+  it("shows the waiting note with partial coverage, and the cap once reached", () => {
+    const partial = tta({ p50: 11, p90: 11, episodes_total: 73, acknowledged_count: 1, unacknowledged_count: 72, oldest_open_unacknowledged_age_s: 150 });
+    const foot = (t: OpsSummary["time_to_acknowledge"]) => opsTiles(ops({ episodes: 73, time_to_acknowledge: t })).find((x) => x.id === "tta")?.foot;
+    expect(foot(partial)).toBe("median over 1 of 73 acknowledged · p90 11 s · 72 not acknowledged · oldest open waiting 2.5 min");
+    expect(foot({ ...partial, oldest_open_unacknowledged_age_s: 86_400, open_unacknowledged_past_cap_count: 2 })).toBe(
+      "median over 1 of 73 acknowledged · p90 11 s · 72 not acknowledged · 2 open over 24 h",
+    );
+    const disp = opsTiles(
+      ops({ episodes: 4, time_to_disposition: ttdisp({ p50: 30, episodes_total: 4, dispositioned_count: 1, undispositioned_count: 3, oldest_open_undispositioned_age_s: 40 }) }),
+    ).find((x) => x.id === "ttdisp");
+    expect(disp?.foot).toBe("median over 1 of 4 contained · 3 not contained · oldest open waiting 40 s · 1 in time · 1 with the lot gone before the alert");
+  });
+
+  it("shows disposition and MTTR coverage", () => {
+    const byId = Object.fromEntries(
+      opsTiles(
+        ops({
+          episodes: 4,
+          time_to_disposition: ttdisp({ p50: 30, episodes_total: 4, dispositioned_count: 1, undispositioned_count: 3 }),
+          mttr: { count: 2, mean: 50, p50: 50, p90: 58, max: 60, clock_skew_count: 0, episodes_total: 4, cleared_count: 2, open_count: 2 },
+        }),
+      ).map((t) => [t.id, t]),
+    );
+    expect(byId.ttdisp.value).toBe("30 s");
+    expect(byId.ttdisp.foot).toBe("median over 1 of 4 contained · 3 not contained · 1 in time · 1 with the lot gone before the alert");
+    expect(byId.mttr.foot).toBe("Mean over 2 of 4 cleared · 2 still open");
+    const none = opsTiles(
+      ops({ time_to_disposition: ttdisp({ ...NONE, mean: 0, p50: 0, dispositioned_count: 0, undispositioned_count: 2, oldest_open_undispositioned_age_s: 40 }) }),
+    ).find((t) => t.id === "ttdisp");
+    expect(none?.value).toBe("—");
+    expect(none?.foot).toBe("None of 2 excursions contained · oldest open waiting 40 s · 1 with the lot gone before the alert");
+  });
+
+  it("names the coverage in the acknowledge chart caption", () => {
+    expect(ackChart(ops(), 2).caption).toBe("Alert open to the first acknowledgement or signed decision. 1 of 2 acknowledged.");
+    const none = tta({ ...NONE, episodes_total: 0, acknowledged_count: 0, unacknowledged_count: 0, samples: [] });
+    expect(ackChart(ops({ episodes: 0, time_to_acknowledge: none }), 0)).toEqual({
+      caption: "Alert open to the first acknowledgement or signed decision.",
+      empty: "No excursions in this window yet.",
+    });
   });
 
   it("bins durations on a nice step and keeps every sample", () => {

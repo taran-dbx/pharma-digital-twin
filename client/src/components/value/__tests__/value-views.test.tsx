@@ -31,6 +31,13 @@ describe("DurationHistogram", () => {
     expect(screen.getByText("No excursions in this window yet.")).toBeTruthy();
   });
 
+  it("uses the caller's empty state when excursions exist but none were measured", () => {
+    render(<DurationHistogram title="Time to acknowledge" samples={[]} caption="c" emptyText="None of 73 excursions acknowledged yet." />);
+    expect(screen.getByText("None of 73 excursions acknowledged yet.")).toBeTruthy();
+    expect(screen.queryByText("No excursions in this window yet.")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Table" })).toBeNull();
+  });
+
   it("shows a tooltip on focus and offers a table view", () => {
     render(<DurationHistogram title="Time to detect" samples={[1, 1, 3]} caption="c" />);
     const cols = screen.getAllByRole("listitem");

@@ -6,7 +6,7 @@ import { DurationHistogram } from "@/components/value/duration-histogram";
 import { StatTiles, TilesSkeleton } from "@/components/value/stat-tiles";
 import { useOpsSummary } from "@/components/value/use-value-data";
 import type { RecentEvent, SummaryScope } from "@/lib/value-api";
-import { decisionsText, formatDuration, formatEventTime, opsTiles, samplingNote } from "@/lib/value-format";
+import { ackChart, decisionsText, formatDuration, formatEventTime, opsTiles, samplingNote } from "@/lib/value-format";
 
 export function OperationsView({ scope, nonce }: { scope: SummaryScope; nonce: number }) {
   const { result, error, loading, refreshing } = useOpsSummary(scope, nonce);
@@ -53,7 +53,8 @@ export function OperationsView({ scope, nonce }: { scope: SummaryScope; nonce: n
         <DurationHistogram
           title="Time to acknowledge"
           samples={data.time_to_acknowledge.samples}
-          caption="Alert open to the first acknowledgement or signed decision."
+          caption={ackChart(data, meta.samples_shown).caption}
+          emptyText={ackChart(data, meta.samples_shown).empty}
         />
       </div>
       <RecentEvents events={data.recent_events} />

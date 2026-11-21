@@ -253,13 +253,36 @@ episodes AS (
 
 
 def _stats(prefix: str, column: str) -> str:
+    # Postgres GREATEST ignores NULLs, so GREATEST(NULL, 0) is 0: without the
+    # FILTER an episode that never got its end event (no ack, no containment,
+    # still open) would count as 0 s. Only measured episodes enter the stats.
     value = f"GREATEST({column}, 0)"
+    measured = f"FILTER (WHERE {column} IS NOT NULL)"
     return f"""
        COUNT({column}) AS {prefix}_count,
-       AVG({value}) AS {prefix}_mean,
-       percentile_cont(0.5) WITHIN GROUP (ORDER BY {value}) AS {prefix}_p50,
-       percentile_cont(0.9) WITHIN GROUP (ORDER BY {value}) AS {prefix}_p90,
-       MAX({value}) AS {prefix}_max"""
+       AVG({value}) {measured} AS {prefix}_mean,
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY {value}) {measured} AS {prefix}_p50,
+       percentile_cont(0.9) WITHIN GROUP (ORDER BY {value}) {measured} AS {prefix}_p90,
+       MAX({value}) {measured} AS {prefix}_max,
+       COUNT(*) FILTER (WHERE {column} < 0) AS {prefix}_clock_skew_count"""
+
+
+def _oldest_open_missing(name: str, column: str) -> str:
+    """Age of the oldest still-open episode with no ``column``, and how many are past the cap.
+
+    The age runs from ``opened`` to the window end, clamped to
+    [0, max_open_excursion_s] ($11) as open excursions are everywhere else.
+    The CASE keeps it NULL when no such episode exists: LEAST / GREATEST
+    ignore NULLs and would turn "none" into the cap or 0.
+    """
+    waiting = f"{column} IS NULL AND cleared_at IS NULL"
+    age = f"EXTRACT(epoch FROM $6::timestamptz - MIN(opened) FILTER (WHERE {waiting}))::float8"
+    return f"""
+       CASE WHEN COUNT(*) FILTER (WHERE {waiting}) > 0
+            THEN LEAST(GREATEST({age}, 0), $11::float8) END AS {name}_s,
+       COUNT(*) FILTER (WHERE {waiting}
+                        AND opened < $6::timestamptz - make_interval(secs => $11))
+           AS {name}_past_cap"""
 
 
 _TOTALS_SQL = (
@@ -283,7 +306,12 @@ SELECT COUNT(*) AS episodes,
             ("restore", "restore_s"),
         )
     )
+    + ","
+    + _oldest_open_missing("oldest_open_unacknowledged", "tta_s")
+    + ","
+    + _oldest_open_missing("oldest_open_undispositioned", "ttdisp_s")
     + """,
+       $11::float8 AS open_age_cap_s,
        (SELECT COUNT(*)
           FROM production_event p
           JOIN episodes ep ON ep.alert_id = p.alert_id
@@ -359,10 +387,16 @@ WHERE a.industry = $4
 """
 
 
-def _seconds(later: datetime | None, earlier: datetime | None) -> float | None:
+def _signed_seconds(later: datetime | None, earlier: datetime | None) -> float | None:
+    """``later - earlier`` in seconds, negative under clock skew; None when either is missing."""
     if later is None or earlier is None:
         return None
-    return max(0.0, (later - earlier).total_seconds())
+    return (later - earlier).total_seconds()
+
+
+def _seconds(later: datetime | None, earlier: datetime | None) -> float | None:
+    signed = _signed_seconds(later, earlier)
+    return max(0.0, signed) if signed is not None else None
 
 
 def rule_durations(industry: str) -> tuple[list[str], list[float]]:
@@ -478,6 +512,18 @@ class Episode:
         return lot_id_at(self.onset_at)
 
     @property
+    def signed_durations(self) -> dict[str, float | None]:
+        """Unclamped ttd / tta / ttdisp / restore: negative means the end event is
+        stamped before the start (clock skew); None means it never happened."""
+        stamps = [t for t in (self.acknowledged_at, self.first_decision_at) if t is not None]
+        return {
+            "ttd": _signed_seconds(self.opened_at, self.onset_at),
+            "tta": _signed_seconds(min(stamps), self.opened_at) if stamps else None,
+            "ttdisp": _signed_seconds(self.contained_at, self.opened_at),
+            "restore": _signed_seconds(self.cleared_at, self.opened_at),
+        }
+
+    @property
     def time_to_detect_s(self) -> float:
         return _seconds(self.opened_at, self.onset_at) or 0.0
 
@@ -522,7 +568,14 @@ def episode_from_row(row: Mapping[str, Any], industry: str, window_end: datetime
 
 
 def _empty_stats() -> dict[str, Any]:
-    return {"count": 0, "mean": None, "p50": None, "p90": None, "max": None}
+    return {
+        "count": 0,
+        "mean": None,
+        "p50": None,
+        "p90": None,
+        "max": None,
+        "clock_skew_count": 0,
+    }
 
 
 def _stat_block(row: Mapping[str, Any], prefix: str) -> dict[str, Any]:
@@ -536,6 +589,7 @@ def _stat_block(row: Mapping[str, Any], prefix: str) -> dict[str, Any]:
         "p50": num("p50"),
         "p90": num("p90"),
         "max": num("max"),
+        "clock_skew_count": int(row.get(f"{prefix}_clock_skew_count") or 0),
     }
 
 
@@ -563,6 +617,13 @@ class WindowTotals:
     tta: dict[str, Any] = field(default_factory=_empty_stats)
     ttdisp: dict[str, Any] = field(default_factory=_empty_stats)
     restore: dict[str, Any] = field(default_factory=_empty_stats)
+    # Age of the oldest still-open episode with no ack / no containment, capped at
+    # open_age_cap_s (max_open_excursion_s), and how many such episodes are past the cap.
+    oldest_open_unacknowledged_s: float | None = None
+    oldest_open_undispositioned_s: float | None = None
+    open_unacknowledged_past_cap: int = 0
+    open_undispositioned_past_cap: int = 0
+    open_age_cap_s: float | None = None
 
     @property
     def parts_released(self) -> int:
@@ -573,6 +634,10 @@ class WindowTotals:
 def totals_from_rows(totals: Mapping[str, Any], parts: Mapping[str, Any]) -> WindowTotals:
     def n(row: Mapping[str, Any], key: str) -> int:
         return int(row.get(key) or 0)
+
+    def age(key: str) -> float | None:
+        value = totals.get(key)
+        return max(0.0, float(value)) if value is not None else None
 
     at_risk = n(parts, "parts_at_risk")
     return WindowTotals(
@@ -597,6 +662,11 @@ def totals_from_rows(totals: Mapping[str, Any], parts: Mapping[str, Any]) -> Win
         tta=_stat_block(totals, "tta"),
         ttdisp=_stat_block(totals, "ttdisp"),
         restore=_stat_block(totals, "restore"),
+        oldest_open_unacknowledged_s=age("oldest_open_unacknowledged_s"),
+        oldest_open_undispositioned_s=age("oldest_open_undispositioned_s"),
+        open_unacknowledged_past_cap=n(totals, "oldest_open_unacknowledged_past_cap"),
+        open_undispositioned_past_cap=n(totals, "oldest_open_undispositioned_past_cap"),
+        open_age_cap_s=age("open_age_cap_s"),
     )
 
 
