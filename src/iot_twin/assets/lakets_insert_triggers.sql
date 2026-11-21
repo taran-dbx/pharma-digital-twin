@@ -1,0 +1,256 @@
+-- ============================================================================
+-- Set-based INSERT triggers for LakeTS ChronoTables (app-owned extension).
+--
+-- LakeTS 0.1.0 installs two FOR EACH ROW triggers on a ChronoTable:
+--   trg_lakets_lvc   AFTER INSERT                    -> upsert into the last-value cache
+--   trg_lakets_sync  AFTER INSERT OR UPDATE OR DELETE -> copy into the lakets_cdf shadow
+-- Each runs PL/pgSQL with registry lookups and dynamic SQL once per inserted row.
+-- Measured on a branch of the live pipeline database (2026-11-21, docs/evidence/
+-- 2026-11-21): ~0.7 ms of server time per row, so one writer tops out near
+-- 1,300 rows/s and a 100-row flush takes ~74 ms. The same work done once per
+-- statement from a transition table takes ~9 ms per 100 rows (~7.5x) and writes
+-- ~22 % less WAL per row.
+--
+-- This file replaces only the INSERT path. UPDATE/DELETE keep the per-row
+-- LakeTS sync trigger (it must find the old row in the shadow). Every statement
+-- is idempotent; lakets.use_statement_insert_triggers() swaps the triggers of
+-- an existing ChronoTable in one transaction, so no insert is ever copied twice
+-- or skipped. Inserts must go through the partitioned parent (as every writer
+-- here does): statement triggers on the parent do not fire for direct writes
+-- into a partition.
+-- ============================================================================
+
+-- True while a FOR EACH ROW INSERT trigger with this name is on the table. The
+-- statement functions below then do nothing, so exactly one INSERT path ever runs:
+-- if any route (a re-run CDF cutover, lakets.enable_sync, lakets.enable_lvc or
+-- lakets.use_row_insert_triggers) puts a per-row INSERT trigger back, it alone
+-- copies the row and the shadow / cache are never written twice.
+CREATE OR REPLACE FUNCTION lakets._row_insert_trigger_present(p_relid OID, p_name TEXT)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgrelid = p_relid AND tgname = p_name AND NOT tgisinternal
+          AND (tgtype & 1) = 1      -- FOR EACH ROW
+          AND (tgtype & 4) = 4      -- INSERT
+    )
+$$;
+
+-- Shadow copy for inserted rows: one INSERT ... SELECT per statement.
+CREATE OR REPLACE FUNCTION lakets._sync_insert_stmt_fn()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_shadow TEXT;
+BEGIN
+    IF lakets._row_insert_trigger_present(TG_RELID, 'trg_lakets_sync') THEN
+        RETURN NULL;  -- the per-row trigger copies these rows
+    END IF;
+
+    SELECT shadow_table_name INTO v_shadow
+    FROM lakets._chronotable_registry
+    WHERE schema_name = TG_TABLE_SCHEMA
+      AND table_name = TG_TABLE_NAME
+      AND sync_enabled = TRUE;
+
+    IF v_shadow IS NOT NULL THEN
+        -- The shadow mirrors the source columns in attribute order
+        -- (lakets._build_shadow_table), exactly what SELECT ($1).* produced.
+        EXECUTE format('INSERT INTO lakets_cdf.%I SELECT * FROM _lakets_new_rows', v_shadow);
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+-- Last-value cache for inserted rows: one upsert per key per statement.
+-- BEHAVIOUR (differs from LakeTS's per-row trigger, where the LAST row inserted
+-- won): within one statement the cache keeps the row with the LATEST time column
+-- value per key (NULL times last); equal times are broken by the highest id when the
+-- table has an id column (= the last inserted, the per-row result), otherwise by the
+-- value columns, so the choice is deterministic. Across statements it still
+-- overwrites, as before.
+CREATE OR REPLACE FUNCTION lakets._lvc_insert_stmt_fn()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_cache     TEXT;
+    v_keys      TEXT[];
+    v_vals      TEXT[];
+    v_time_col  TEXT;
+    v_key_list  TEXT;
+    v_cols      TEXT;
+    v_set       TEXT;
+    v_tiebreak  TEXT;
+BEGIN
+    IF lakets._row_insert_trigger_present(TG_RELID, 'trg_lakets_lvc') THEN
+        RETURN NULL;  -- the per-row trigger maintains the cache
+    END IF;
+
+    SELECT lr.cache_table_name, lr.key_columns, lr.value_columns, hr.time_column
+    INTO v_cache, v_keys, v_vals, v_time_col
+    FROM lakets._lvc_registry lr
+    JOIN lakets._chronotable_registry hr ON lr.chronotable_id = hr.id
+    WHERE hr.schema_name = TG_TABLE_SCHEMA
+      AND hr.table_name = TG_TABLE_NAME;
+
+    IF v_cache IS NULL THEN
+        RETURN NULL;
+    END IF;
+
+    SELECT string_agg(format('%I', c), ', ') INTO v_key_list FROM unnest(v_keys) AS c;
+    SELECT string_agg(format('%I', c), ', ') INTO v_cols FROM unnest(v_keys || v_vals) AS c;
+    SELECT string_agg(format('%1$I = EXCLUDED.%1$I', c), ', ') INTO v_set FROM unnest(v_vals) AS c;
+    IF EXISTS (SELECT 1 FROM pg_attribute
+               WHERE attrelid = TG_RELID AND attname = 'id' AND NOT attisdropped) THEN
+        v_tiebreak := 'id DESC';
+    ELSE
+        SELECT string_agg(format('%I DESC NULLS LAST', c), ', ') INTO v_tiebreak
+        FROM unnest(v_vals) AS c WHERE c <> v_time_col;
+    END IF;
+
+    -- DISTINCT ON keeps one row per key, so ON CONFLICT never touches a row twice.
+    EXECUTE format(
+        'INSERT INTO %1$I.%2$I (%3$s, last_updated) '
+        'SELECT DISTINCT ON (%4$s) %3$s, now() FROM _lakets_new_rows '
+        'ORDER BY %4$s, %5$I DESC NULLS LAST%7$s '
+        'ON CONFLICT (%4$s) DO UPDATE SET %6$s, last_updated = now()',
+        TG_TABLE_SCHEMA, v_cache, v_cols, v_key_list, v_time_col, v_set,
+        CASE WHEN v_tiebreak IS NULL THEN '' ELSE ', ' || v_tiebreak END
+    );
+    RETURN NULL;
+END;
+$$;
+
+-- Swap an existing ChronoTable from per-row INSERT triggers to the statement
+-- triggers above. Idempotent; returns what it found and changed.
+CREATE OR REPLACE FUNCTION lakets.use_statement_insert_triggers(
+    p_table_name  TEXT,
+    p_schema_name TEXT DEFAULT 'public'
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+-- Function-level SET: restored when the function returns, so a caller's outer
+-- transaction keeps its own lock_timeout (a SET LOCAL would leak into it).
+SET lock_timeout = '15s'
+AS $$
+DECLARE
+    v_id        INT;
+    v_sync      BOOLEAN;
+    v_lvc       BOOLEAN;
+    v_relid     OID;
+BEGIN
+    SELECT id, sync_enabled INTO v_id, v_sync
+    FROM lakets._chronotable_registry
+    WHERE schema_name = p_schema_name AND table_name = p_table_name;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION '%.% is not a registered ChronoTable', p_schema_name, p_table_name;
+    END IF;
+    v_relid := format('%I.%I', p_schema_name, p_table_name)::regclass;
+    v_lvc := EXISTS (SELECT 1 FROM lakets._lvc_registry WHERE chronotable_id = v_id);
+
+    -- Writers wait (bounded by lock_timeout) instead of racing the swap: no insert
+    -- can run between dropping a per-row trigger and creating its replacement.
+    EXECUTE format('LOCK TABLE %I.%I IN SHARE ROW EXCLUSIVE MODE', p_schema_name, p_table_name);
+
+    IF COALESCE(v_sync, FALSE) THEN
+        EXECUTE format(
+            'CREATE OR REPLACE TRIGGER trg_lakets_sync '
+            'AFTER UPDATE OR DELETE ON %I.%I '
+            'FOR EACH ROW EXECUTE FUNCTION lakets._sync_trigger_fn()',
+            p_schema_name, p_table_name);
+        EXECUTE format(
+            'CREATE OR REPLACE TRIGGER trg_lakets_sync_insert '
+            'AFTER INSERT ON %I.%I REFERENCING NEW TABLE AS _lakets_new_rows '
+            'FOR EACH STATEMENT EXECUTE FUNCTION lakets._sync_insert_stmt_fn()',
+            p_schema_name, p_table_name);
+    END IF;
+
+    IF v_lvc THEN
+        EXECUTE format('DROP TRIGGER IF EXISTS trg_lakets_lvc ON %I.%I',
+            p_schema_name, p_table_name);
+        EXECUTE format(
+            'CREATE OR REPLACE TRIGGER trg_lakets_lvc_insert '
+            'AFTER INSERT ON %I.%I REFERENCING NEW TABLE AS _lakets_new_rows '
+            'FOR EACH STATEMENT EXECUTE FUNCTION lakets._lvc_insert_stmt_fn()',
+            p_schema_name, p_table_name);
+    END IF;
+
+    RETURN jsonb_build_object(
+        'table', format('%s.%s', p_schema_name, p_table_name),
+        'sync', COALESCE(v_sync, FALSE),
+        'lvc', v_lvc,
+        'row_insert_triggers', (
+            SELECT COALESCE(jsonb_agg(tgname ORDER BY tgname), '[]'::jsonb)
+            FROM pg_trigger
+            WHERE tgrelid = v_relid AND NOT tgisinternal
+              AND (tgtype & 1) = 1      -- FOR EACH ROW
+              AND (tgtype & 4) = 4      -- INSERT
+        )
+    );
+END;
+$$;
+
+
+-- Reverse of use_statement_insert_triggers: back to LakeTS 0.1.0's per-row INSERT
+-- triggers (e.g. before reinstalling LakeTS or to bisect a regression). Same lock and
+-- one transaction, so no insert is copied twice or skipped. Idempotent.
+CREATE OR REPLACE FUNCTION lakets.use_row_insert_triggers(
+    p_table_name  TEXT,
+    p_schema_name TEXT DEFAULT 'public'
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SET lock_timeout = '15s'
+AS $$
+DECLARE
+    v_id    INT;
+    v_sync  BOOLEAN;
+    v_lvc   BOOLEAN;
+    v_relid OID;
+BEGIN
+    SELECT id, sync_enabled INTO v_id, v_sync
+    FROM lakets._chronotable_registry
+    WHERE schema_name = p_schema_name AND table_name = p_table_name;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION '%.% is not a registered ChronoTable', p_schema_name, p_table_name;
+    END IF;
+    v_relid := format('%I.%I', p_schema_name, p_table_name)::regclass;
+    v_lvc := EXISTS (SELECT 1 FROM lakets._lvc_registry WHERE chronotable_id = v_id);
+
+    EXECUTE format('LOCK TABLE %I.%I IN SHARE ROW EXCLUSIVE MODE', p_schema_name, p_table_name);
+
+    EXECUTE format('DROP TRIGGER IF EXISTS trg_lakets_sync_insert ON %I.%I',
+        p_schema_name, p_table_name);
+    EXECUTE format('DROP TRIGGER IF EXISTS trg_lakets_lvc_insert ON %I.%I',
+        p_schema_name, p_table_name);
+    IF COALESCE(v_sync, FALSE) THEN
+        EXECUTE format(
+            'CREATE OR REPLACE TRIGGER trg_lakets_sync '
+            'AFTER INSERT OR UPDATE OR DELETE ON %I.%I '
+            'FOR EACH ROW EXECUTE FUNCTION lakets._sync_trigger_fn()',
+            p_schema_name, p_table_name);
+    END IF;
+    IF v_lvc THEN
+        EXECUTE format(
+            'CREATE OR REPLACE TRIGGER trg_lakets_lvc AFTER INSERT ON %I.%I '
+            'FOR EACH ROW EXECUTE FUNCTION lakets._lvc_trigger_fn()',
+            p_schema_name, p_table_name);
+    END IF;
+
+    RETURN jsonb_build_object(
+        'table', format('%s.%s', p_schema_name, p_table_name),
+        'sync', COALESCE(v_sync, FALSE),
+        'lvc', v_lvc,
+        'statement_insert_triggers', (
+            SELECT COALESCE(jsonb_agg(tgname ORDER BY tgname), '[]'::jsonb)
+            FROM pg_trigger
+            WHERE tgrelid = v_relid
+              AND tgname IN ('trg_lakets_sync_insert', 'trg_lakets_lvc_insert')
+        )
+    );
+END;
+$$;

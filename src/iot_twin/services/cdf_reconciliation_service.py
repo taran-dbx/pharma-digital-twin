@@ -19,7 +19,7 @@ from iot_twin.services import cdf_config_service, resource_ledger
 from iot_twin.services.deployment import deployment_repo
 from iot_twin.services.industry import industry_catalog_service
 from iot_twin.services.industry.industry_templates import CURATED_INDUSTRIES
-from iot_twin.services.lakets import lakets_service
+from iot_twin.services.lakets import insert_triggers, lakets_service, retention
 from iot_twin.services.pipelines import pipeline_project_service, pipeline_setup_repo
 
 logger = logging.getLogger("pharma_twin.services.cdf_reconciliation")
@@ -210,6 +210,14 @@ async def reconcile_realtime_cdf(
             raise RealtimeCdfError(
                 migration.get("error") or "industry CDF shadow reconciliation failed"
             )
+        # Existing branches keep LakeTS's per-row INSERT triggers until this runs;
+        # failure is reported, not fatal (the health check flags per-row triggers).
+        triggers = await insert_triggers.ensure_statement_insert_triggers(
+            migration_conn, table=SOURCE_TABLE, schema=SOURCE_SCHEMA
+        )
+        kept = await retention.ensure_retention(
+            migration_conn, table=SOURCE_TABLE, schema=SOURCE_SCHEMA
+        )
         await _close_conn(migration_conn, "migration")
         migration_conn = None
 
@@ -255,6 +263,10 @@ async def reconcile_realtime_cdf(
             "cdf_config": config["name"],
             "status": "streaming",
             "migration": migration["status"],
+            "insert_triggers": triggers.get("status"),
+            "insert_triggers_error": triggers.get("error"),
+            "retention": kept.get("status"),
+            "retention_error": kept.get("error"),
         }
     except RealtimeCdfError:
         await _mark_failed(db, deployment)

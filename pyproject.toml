@@ -116,6 +116,7 @@ addopts = "--strict-markers"
 markers = [
     "integration: talks to a live Databricks workspace; skipped unless configured",
     "non_admin: run route tests as a non-admin caller (the default is admin)",
+    "retention_off: run with LakeTS retention disabled (its default)",
 ]
 
 # ── Mypy ───────────────────────────────────────────────────────────────────

@@ -9,6 +9,7 @@
  * CallbackSink + the source's native cloud SDK.
  */
 import { producerSignalPython } from "@/lib/manufacturing-scenario";
+import { PRODUCER_PACING_PYTHON } from "@/lib/producer-pacing";
 import type { SssSource, SssConnectionConfig } from "@/lib/types";
 
 const SEP = "\n# COMMAND ----------\n";
@@ -194,7 +195,6 @@ import time
 from aws_msk_iam_sasl_signer import MSKAuthTokenProvider
 from botocore.credentials import CredentialProvider
 from iot_simulator import Simulator
-from iot_simulator.sinks.callback import CallbackSink
 from kafka import KafkaProducer
 from kafka.admin import KafkaAdminClient, NewTopic
 from kafka.errors import KafkaError, TopicAlreadyExistsError
@@ -358,6 +358,19 @@ producer = KafkaProducer(
 )
 
 
+${PRODUCER_PACING_PYTHON}
+
+
+# Partition ids from the broker (falls back to NUM_PARTITIONS if metadata is unavailable).
+try:
+    PARTITION_IDS = sorted(producer.partitions_for(TOPIC) or [])
+except Exception as _pe:
+    logger.warning(f"partitions_for({TOPIC!r}) failed ({type(_pe).__name__}: {_pe}); assuming {NUM_PARTITIONS}")
+    PARTITION_IDS = []
+PARTITION_IDS = PARTITION_IDS or list(range(NUM_PARTITIONS))
+SENSOR_PARTITION = {}  # filled once the sensor list is known (below)
+
+
 ${producerSignalPython(industry)}
 
 
@@ -379,6 +392,9 @@ def on_records(records):
             TOPIC,
             value=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
             key=record.sensor_name.encode("utf-8"),
+            # One fixed partition per sensor keeps each series in order; None
+            # (an unknown sensor) falls back to Kafka's key hash.
+            partition=SENSOR_PARTITION.get(record.sensor_name),
         )
         with _counter_lock:
             _send_counters["enqueued"] += 1
@@ -424,20 +440,26 @@ ${PEER_TASK_WATCH_PYTHON}
 probe = Simulator(industries=["${industry}"], update_rate_hz=1)
 sensor_count = max(1, probe.sensor_count)
 SIM_TICK_HZ = TARGET_RECORDS_PER_SEC / sensor_count
-CALLBACK_BATCH_SIZE = sensor_count
 
 sim = Simulator(industries=["${industry}"], update_rate_hz=SIM_TICK_HZ)
 _calibrate_simulator(sim, disable_random_faults=SCENARIO_ENABLED)
-sim.add_sink(
-    CallbackSink(on_records, rate_hz=SIM_TICK_HZ, batch_size=CALLBACK_BATCH_SIZE)
-)
+# Simulator.run() paces by sleeping after each tick, which loses the send time
+# (~11 % at 2000 rec/s). Drive the generator directly on a wall-clock schedule.
+_generator = sim._generator
+_assignment = assign_partitions([r.sensor_name for r in probe._generator.tick()], len(PARTITION_IDS))
+SENSOR_PARTITION.update({name: PARTITION_IDS[i] for name, i in _assignment.items()})
+pacer = RecordRatePacer(TARGET_RECORDS_PER_SEC, sensor_count)
 
 logger.info(
     f"Producer target={TARGET_RECORDS_PER_SEC:.1f} rec/s, "
-    f"sensors={sensor_count}, simulator={SIM_TICK_HZ:.2f} ticks/s"
+    f"sensors={sensor_count}, simulator={SIM_TICK_HZ:.2f} ticks/s, "
+    f"partitions={PARTITION_IDS} sensors/partition="
+    f"{[sum(1 for p in SENSOR_PARTITION.values() if p == pid) for pid in PARTITION_IDS]}"
 )
 try:
-    sim.run()
+    while True:
+        for _ in range(pacer.next_batch()):
+            on_records(_generator.tick())
 except KeyboardInterrupt:
     if _fatal_send_error.is_set():
         raise RuntimeError(

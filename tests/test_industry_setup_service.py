@@ -316,3 +316,51 @@ async def test_setup_skips_jobs_when_disabled(tmp_path: Path) -> None:
         )
     deploy.assert_not_called()
     assert "ops_jobs" not in result
+
+
+@pytest.mark.asyncio
+async def test_statement_insert_triggers_follow_lvc_and_sync_c9109_regression(
+    tmp_path: Path,
+) -> None:
+    """[C9109][regression] The set-based INSERT triggers replace LakeTS's row triggers last."""
+    conn = _make_conn()
+    order: list[str] = []
+
+    def tracked(name: str, result: dict) -> AsyncMock:
+        async def _call(*_args, **_kwargs):
+            order.append(name)
+            return result
+
+        return AsyncMock(side_effect=_call)
+
+    swap = tracked("triggers", {"status": "ok"})
+    with (
+        patch.object(
+            iss.lakets_service, "resolve_lakets_source", return_value=tmp_path / "lakets.sql"
+        ),
+        patch.object(iss.lakets_service, "install_lakets", new=AsyncMock(return_value="0.1.0")),
+        patch.object(iss.lakets_service, "create_chronotable", new=AsyncMock(return_value=False)),
+        patch.object(
+            iss.lakets_service, "create_rollup", new=AsyncMock(return_value={"status": "created"})
+        ),
+        patch.object(
+            iss.lakets_service,
+            "enable_rollup_invalidation",
+            new=AsyncMock(return_value={"status": "created"}),
+        ),
+        patch.object(iss.lakets_service, "enable_lvc", new=tracked("lvc", {"status": "created"})),
+        patch.object(
+            iss.lakets_service,
+            "reconcile_chronotable_shadow",
+            new=tracked("sync", {"status": "migrated"}),
+        ),
+        patch.object(iss.insert_triggers, "ensure_statement_insert_triggers", new=swap),
+    ):
+        result = await iss.setup_lakets_on_branch(
+            "manufacturing", conn=conn, ws=MagicMock(), deploy_ops_jobs=False
+        )
+
+    assert order == ["lvc", "sync", "triggers"]
+    assert swap.await_args.args == (conn,)
+    assert swap.await_args.kwargs == {"table": "sensor_readings", "schema": "public"}
+    assert steps_of(result)["statement_insert_triggers"] == "ok"

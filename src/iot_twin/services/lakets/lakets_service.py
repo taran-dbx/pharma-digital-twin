@@ -975,9 +975,23 @@ BEGIN
        SET shadow_table_name = '{shadow_table}', sync_enabled = TRUE
      WHERE schema_name = '{schema}' AND table_name = '{table}';
 
-    CREATE OR REPLACE TRIGGER trg_lakets_sync
-        AFTER INSERT OR UPDATE OR DELETE ON {schema}.{table}
-        FOR EACH ROW EXECUTE FUNCTION lakets._sync_trigger_fn();
+    -- Once the statement-level INSERT sync trigger is installed
+    -- (insert_triggers.ensure_statement_insert_triggers), the per-row trigger
+    -- must stay UPDATE/DELETE only: firing both on INSERT would copy each row
+    -- twice and break the shadow's unique id index.
+    IF EXISTS (
+        SELECT 1 FROM pg_trigger
+         WHERE tgrelid = '{schema}.{table}'::regclass
+           AND tgname = 'trg_lakets_sync_insert'
+    ) THEN
+        CREATE OR REPLACE TRIGGER trg_lakets_sync
+            AFTER UPDATE OR DELETE ON {schema}.{table}
+            FOR EACH ROW EXECUTE FUNCTION lakets._sync_trigger_fn();
+    ELSE
+        CREATE OR REPLACE TRIGGER trg_lakets_sync
+            AFTER INSERT OR UPDATE OR DELETE ON {schema}.{table}
+            FOR EACH ROW EXECUTE FUNCTION lakets._sync_trigger_fn();
+    END IF;
 END
 $reconcile$;
 """

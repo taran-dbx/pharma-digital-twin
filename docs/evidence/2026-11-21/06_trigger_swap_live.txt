@@ -1,0 +1,31 @@
+# Live swap of the INSERT triggers on the pipeline branch (branch manufacturing of pharma-twin-pipelines), 2026-11-21
+# App code of this PR deployed to pharma-twin-dev (bundle deploy + bundle run, 08:11 UTC), then the existing admin
+# endpoint ran the swap as the app service principal (the ChronoTable owner):
+
+$ POST /api/admin/pipelines/<setup-id>/realtime/reconcile-cdf          (08:13:10 -> 08:13:14 UTC)
+{"setup_id":"<setup-id>","deployment_id":"<deployment-id>","industry":"manufacturing","branch":"manufacturing",
+ "shadow_table":"lakets_cdf._shadow_manufacturing_sensor_readings",
+ "delta_table":"<catalog>.pharma_twin.lb__shadow_manufacturing_sensor_readings_history",
+ "cdf_config":"projects/pharma-twin-pipelines/branches/manufacturing/databases/databricks-postgres/cdf-configs/lakets_cdf",
+ "status":"streaming","migration":"already_exists","insert_triggers":"ok","insert_triggers_error":null}
+
+## Triggers on public.sensor_readings afterwards (pg_trigger, read-only)
+trg_lakets_lvc_insert                per_row=false  AFTER INSERT ... REFERENCING NEW TABLE AS _lakets_new_rows FOR EACH STATEMENT lakets._lvc_insert_stmt_fn()
+trg_lakets_rollup_bulk_invalidation  per_row=false  AFTER INSERT ... REFERENCING NEW TABLE AS _new_rows FOR EACH STATEMENT (unchanged)
+trg_lakets_rollup_invalidation       per_row=true   AFTER DELETE OR UPDATE ... FOR EACH ROW (unchanged)
+trg_lakets_sync                      per_row=true   AFTER DELETE OR UPDATE ... FOR EACH ROW lakets._sync_trigger_fn()   (INSERT removed)
+trg_lakets_sync_insert               per_row=false  AFTER INSERT ... REFERENCING NEW TABLE AS _lakets_new_rows FOR EACH STATEMENT lakets._sync_insert_stmt_fn()
+Partition clones: trg_lakets_lvc 0 (was 240); trg_lakets_sync 240, none of them fire on INSERT.
+
+## Exactness check while the 500 Hz stream kept flowing (rows with event_time 08:13:30 .. now-30 s, at 08:15:01)
+src_rows | shadow_rows | missing_in_shadow | extra_in_shadow | duplicate ids in shadow
+30000    | 30000       | 0                 | 0               | 0
+Last-value cache: freshest entry 91 ms old; hot-tier lag 86 ms.
+
+## Then the 2000 Hz redeploy, through the app's own admin API
+08:16:12 POST /api/admin/pipelines/<setup-id>/realtime/stop                  -> {"state":"STOPPED","paused":true}
+08:16:32 PATCH /api/admin/pipelines/<setup-id>/modes/realtime/config {"rate_hz": 2000}  (the default rate)
+08:16:46 POST /api/admin/pipelines/<setup-id>/deploy/realtime  (the deployed consumer notebook unchanged; producer
+         notebook identical except TARGET_RECORDS_PER_SEC = 2000)  -> action "updated", num_workers 1 (app sizing for 3 partitions)
+08:17:07 POST /api/admin/pipelines/<setup-id>/realtime/start  -> STARTING, cdf.insert_triggers "ok" (idempotent re-run)
+08:22:30 first rows land (job clusters + the producer's 120 s start-up wait)

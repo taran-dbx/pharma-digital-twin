@@ -167,11 +167,17 @@ databricks jobs submit --no-wait -p <profile> --json '{
     "dependencies": ["databricks-sdk>=0.133.0", "psycopg2-binary"]}}]}'
 ```
 
-The committed run (~21:00 UTC) reports **Overall FAIL (28 PASS, 10 WARN, 9 FAIL, 1 SKIPPED)**.
+**2026-11-21:** `notebooks/runs/manufacturing_realtime_2026-11-21.ipynb` (09:39 UTC, `lookback_hours=1`,
+after the statement-level INSERT triggers) reports **Overall FAIL (44 PASS, 4 WARN, 1 FAIL, 1 SKIPPED)**.
+The only FAIL is `metrics_batch_duration`, the Real-Time Mode false positive described below. Summary:
+[`docs/evidence/2026-11-21/11_health_check_summary.txt`](../docs/evidence/2026-11-21/11_health_check_summary.txt).
+
+The 2026-11-20 run (~21:00 UTC) reports **Overall FAIL (28 PASS, 10 WARN, 9 FAIL, 1 SKIPPED)**.
 The FAILs have two causes: (1) Lakehouse Sync stopped at Delta version 1000 at 19:29 UTC, so the
 cold-tier and CDF checks fail and Lakebase no longer reconciles with Delta; (2) from 19:32 the
 consumer wrote fewer rows than the producer sent, so the freshness, silent-sensor and latency
-checks fail. `lakets_gap_fill` (229 of 570 buckets, 40.2 %) is not explained by either. The
+checks fail. `lakets_gap_fill` (229 of 570 buckets, 40.2 %) turned out to be 12 minutes of ingest lag (the check
+now ignores lag). The
 degradation continued after this run: the worst batch e2e P99 reached 579.4 s at 21:07 and 861.5 s
 at 21:49. An earlier run the same day at 16:25, before the stall, scored 40 PASS, 5 WARN, 2 FAIL,
 1 SKIPPED; its two FAILs came from one batch recorded while the producer ran at 2000 Hz. At 500 Hz
@@ -179,3 +185,64 @@ the stream held e2e p50 7 ms and p99 median 13 ms (worst 29 ms) over 41 batches 
 19:27. The `metrics_batch_duration` FAIL threshold (60 s) also flags Real-Time Mode's normal 300 s
 trigger. The measurements are in [`docs/evidence/2026-11-20/`](../docs/evidence/README.md). The
 first attempt of a run on serverless can abort with the known psycopg2 SIGABRT; re-run it.
+
+## Runbook: stuck Lakehouse Sync (`lakets_sync_slot` / app `cdf_sync` FAIL)
+
+Lakehouse Sync (`wal2delta`) commits to the UC history table every ~15 s while rows flow.
+Two checks read the shadow's `wal2delta.tables.last_write_time`:
+- the health check `lakets_sync_slot`, which also reads the slot from `pg_replication_slots`.
+  It WARNs after 2 min without a write and FAILs after 10 min, or when the slot retains >= 1 GB of WAL;
+- the app's `cdf_sync` check, which FAILs after 10 min without a write while rows keep landing.
+
+On 2026-11-20/21 the sync stopped **three** times, right after Delta versions 1000, 1800 and 2000.
+All three are multiples of `wal2delta.checkpoint_interval` (200), each with ~770-1,000
+uncompacted files in the history table, and nothing in Postgres showed an error:
+
+| Stall | Length | How it ended |
+|---|---|---|
+| 1 | 146 min | seconds after a predictive-optimization OPTIMIZE |
+| 2 | 354 min | on its own, through a compute restart |
+| 3 | 9.7 min | seconds after a predictive-optimization OPTIMIZE |
+
+Brief for the owners: [`docs/evidence/2026-11-21/12_lakehouse_sync_escalation.md`](../docs/evidence/2026-11-21/12_lakehouse_sync_escalation.md).
+
+1. **Confirm the stall from both sides** (read-only, as a `databricks_superuser` member):
+   `SELECT slot_name, active, restart_lsn, confirmed_flush_lsn,
+   pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) FROM pg_replication_slots;`,
+   `SELECT * FROM wal2delta.tables WHERE status <> 'SKIPPED';`, `databricks postgres
+   list-cdf-statuses <cdf-config> --profile <p>` (`last_sync_time`), and `DESCRIBE HISTORY` on the
+   `lb__shadow_<industry>_sensor_readings_history` table (newest version and timestamp).
+   Hot-tier freshness PASS while all of these stand still means the sync is stuck, not idle.
+2. **Keep the primary alive while WAL accumulates.** The live ratio is ~760 B of WAL per row
+   (statement triggers, plus rollup, LVC and catalog traffic; 1.3-1.56 MB/s at 1,780-2,140 rows/s).
+   At 2,000 rows/s a stuck slot therefore retains ~1.5 MB/s, about **5.5 GB per hour**. If the
+   retained WAL nears the compute's local disk, stop the producer rather than letting the compute
+   restart. The Kafka topic buffers the data, and the consumer resumes from its checkpoint.
+3. **Optional, opt-in: compact the history table.** OPTIMIZE ended stalls 1 and 3 within
+   seconds. That is a correlation, not a proven fix, but it is data-safe: it rewrites files
+   only, and the writer's appends do not conflict with it. With `CDF_HISTORY_OPTIMIZE_ENABLED=true`
+   on the app, `POST /api/admin/pipelines/<setup-id>/realtime/optimize-history` runs `OPTIMIZE`
+   on this deployment's own `lb__shadow_<industry>_sensor_readings_history` only; it is
+   refused for any other schema or industry.
+4. **Do not drop the `wal2delta_main_slot_*` slot or delete the CDF config** as a first
+   response. Both force a full re-snapshot of the shadow, and the slot is owned by the managed
+   service, not by us. Dropping it is only safe after the Lakebase owners confirm the sync for
+   that slot is dead.
+5. **Escalate** with the brief above: slot name, committed LSN, last Delta version and
+   timestamp, `SHOW wal2delta.checkpoint_interval`. `wal2delta.info()` is not readable by
+   workspace users.
+6. **After it resumes**, check that `DESCRIBE HISTORY` advances every ~15 s again and the
+   retained WAL drains, then re-run the health check. `xc_reconciliation` passes once the backlog
+   has been committed. Retention (hot-tier drops and shadow pruning) waits for the sync on its
+   own: both are gated on the committed LSN, so nothing synced-but-not-yet-committed is lost.
+
+### INSERT triggers (`lakets_insert_triggers`)
+
+CDF reconciliation (`POST .../realtime/reconcile-cdf`, every realtime deploy) installs the
+statement-level INSERT triggers. Exactly one INSERT path into the shadow must exist; the check
+FAILs on zero or two. If a per-row LakeTS INSERT trigger comes back next to the statement one
+(e.g. `lakets.enable_sync` or `lakets.enable_lvc` re-run by hand), the statement functions stand
+down, so no row is copied twice. Re-running reconciliation restores the single statement path.
+To go back to LakeTS 0.1.0's per-row triggers (e.g. before reinstalling LakeTS), run, as the
+table owner: `SELECT lakets.use_row_insert_triggers('sensor_readings');`. It is one locked
+transaction, idempotent, and reversed by `lakets.use_statement_insert_triggers('sensor_readings')`.

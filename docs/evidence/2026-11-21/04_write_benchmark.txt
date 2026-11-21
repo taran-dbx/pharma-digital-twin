@@ -1,0 +1,29 @@
+# Insert-cost benchmark on a COPY of the live pipeline database (Lakebase branch perf-bench of project
+# pharma-twin-pipelines, created from branch manufacturing at LSN 6/B2C34B40, 2026-11-21 07:33 UTC, TTL 24 h,
+# endpoint sized like production: 0.5-4 CU). The live branch was never written to.
+# Method: server-side PL/pgSQL loop, each iteration = one INSERT ... SELECT of N rows + COMMIT (exactly what one
+# LakebaseWriter flush does, minus the network). flush_ms = wall time of insert + commit; WAL from
+# pg_current_wal_insert_lsn(). Laptop-side timing was discarded: the client RTT (~150 ms) dominated it.
+
+## A. Real LakeTS code (src/iot_twin/assets/lakets.sql installed into a database on the bench branch, same setup as
+##    industry provisioning: ChronoTable 15-min chunks, rollup sensor_1m + invalidation, LVC, CDF shadow), then
+##    ensure_statement_insert_triggers() from this PR. 9 sensors, sync commit on.
+triggers                   | batch | flushes | rows/s (1 writer) | flush p50 | flush p95 | WAL B/row
+per-row (LakeTS 0.1.0)     |  100  |   100   |  1,025            |  96.8 ms  | 106.0 ms  | 822
+per-row (LakeTS 0.1.0)     |  100  |   100   |  1,042            |  96.0 ms  | 103.2 ms  | 822
+per-row (LakeTS 0.1.0)     |  500  |    40   |  1,109            | 445.2 ms  | 479.3 ms  | 820
+statement (this PR)        |  100  |   100   |  8,383            |  10.9 ms  |  17.9 ms  | 600
+statement (this PR)        |  100  |   100   |  7,684            |  12.2 ms  |  21.3 ms  | 600
+statement (this PR)        |  500  |    40   | 23,930            |  19.6 ms  |  29.1 ms  | 587
+=> ~8x less Postgres time per row and -27 % WAL per row.
+
+## B. The live database's own table on the bench branch (public.sensor_readings, LakeTS 0.1.0 triggers as deployed)
+batch 100 x 50 / 100 flushes: 1,208 / 1,233 rows/s, flush p50 80.4 / 79.7 ms, WAL 820 B/row (= the live ratio)
+same with SET synchronous_commit = off: 1,319 rows/s, flush p50 75.2 ms -> commit latency is only ~5 ms;
+  async commit would buy ~7 % and is NOT used (durability kept).
+
+## C. Isolating the cost (hand-built replica of the trigger work in a scratch schema on the bench branch)
+per-row triggers 1,323-1,344 rows/s (74 ms / 100) | statement triggers 10,019 rows/s (9.2 ms / 100) |
+no triggers 15,161 rows/s (5.2 ms / 100) -> the two per-row PL/pgSQL triggers are ~93 % of the insert cost.
+
+The bench branch and its scratch database are disposable and expire on their own (TTL 24 h).
