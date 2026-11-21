@@ -3,8 +3,8 @@
   "served_entities": [
     {
       "entity_name": "<catalog>.pharma_twin.spindle_thermal_risk",
-      "entity_version": "6",
-      "name": "spindle_thermal_risk-6",
+      "entity_version": "7",
+      "name": "spindle_thermal_risk-7",
       "scale_to_zero_enabled": true,
       "workload_size": "Small"
     }
@@ -12,14 +12,5 @@
   "state": {
     "config_update": "NOT_UPDATING",
     "ready": "READY"
-  },
-  "traffic": {
-    "routes": [
-      {
-        "served_entity_name": "spindle_thermal_risk-6",
-        "served_model_name": "spindle_thermal_risk-6",
-        "traffic_percentage": 100
-      }
-    ]
   }
 }

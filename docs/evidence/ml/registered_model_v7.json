@@ -3,13 +3,13 @@
     "aliases": [
       {
         "alias_name": "challenger",
-        "id": "ca615a99-19a9-4cb3-82e4-606972ddb5e8",
-        "version_num": 6
+        "id": "e7ba1c49-061c-434e-a2b4-da0d320ae4a3",
+        "version_num": 7
       },
       {
         "alias_name": "champion",
-        "id": "017faf06-b0c2-403c-8e34-e321c57a3c09",
-        "version_num": 6
+        "id": "a3212123-9f8a-4e10-b48a-f40f31825c1e",
+        "version_num": 7
       }
     ],
     "full_name": "<catalog>.pharma_twin.spindle_thermal_risk"
@@ -17,7 +17,6 @@
   "versions": {
     "4": {
       "aliases": null,
-      "comment": null,
       "created_at": 1795192712195,
       "run_id": "db985118d81e43ffacc8b5c833324c89",
       "status": "READY",
@@ -25,30 +24,35 @@
     },
     "5": {
       "aliases": null,
-      "comment": null,
       "created_at": 1795248507375,
       "run_id": "017d8efa59ab474db08e9e0fffb84a35",
       "status": "READY",
       "version": 5
     },
     "6": {
-      "aliases": [
-        {
-          "alias_name": "challenger",
-          "id": "ca615a99-19a9-4cb3-82e4-606972ddb5e8",
-          "version_num": 6
-        },
-        {
-          "alias_name": "champion",
-          "id": "017faf06-b0c2-403c-8e34-e321c57a3c09",
-          "version_num": 6
-        }
-      ],
-      "comment": null,
+      "aliases": null,
       "created_at": 1795249082536,
       "run_id": "7fec7a0a5d9f47ebbdcec1acfe4add91",
       "status": "READY",
       "version": 6
+    },
+    "7": {
+      "aliases": [
+        {
+          "alias_name": "challenger",
+          "id": "e7ba1c49-061c-434e-a2b4-da0d320ae4a3",
+          "version_num": 7
+        },
+        {
+          "alias_name": "champion",
+          "id": "a3212123-9f8a-4e10-b48a-f40f31825c1e",
+          "version_num": 7
+        }
+      ],
+      "created_at": 1795253436394,
+      "run_id": "3e73ba16c23442e3bf12256ab27c9235",
+      "status": "READY",
+      "version": 7
     }
   }
 }

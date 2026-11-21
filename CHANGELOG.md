@@ -6,21 +6,23 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
-- Spindle 3 risk model: a measured early warning on a SIMULATED, noisy precursor.
-  `scenario_engine/spindle_scenario.py` is now the single generator for the live
-  producer (embedded in the notebook) and for training. Excursions have a random
-  30–180 s vibration / power precursor (strong, weak or none), and the scenario adds
-  false alarms and quiet cycles. Training uses `--data-source live_format`: the
-  producer's own simulator path at the live ~25 Hz rate. Labels follow breach
-  episodes. The cut-off and clear level are chosen on validation for the most
-  breaches warned ≥ 30 s ahead within a false-alarm budget. New versions register
-  as `challenger` and become `champion` only when they beat it on the same held-out
-  rows. v6 is champion: on a 4 h held-out replay through the dev endpoint it warned
-  34 / 38 breaches ≥ 30 s ahead (median 91 s) at 2.3 false alarms/h; v4 warned
-  30 / 38 (median 49 s). This is a replay, not a live measurement; see
-  docs/ml-risk-model.md.
-
-### Added
+- Spindle 3 risk model: an early warning on a SIMULATED, noisy precursor,
+  measured on fresh data.
+  - `scenario_engine/spindle_scenario.py` is the single generator for the live
+    producer (embedded in the notebook) and for training.
+  - Excursions start at a random point of the 300 s cycle and have a random
+    30–180 s vibration / power precursor (strong, weak or none). The scenario adds
+    false alarms and quiet cycles. Vibration is capped under the vibration alert.
+  - Training runs the producer's own simulator path at the live ~25 Hz rate, with
+    breach-episode labels.
+  - The cut-off and clear level are chosen on validation for discrimination within
+    a false-alarm budget.
+  - A version becomes `champion` only if it qualifies: clear level above steady
+    running, beats a sensor-blind clock, cycle-permutation p < 0.05 and
+    discrimination ≥ 0.30. It must also beat a qualifying champion.
+  - v7 is champion. On fresh data it warned 72 % of breaches ≥ 30 s ahead at 1.4
+    false alarms/h. Measured offline on simulated data, not live; see
+    docs/ml-risk-model.md.
 - Grounded AI action plan for an alert episode (`POST /api/alerts/{alert_id}/action-plan`).
   It calls a Foundation Model endpoint (`GENAI_ENDPOINT`, default
   `databricks-claude-sonnet-5-5`, as a `CAN_QUERY` app resource). Every claim cites its
