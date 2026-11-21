@@ -1,0 +1,21 @@
+# captured 2026-11-20T14:34:49Z
+$ GET /api/health
+{
+    "status": "ok",
+    "db_available": true,
+    "db_error": null,
+    "industries": "pharmaceutical,manufacturing",
+    "databricks_client_id": "02ab07ab-<sp-client-id>",
+    "databricks_host": "<workspace-host>",
+    "zerobus_client_id": "02ab07ab...",
+    "zerobus_endpoint": "<id>.zerobus.<workspace-host>"
+}
+$ GET /api/app-defaults (subset)
+{
+  "resource_prefix": "pharma-twin",
+  "uc_catalog": "<catalog>",
+  "uc_schema": "pharma_twin",
+  "lakebase_project_id": "pharma-twin-backend",
+  "pipelines_project": "pharma-twin-pipelines",
+  "service_credential (UC service-credential NAME, shown unquoted here; not a secret)": iot-rtm-sc
+}

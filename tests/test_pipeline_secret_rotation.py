@@ -25,7 +25,7 @@ import pytest
 import iot_twin.app as app_module
 import iot_twin.services.deployment.deployment_service as ds
 import iot_twin.services.industry.industry_service as isvc
-from tests._fakes import fake_credential
+from tests._fakes import fake_credential, owned_job_settings
 
 ROOT = Path(__file__).resolve().parent.parent
 CLIENT = ROOT / "client"
@@ -46,10 +46,10 @@ AUTH_FAILURE = (
 CONSUMER_CONFIG = {
     "industry": "manufacturing",
     "mode": "realtime",
-    "topic": "iot.manufacturing.realtime",
+    "topic": "pharma-twin.manufacturing.realtime",
     "bootstrapServers": "b-1.example:9198",
     "checkpointLocation": "/Volumes/cat/sch/stream_checkpoints/manufacturing/realtime",
-    "lakebaseProjectId": "iot-pipelines",
+    "lakebaseProjectId": "pharma-twin-pipelines",
     "lakebaseBranch": "manufacturing",
     "metricsTableFqn": "cat.sch.manufacturing_metrics",
 }
@@ -81,7 +81,7 @@ def _render(ts_file: Path, expression: str) -> str:
 def _consumer_notebook(monkeypatch: pytest.MonkeyPatch) -> str:
     monkeypatch.setenv("DATABRICKS_CLIENT_ID", "app-sp-id")
     monkeypatch.setenv("UC_CATALOG", "cat")
-    monkeypatch.setenv("UC_SCHEMA", "sch")
+    monkeypatch.setenv("UC_SCHEMA", "pharma_twin_sch")
     source = _render(
         NOTEBOOK_TS, f"m.generateRealtimeConsumerNotebook({json.dumps(CONSUMER_CONFIG)})"
     )
@@ -175,7 +175,7 @@ class TestConsumerRecovery:
 
         assert (
             'catalog="cat"' in reader
-            and 'schema="sch"' in reader
+            and 'schema="pharma_twin_sch"' in reader
             and 'key="app_sp_oauth"' in reader
         )
         for i, cell in enumerate(_python_cells(notebook)):
@@ -273,15 +273,15 @@ class TestAppPublishesSecret:
             "DATABRICKS_CLIENT_ID": "app-sp-id",
             "DATABRICKS_CLIENT_SECRET": fake_credential("rotated"),
             "UC_CATALOG": "cat",
-            "UC_SCHEMA": "sch",
+            "UC_SCHEMA": "pharma_twin_sch",
         }.items():
             monkeypatch.setenv(key, value)
 
         asyncio.run(app_module.publish_runtime_oauth_secret())
-        assert puts == [("cat", "sch", "app_sp_oauth", fake_credential("rotated"))]
+        assert puts == [("cat", "pharma_twin_sch", "app_sp_oauth", fake_credential("rotated"))]
 
         monkeypatch.delenv("DATABRICKS_CLIENT_SECRET")
-        with caplog.at_level(logging.INFO, logger="iot_digital_twin"):
+        with caplog.at_level(logging.INFO, logger="pharma_twin"):
             asyncio.run(app_module.publish_runtime_oauth_secret())
         assert len(puts) == 1
         assert "Skipping UC secret refresh" in caplog.text
@@ -300,7 +300,10 @@ class TestAppPublishesSecret:
             return "798"
 
         workspace = SimpleNamespace(
-            jobs=SimpleNamespace(update=lambda **_k: calls.append("unpause"))
+            jobs=SimpleNamespace(
+                update=lambda **_k: calls.append("unpause"),
+                get=lambda **_k: owned_job_settings(),
+            )
         )
         monkeypatch.setattr(isvc, "_get_job_id", fake_job_id)
         monkeypatch.setattr(isvc.deployment_service, "sync_runtime_oauth_secret", fake_sync)

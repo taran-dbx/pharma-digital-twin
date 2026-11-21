@@ -1,0 +1,222 @@
+{
+  "plan_id": "cf9763fe-2051-4987-9b59-ac60efe84dc1",
+  "alert_id": "e8464efe-3152-4fb7-99bf-571c7eda9e1c",
+  "industry": "manufacturing",
+  "requested_by": "qa-reviewer@example.com",
+  "requested_at": "2026-11-20T15:40:57.585986+00:00",
+  "endpoint": "databricks-claude-sonnet-5-5",
+  "model": "databricks-claude-sonnet-5-5",
+  "model_version": null,
+  "prompt_template_version": "action-plan/2026-11-20.v1",
+  "prompt_hash": "867a3401e46b21ce54911873ccf650ee42a888ea803748a8ed3c3fa53946214c",
+  "grounding_hash": "b241fe26605e80d9c4e4721dfb2ccfd041c642ced386d49ebbc760f4137e3fae",
+  "grounding_check": "fail",
+  "grounding_reasons": [
+    "malformed JSON: Expecting ',' delimiter: line 1 column 3540 (char 3539)"
+  ],
+  "status": "rejected",
+  "error": null,
+  "latency_ms": 18013,
+  "usage": {
+    "prompt_tokens": 4580,
+    "completion_tokens": 2500,
+    "total_tokens": 7080
+  },
+  "plan": null,
+  "citation_ids": [
+    "alert:e8464efe-3152-4fb7-99bf-571c7eda9e1c",
+    "readings:54982bec9e5c#0",
+    "readings:54982bec9e5c#1",
+    "readings:54982bec9e5c#2",
+    "readings:54982bec9e5c#3",
+    "readings:54982bec9e5c#4",
+    "lot:TM-HS12-261120-188",
+    "projected_rft:e8464efe-3152-4fb7-99bf-571c7eda9e1c",
+    "alert_rule:mfg-alert-spindle-temp",
+    "maintenance:mfg-mnt-001",
+    "risk_score:e8464efe-3152-4fb7-99bf-571c7eda9e1c"
+  ],
+  "applied_by": null,
+  "applied_at": null,
+  "applied_response_id": null,
+  "advisory": true,
+  "grounding_rows": [
+    {
+      "id": "alert:e8464efe-3152-4fb7-99bf-571c7eda9e1c",
+      "source": "alert",
+      "ref": "e8464efe-3152-4fb7-99bf-571c7eda9e1c",
+      "data": {
+        "rule_id": "mfg-alert-spindle-temp",
+        "sensor_id": "mfg-sns-cnc_1_spindle_temp",
+        "severity": "crit",
+        "status": "open",
+        "fault_code": "VPP-SPINDLE3-TEMP",
+        "value": 64.2,
+        "threshold": 60.0,
+        "opened_at": "2026-11-20T15:40:17.585986+00:00",
+        "excursion_started_at": "2026-11-20T15:40:15.585986+00:00",
+        "ncr_id_if_opened": "NCR-20261120-154017-E846",
+        "acknowledged_at": null,
+        "acknowledged_by": null,
+        "cleared_at": null,
+        "triggering_part": null
+      }
+    },
+    {
+      "id": "readings:54982bec9e5c#0",
+      "source": "readings",
+      "ref": "54982bec9e5c#0",
+      "data": {
+        "bucket": "T-10s",
+        "min_value": 57.8,
+        "max_value": 58.6,
+        "n": 10
+      }
+    },
+    {
+      "id": "readings:54982bec9e5c#1",
+      "source": "readings",
+      "ref": "54982bec9e5c#1",
+      "data": {
+        "bucket": "T+0s",
+        "min_value": 59.1,
+        "max_value": 60.4,
+        "n": 10
+      }
+    },
+    {
+      "id": "readings:54982bec9e5c#2",
+      "source": "readings",
+      "ref": "54982bec9e5c#2",
+      "data": {
+        "bucket": "T+10s",
+        "min_value": 60.9,
+        "max_value": 62.7,
+        "n": 10
+      }
+    },
+    {
+      "id": "readings:54982bec9e5c#3",
+      "source": "readings",
+      "ref": "54982bec9e5c#3",
+      "data": {
+        "bucket": "T+20s",
+        "min_value": 62.5,
+        "max_value": 64.2,
+        "n": 10
+      }
+    },
+    {
+      "id": "readings:54982bec9e5c#4",
+      "source": "readings",
+      "ref": "54982bec9e5c#4",
+      "data": {
+        "bucket": "T+30s",
+        "min_value": 61.0,
+        "max_value": 63.1,
+        "n": 10
+      }
+    },
+    {
+      "id": "lot:TM-HS12-261120-188",
+      "source": "lot",
+      "ref": "TM-HS12-261120-188",
+      "data": {
+        "lot_id": "TM-HS12-261120-188",
+        "dhr_ref": "DHR-TM-HS12-261120-188",
+        "parts_at_risk": [
+          "TM-HS12-261120-188-01",
+          "TM-HS12-261120-188-02",
+          "TM-HS12-261120-188-03"
+        ],
+        "parts_at_risk_count": 3,
+        "parts_per_lot": 15,
+        "parts_releasable": 12,
+        "part_number": "HS-TI64-12",
+        "udi_di": "00850012345671",
+        "work_order": "WO-TM-24817"
+      }
+    },
+    {
+      "id": "projected_rft:e8464efe-3152-4fb7-99bf-571c7eda9e1c",
+      "source": "projected_rft",
+      "ref": "e8464efe-3152-4fb7-99bf-571c7eda9e1c",
+      "data": {
+        "pct": 0.0,
+        "good": 0,
+        "parts_started": 3,
+        "parts_at_risk": 3,
+        "lot_ids": [
+          "TM-HS12-261120-188"
+        ],
+        "definition": "Projected right-first-time = (parts started - parts at risk) / parts started, over the lots an excursion touched. Parts at risk are the parts whose cut overlapped the time Spindle 3 was outside its validated limit. Projected: no CMM results exist yet."
+      }
+    },
+    {
+      "id": "alert_rule:mfg-alert-spindle-temp",
+      "source": "alert_rule",
+      "ref": "mfg-alert-spindle-temp",
+      "data": {
+        "sensor_id": "mfg-sns-cnc_1_spindle_temp",
+        "operator": "gt",
+        "threshold": 60.0,
+        "severity": "crit",
+        "fault_code": "VPP-SPINDLE3-TEMP",
+        "duration_s": 2.0,
+        "hysteresis": 5.0,
+        "required_action": "QA hold: quarantine parts machined outside the validated limit, open an NCR and send them to CMM",
+        "parameter_type": "validated_process_parameter",
+        "parameter": "Spindle 3 temperature",
+        "validated_limit": "60 \u00b0C",
+        "oq_ref": "OQ-TM-CNC1-014",
+        "pq_ref": "PQ-TM-HS12-022",
+        "process_spec": "PS-TM-MILL-HS-003 rev C",
+        "risk": "Dimensional nonconformance: stem taper and neck geometry"
+      }
+    },
+    {
+      "id": "maintenance:mfg-mnt-001",
+      "source": "maintenance",
+      "ref": "mfg-mnt-001",
+      "data": {
+        "asset_id": "mfg-asset-cnc-1",
+        "component_id": "mfg-comp-spindle",
+        "same_component": true,
+        "kind": "inspection",
+        "started_at": "2026-09-01T08:00:00Z",
+        "completed_at": "2026-09-01T12:00:00Z",
+        "notes": "Spindle bearing inspection; thermal compensation re-verified per OQ-TM-CNC1-014"
+      }
+    },
+    {
+      "id": "risk_score:e8464efe-3152-4fb7-99bf-571c7eda9e1c",
+      "source": "risk_score",
+      "ref": "e8464efe-3152-4fb7-99bf-571c7eda9e1c",
+      "data": {
+        "alert_id": "e8464efe-3152-4fb7-99bf-571c7eda9e1c",
+        "rule_id": "mfg-alert-spindle-temp",
+        "risk_score": 0.87,
+        "model_name": "pharma_twin.ml.spindle_risk (synthetic)",
+        "model_version": "3",
+        "top_features": [
+          {
+            "feature": "spindle_temp_slope_5m",
+            "contribution": 0.41
+          },
+          {
+            "feature": "vibration_rms",
+            "contribution": 0.22
+          }
+        ]
+      }
+    }
+  ],
+  "response": {
+    "raw_text": "{\"summary\":{\"text\":\"Critical alert: Spindle 3 temperature reached 64.2 against the 60.0 validated limit, 4.2 above it. Readings stayed above 60 from the T+0s bucket through T+30s, where the minimum was still 61.0. Lot TM-HS12-261120-188 has 3 parts at risk out of 15 (serials -01, -02, -03), and projected right-first-time is 0%. The rule's required action is a QA hold, an NCR and CMM inspection. This plan is advisory only, and a qualified person must sign every decision in the app.\",\"citations\":[\"alert:e8464efe-3152-4fb7-99bf-571c7eda9e1c\",\"readings:54982bec9e5c#1\",\"readings:54982bec9e5c#3\",\"readings:54982bec9e5c#4\",\"lot:TM-HS12-261120-188\",\"projected_rft:e8464efe-3152-4fb7-99bf-571c7eda9e1c\",\"alert_rule:mfg-alert-spindle-temp\"]},\"disposition\":{\"quarantine\":{\"lots\":[\"TM-HS12-261120-188\"],\"serials\":[\"TM-HS12-261120-188-01\",\"TM-HS12-261120-188-02\",\"TM-HS12-261120-188-03\"],\"rationale\":\"The rule requires quarantine of parts machined outside the validated 60 \u00b0C limit. The lot row lists 3 parts at risk, serials -01, -02 and -03. The lot row records 12 other parts as releasable, but QA should confirm that against the cut-time overlap before releasing them. The alert row names no triggering part, so the at-risk list comes from the lot row.\",\"citations\":[\"alert_rule:mfg-alert-spindle-temp\",\"lot:TM-HS12-261120-188\",\"alert:e8464efe-3152-4fb7-99bf-571c7eda9e1c\"]},\"cmm_inspection\":{\"scope\":\"Full dimensional CMM inspection of the 3 at-risk stems, with emphasis on stem taper and neck geometry, which are the risks named in the rule. No CMM results exist yet. Hold the parts at CMM and do not pass them to CLEAN / PASSIVATE or STERILE PACK until QA has reviewed the results.\",\"serials\":[\"TM-HS12-261120-188-01\",\"TM-HS12-261120-188-02\",\"TM-HS12-261120-188-03\"],\"citations\":[\"alert_rule:mfg-alert-spindle-temp\",\"lot:TM-HS12-261120-188\",\"projected_rft:e8464efe-3152-4fb7-99bf-571c7eda9e1c\"]},\"ncr\":{\"required\":true,\"rationale\":\"A validated process parameter (Spindle 3 temperature, limit 60 \u00b0C) was exceeded, with a peak of 64.2 on a critical alert. The rule requires an NCR. The alert row shows a proposed NCR id, NCR-20261120-154017-E846, but it does not confirm that the NCR has been opened. QA should open or confirm it and reference the lot and the 3 at-risk serials.\",\"citations\":[\"alert_rule:mfg-alert-spindle-temp\",\"alert:e8464efe-3152-4fb7-99bf-571c7eda9e1c\",\"lot:TM-HS12-261120-188\"]},\"maintenance_request\":{\"required\":true,\"rationale\":\"The spindle ran above its validated limit, with temperature still at least 61.0 at the end of the captured window. The only maintenance record is a spindle bearing inspection completed 2026-09-01, on the same component, which re-verified thermal compensation. Request a maintenance check of the spindle, including thermal compensation and bearings, before CNC-1 Spindle 3 resumes cutting. Vibration RMS is also a top model feature.\",\"citations\":[\"alert:e8464efe-3152-4fb7-99bf-571c7eda9e1c\",\"readings:54982bec9e5c#4\",\"maintenance:mfg-mnt-001\",\"risk_score:e8464efe-3152-4fb7-99bf-571c7eda9e1c\"]}},\"risk_narrative\":{\"text\":\"The model risk score is 87% (model pharma_twin.ml.spindle_risk, a synthetic model, version 3). The largest contributor is the 5-minute spindle temperature slope (contribution 0.41), followed by vibration RMS (0.22). This points to a rapid thermal rise, with some mechanical signal from the spindle. The score supports the rule-based hold but does not replace CMM results. The score is advisory only.\",\"citations\":[\"risk_score:e8464efe-3152-4fb7-99bf-571c7eda9e1c\"]},\"steps\":[{\"",
+    "plan": null,
+    "schema_errors": [
+      "malformed JSON: Expecting ',' delimiter: line 1 column 3540 (char 3539)"
+    ],
+    "attempts": 1
+  }
+}

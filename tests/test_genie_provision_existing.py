@@ -52,7 +52,7 @@ class _Ledger:
 @pytest.fixture()
 def env(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("UC_CATALOG", "cat")
-    monkeypatch.setenv("UC_SCHEMA", "sch")
+    monkeypatch.setenv("UC_SCHEMA", "pharma_twin_sch")
     monkeypatch.delenv(gss.PARENT_PATH_ENV, raising=False)
     deployments = {("realtime", SETUP_ID): dict(DEPLOYED)}
 

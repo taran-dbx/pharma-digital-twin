@@ -10,9 +10,11 @@ successful deploy.  The space contains only tables that exist for the mode:
 - the dedicated ``intelligence_*`` reference tables.
 
 Wording and examples are generated from the industry catalog
-(:mod:`genie_industry_profile`); KPIs (downtime / availability / health index
-or OEE / anomalies) are answered through Genie text instructions, example SQL
-and SQL snippets — no new tables.
+(:mod:`genie_industry_profile`); KPIs (downtime / availability / health index —
+a process health index for the medical-device cell, plus its parts-based
+projected right-first-time — / anomalies) are
+answered through Genie text instructions, example SQL and SQL snippets — no new
+tables.
 
 **Persistence**: the space id lives in the ``provisioned_resource`` ledger
 (``resource_type='genie_space'``, ``metadata.mode``).  The ledger is already
@@ -58,7 +60,7 @@ from iot_twin.services.industry.industry_catalog_service import industry_table
 from iot_twin.services.intelligence_catalog_service import reference_tables
 from iot_twin.services.pipelines import pipeline_setup_repo
 
-logger = logging.getLogger("iot_digital_twin.services.genie_space")
+logger = logging.getLogger("pharma_twin.services.genie_space")
 
 RESOURCE_TYPE = "genie_space"
 # Higher teardown_order is deleted first: the space references the tables

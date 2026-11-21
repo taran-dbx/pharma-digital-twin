@@ -1,0 +1,13 @@
+# Lakehouse Sync (CDF) stall, observed 2026-11-20T21:05:37Z — OPEN ISSUE
+# UC history table <catalog>.pharma_twin.lb__shadow_manufacturing_sensor_readings_history:
+  last Delta commit: version 1000 at 2026-11-20T19:29:32Z (operation wal2delta.append; one commit every ~15 s before that)
+  newest event_time in Delta: 2026-11-20T19:29:31.620Z; total rows 8,119,933
+# Health check at ~21:00 (snapshot ops/notebooks/runs/manufacturing_realtime_2026-11-20.ipynb):
+  uc_last_commit FAIL 1.5h ago | uc_cdf_lag FAIL 84.9m | lakets_cdf_state FAIL sync=True, wal2delta=STREAMING, lag 2,214.1 MB
+  xc_reconciliation FAIL Lakebase 1,760,129 vs Delta 0 in the 2 h window
+# Correlated symptoms (see 11b, 05d): consumer throughput fell from 488 to ~400-460 rows/s from 19:32; the pipeline
+# branch compute returned 'Couldn't connect to compute node' to the app (~20:51) and to direct connections (~20:58, 21:04);
+# Postgres stats counters reset (~21:00), i.e. the compute restarted.
+# Hypothesis (not verified): the sync stopped at Delta version 1000; WAL retained by the logical slot then grows (2.2 GB)
+# and slows the primary. Not fixed here: needs the Lakehouse Sync / Lakebase owners. The CDF evidence at 15:58 (07)
+# shows the sync working before the stall.

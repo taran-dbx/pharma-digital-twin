@@ -22,3 +22,13 @@ regexes = [
   '''dataKey\s*[=:]\s*["'][A-Za-z0-9_]+["']''',
   '''\bkey,\s*preserve_failed\b''',
 ]
+
+[[allowlists]]
+description = """generic-api-key false positives: citation objects in GenAI audit evidence \
+(docs/evidence/genai/*-audit.json) carry "key": "<record UUID>" record ids, not secrets. \
+Only an exact lowercase-UUID value on a JSON "key" field is allowed."""
+targetRules = ["generic-api-key"]
+regexTarget = "match"
+regexes = [
+  '''^key"\s*:\s*"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"$''',
+]

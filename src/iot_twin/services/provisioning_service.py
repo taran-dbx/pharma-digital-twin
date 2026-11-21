@@ -12,6 +12,8 @@ from typing import Any
 
 import httpx
 
+from iot_twin.core import resource_names
+from iot_twin.core.config import assert_owned_name
 from iot_twin.models.sql_ddl import (
     LAKEBASE_ROLE_ID,
     MATVIEW_1M_DDL,
@@ -23,7 +25,7 @@ from iot_twin.services.app_permissions import _app_name, grant_app_can_use
 from iot_twin.services.lakets import lakets_service
 from iot_twin.services.zerobus_validation import ZEROBUS_OAUTH_ENTRY_NAME
 
-logger = logging.getLogger("iot_digital_twin.services.provisioning")
+logger = logging.getLogger("pharma_twin.services.provisioning")
 
 
 def _is_missing_metastore_storage(exc: Exception) -> bool:
@@ -38,7 +40,12 @@ def _is_missing_metastore_storage(exc: Exception) -> bool:
 
 
 async def provision_secrets_scope(scope_name: str) -> dict:
-    """Create a UC secret scope (idempotent)."""
+    """Create a UC secret scope (idempotent).
+
+    Raises :class:`~iot_twin.core.config.NotOwnedError` for a non-owned scope,
+    before any workspace call.
+    """
+    scope_name = assert_owned_name(scope_name, what="secret scope")
     try:
         from databricks.sdk import WorkspaceClient
 
@@ -134,13 +141,14 @@ async def ensure_streaming_sp(
     """Ensure the streaming service principal + OAuth secret exist (idempotent).
 
     Creates the secret scope, mints a service principal named
-    ``iot-sss-<scope_name>`` with an OAuth secret, stores its client id /
+    ``<prefix>-sss-<scope_name>`` with an OAuth secret, stores its client id /
     secret in the scope, and grants the SP ``CAN_USE`` on the app.  Both the
     fresh-create and already-exists paths (re-)apply the app grant.
 
     Reused by ``routes/settings.py`` (``/api/settings/provision/secrets``) and
     by the one-click pipeline-setup orchestrator.  Non-fatal throughout — any
-    failure is surfaced in ``results`` and never raised.
+    failure is surfaced in ``results`` — except a non-owned ``scope_name``,
+    which raises :class:`~iot_twin.core.config.NotOwnedError` before any call.
 
     The ``provision_scope`` / ``grant_fn`` / ``app_name_fn`` hooks let callers
     inject their own (patchable) helper references; they default to this
@@ -168,6 +176,11 @@ async def ensure_streaming_sp(
             ],
         }
 
+    # Ownership guard BEFORE any workspace call: the keys written below
+    # (zerobus-client-id / -secret) are the same ones the upstream app uses, so
+    # a foreign scope here would overwrite its credentials. Raises NotOwnedError.
+    scope_name = assert_owned_name(scope_name, what="secret scope")
+
     scope_result = await provision_scope(scope_name)
     results.append(scope_result)
     if scope_result.get("status") not in ("created", "already_exists"):
@@ -175,7 +188,7 @@ async def ensure_streaming_sp(
 
     zb_id_key = "zerobus-client-id"
     zb_secret_key = ZEROBUS_OAUTH_ENTRY_NAME
-    sp_name = f"iot-sss-{scope_name}"
+    sp_name = resource_names.streaming_sp_name(scope_name)
     client_id: str | None = None
 
     def _grant_app_access(application_id: str | None) -> None:
@@ -289,7 +302,7 @@ async def ensure_streaming_sp(
 # Shared streaming service principal (one SP for all industry pipelines)
 # ---------------------------------------------------------------------------
 
-SHARED_STREAMING_SP_DISPLAY_NAME = "iot-sss-industries"
+SHARED_STREAMING_SP_DISPLAY_NAME = resource_names.shared_streaming_sp_name()
 # DEPRECATED constant kept for import compatibility; use get_secret_scope() at
 # call time instead.  Set to "" so import-time reads never inject a workspace
 # literal — the real value is resolved per-call via workspace_config.
@@ -300,9 +313,9 @@ SHARED_STREAMING_SP_ID_KEY = "sss-industries-client-id"
 SHARED_STREAMING_SP_OAUTH_ENTRY_NAME = "sss-industries-client-secret"
 SHARED_STREAMING_SP_SECRET_KEY = SHARED_STREAMING_SP_OAUTH_ENTRY_NAME
 # Distinct Lakebase role_id for the shared streaming SP so it can be registered
-# on the SAME branch as the app-backend role (LAKEBASE_ROLE_ID="iot-app-user")
+# on the SAME branch as the app-backend role (LAKEBASE_ROLE_ID, ``<prefix>-app-user``)
 # without a role_id collision.
-SHARED_STREAMING_LAKEBASE_ROLE_ID = "iot-sss-industries"
+SHARED_STREAMING_LAKEBASE_ROLE_ID = resource_names.shared_streaming_sp_name()
 
 
 # NOTE (Task 3): ``ensure_shared_streaming_sp`` and the separate zerobus SP
@@ -312,16 +325,36 @@ SHARED_STREAMING_LAKEBASE_ROLE_ID = "iot-sss-industries"
 # only for import compatibility (e.g. health checks) and are otherwise unused.
 
 
-async def provision_uc_catalog(uc: dict) -> list[dict]:
-    """Create UC catalog, schemas, and checkpoint volume (idempotent)."""
-    results: list[dict] = []
-    pattern = uc.get("catalog_pattern", "iot_{name}")
+def uc_settings_target(uc: dict) -> tuple[str, list[str]]:
+    """Return the (catalog, schemas) a UC-settings body would create."""
+    pattern = uc.get("catalog_pattern", resource_names.catalog_pattern())
     if "{name}" in pattern:
         catalog_name = pattern.replace("{name}", "default")
     else:
-        catalog_name = pattern or "iot_default"
+        catalog_name = pattern or resource_names.default_catalog_name()
+    return catalog_name, list(uc.get("schemas", ["raw", "metrics", "checkpoints"]))
 
-    schemas = uc.get("schemas", ["raw", "metrics", "checkpoints"])
+
+def assert_owned_uc_settings(uc: dict) -> None:
+    """Raise NotOwnedError unless every catalog/schema the UC body targets is owned."""
+    from iot_twin.core.workspace_config import get_uc_catalog
+    from iot_twin.services.ownership import assert_owned_uc
+
+    catalog_name, schemas = uc_settings_target(uc)
+    for schema in schemas or [None]:
+        assert_owned_uc(catalog_name, schema, shared_catalog=get_uc_catalog(), what="UC settings")
+
+
+async def provision_uc_catalog(uc: dict) -> list[dict]:
+    """Create UC catalog, schemas, and checkpoint volume (idempotent).
+
+    Raises :class:`~iot_twin.core.config.NotOwnedError` (before any workspace
+    call) unless the catalog is owned, or is the shared ``UC_CATALOG`` with
+    owned schemas.
+    """
+    results: list[dict] = []
+    assert_owned_uc_settings(uc)
+    catalog_name, schemas = uc_settings_target(uc)
     volume_name = uc.get("checkpoint_volume", "stream_checkpoints")
     storage_root_base = uc.get("storage_root", "")
 
@@ -428,9 +461,22 @@ async def provision_uc_catalog(uc: dict) -> list[dict]:
     return results
 
 
-async def provision_lakebase_table(lb: dict) -> dict:
-    """Create the sensor_readings table in Lakebase (idempotent)."""
+async def provision_lakebase_table(lb: dict, *, internal_direct: bool = False) -> dict:
+    """Create the sensor_readings table in Lakebase (idempotent).
+
+    Raises :class:`~iot_twin.core.config.NotOwnedError` when an autoscale
+    ``project_id`` is outside this deployment's prefix namespace.
+    """
     mode = lb.get("mode", "autoscale")
+    if mode == "autoscale" and lb.get("project_id"):
+        lb = {**lb, "project_id": assert_owned_name(lb["project_id"], what="Lakebase project_id")}
+    elif mode != "autoscale":
+        # Direct mode: flag-gated, and the host must belong to an owned project.
+        # ``internal_direct`` is only passed by app code that resolved the host
+        # from an owned endpoint itself (never from a request body).
+        from iot_twin.services.ownership import assert_direct_lakebase
+
+        assert_direct_lakebase(lb, internal=internal_direct)
     table_name = lb.get("pg_table", "sensor_readings")
     database = lb.get("database", "databricks_postgres")
 
@@ -616,7 +662,11 @@ async def provision_lakebase_table(lb: dict) -> dict:
 
 
 async def provision_lakebase_project_and_branch(project_id: str, branch_id: str) -> list[dict]:
-    """Create Lakebase autoscale project and branch if they don't exist."""
+    """Create Lakebase autoscale project and branch if they don't exist.
+
+    Raises :class:`~iot_twin.core.config.NotOwnedError` for a non-owned project.
+    """
+    project_id = assert_owned_name(project_id, what="Lakebase project_id")
     results: list[dict] = []
 
     from databricks.sdk import WorkspaceClient
@@ -855,6 +905,12 @@ async def provision_lakebase_role(
 
     if kwargs:
         logger.warning("provision_lakebase_role received unknown kwargs: %s", list(kwargs.keys()))
+
+    # Ownership guard: never register roles / grant DML on a foreign project.
+    if project_id:
+        project_id = assert_owned_name(project_id, what="Lakebase project_id")
+    if endpoint_name:
+        endpoint_name = assert_owned_name(endpoint_name, what="Lakebase endpoint")
 
     # Normalise sink_tables (tests pass tuples, production uses list).
     sink_tables_list: list[str] = [t for t in sink_tables] if sink_tables else ["sensor_readings"]

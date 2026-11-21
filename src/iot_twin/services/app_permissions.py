@@ -13,39 +13,41 @@ untouched. The call is best-effort: a failure here must never break the
 provisioning / heal flow, so we log and swallow.
 
 This module also gates admin-only actions (add industry, provisioning
-internals) via ``is_admin``. Identity is resolved the same way
-``iot_twin.core.auth.get_current_user`` does: Databricks Apps injects the caller's
-OAuth token in the ``x-forwarded-access-token`` header, and its ``sub`` claim
-is the user's email — decoded locally, no network call needed since the
-platform proxy already validated the token. Group membership is a network
-call (SDK, scoped to the caller's own forwarded token) and is therefore kept
-in a separate, patchable ``_user_groups`` function.
+internals) via ``is_admin``. Databricks Apps injects the caller's OAuth token in
+the ``x-forwarded-access-token`` header. The token is never decoded locally (an
+unverified payload is client-controlled): the caller's email and groups come from
+``current_user.me()`` called with that token alone (``_me_for_forwarded_token``),
+so the workspace verifies it. The result is cached per request; any failure
+resolves to "unknown caller", which denies admin.
 """
 
 from __future__ import annotations
 
-import base64
-import json
 import logging
 import os
 from typing import Any
 
-logger = logging.getLogger("iot_digital_twin.services.app_permissions")
+from iot_twin.core import resource_names
+from iot_twin.core.config import owned_env
 
-DEFAULT_APP_NAME = "iot-digital-twin"
-DEFAULT_ADMIN_GROUP = "iot-admins"
+logger = logging.getLogger("pharma_twin.services.app_permissions")
+
+# Import-time snapshots of the prefix-derived defaults (kept for callers that
+# import them); the getters below resolve the prefix on every call.
+DEFAULT_APP_NAME = resource_names.app_name()
+DEFAULT_ADMIN_GROUP = resource_names.admin_group()
 
 
 def _app_name() -> str:
     """Return the Databricks App name from env, falling back to the constant."""
     name = (os.getenv("DATABRICKS_APP_NAME") or "").strip()
-    return name or DEFAULT_APP_NAME
+    return name or resource_names.app_name()
 
 
 def _admin_group() -> str:
     """Return the admin group display name from env, falling back to the default."""
-    name = (os.getenv("ADMIN_GROUP") or "").strip()
-    return name or DEFAULT_ADMIN_GROUP
+    name = owned_env("ADMIN_GROUP", what="ADMIN_GROUP")
+    return name or resource_names.admin_group()
 
 
 def _forwarded_token(request: Any) -> str | None:
@@ -56,61 +58,97 @@ def _forwarded_token(request: Any) -> str | None:
         return None
 
 
-def _caller_email(request: Any) -> str | None:
-    """Resolve the caller's email.
+_ME_CACHE_ATTR = "_pharma_twin_verified_me"
 
-    Prefers the ``x-forwarded-email`` header that Databricks Apps inject for
-    authenticated browser requests (the authoritative email), falling back to
-    the ``sub`` claim of the forwarded OAuth token. Returns ``None`` on any
-    failure rather than raising.
+
+class CallerVerificationError(RuntimeError):
+    """The forwarded token could not be verified as the caller's own identity."""
+
+
+def _me_for_forwarded_token(token: str) -> Any:
+    """Return ``current_user.me()`` authenticated ONLY with the caller's forwarded token.
+
+    ``auth_type="pat"`` is required: inside a Databricks App the SP's
+    ``DATABRICKS_CLIENT_ID`` / ``DATABRICKS_CLIENT_SECRET`` are always set too,
+    and without an explicit preference the SDK refuses two methods ("more than one
+    authorization method configured"). Two more checks make sure a failure denies
+    instead of resolving to the app's own identity:
+
+    - the header the client will send must be exactly ``Bearer <forwarded token>``;
+    - the returned identity must not be the app service principal itself.
+
+    Raises :class:`CallerVerificationError` (or the SDK's error) on any mismatch.
     """
-    try:
-        header_email = request.headers.get("x-forwarded-email")
-        if header_email:
-            return header_email
-    except Exception:
-        pass
+    from databricks.sdk import WorkspaceClient
+    from databricks.sdk.config import Config
+
+    host = (os.getenv("DATABRICKS_HOST") or "").strip() or None
+    config = Config(host=host, token=token, auth_type="pat")
+    if config.authenticate().get("Authorization") != f"Bearer {token}":
+        raise CallerVerificationError("client is not authenticated with the forwarded token")
+    me = WorkspaceClient(config=config).current_user.me()
+    app_sp = (os.getenv("DATABRICKS_CLIENT_ID") or "").strip()
+    if app_sp and getattr(me, "user_name", None) == app_sp:
+        raise CallerVerificationError("forwarded token resolved to the app service principal")
+    return me
+
+
+def _verified_me(request: Any) -> Any | None:
+    """Return ``current_user.me()`` for the caller's OWN forwarded token, or ``None``.
+
+    The Databricks API verifies the token, so the identity (``user_name``,
+    ``groups``) comes from the workspace, not from client-controlled bytes. The
+    result is cached on ``request.state`` so one request costs one API call.
+    Defensive: any failure returns ``None``.
+    """
+    state = getattr(request, "state", None)
+    cached = getattr(state, _ME_CACHE_ATTR, None) if state is not None else None
+    if cached is not None:
+        return cached or None  # ``False`` caches a failed lookup
     token = _forwarded_token(request)
-    if not token:
-        return None
+    me: Any = None
+    if token:
+        try:
+            me = _me_for_forwarded_token(token)
+        except Exception as exc:
+            logger.warning("Failed to verify caller identity (treating as unknown): %s", exc)
+            me = None
+    if state is not None:
+        try:
+            setattr(state, _ME_CACHE_ATTR, me if me is not None else False)
+        except Exception:
+            pass
+    return me
+
+
+def _caller_email(request: Any) -> str | None:
+    """Resolve the caller's email from a VERIFIED identity.
+
+    With a forwarded OAuth token, the email is ``current_user.me().user_name``
+    as returned by the workspace for that token. The token is never decoded
+    locally: an unverified JWT payload is client-controlled. Without a token,
+    falls back to the ``x-forwarded-email`` header that the Databricks Apps proxy
+    injects for authenticated browser requests. Returns ``None`` on any failure.
+    """
+    if _forwarded_token(request):
+        me = _verified_me(request)
+        user_name = getattr(me, "user_name", None) if me is not None else None
+        return user_name or None
     try:
-        payload_b64 = token.split(".")[1]
-        payload_b64 += "=" * (-len(payload_b64) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
-        # Prefer email-shaped claims; ``sub`` is often a UUID on Databricks.
-        for claim in ("email", "upn", "preferred_username", "unique_name", "sub"):
-            value = payload.get(claim)
-            if value and "@" in str(value):
-                return value
-        return payload.get("sub") or None
-    except Exception as exc:
-        logger.warning("Failed to decode caller email from forwarded token: %s", exc)
+        return request.headers.get("x-forwarded-email") or None
+    except Exception:
         return None
 
 
 def _user_groups(request: Any) -> set[str]:
-    """Resolve the caller's Databricks group display names via the SDK.
+    """Resolve the caller's Databricks group display names from the verified identity.
 
-    Builds a ``WorkspaceClient`` scoped to the caller's own forwarded OAuth
-    token (the same header ``iot_twin.core.auth.get_current_user`` reads) and asks
-    for ``current_user.me()``, whose ``groups`` field lists the identities
-    the caller belongs to.
-
-    Defensive: any failure (missing token, SDK error, network issue) returns
-    an empty set rather than raising, so callers default to "no groups"
-    instead of blowing up.
+    Uses the same cached ``current_user.me()`` call as :func:`_caller_email`
+    (scoped to the caller's own forwarded token). Any failure returns an empty set.
     """
-    token = _forwarded_token(request)
-    if not token:
-        return set()
+    me = _verified_me(request)
+    groups = getattr(me, "groups", None) or [] if me is not None else []
     try:
-        from databricks.sdk import WorkspaceClient
-        from databricks.sdk.config import Config
-
-        host = (os.getenv("DATABRICKS_HOST") or "").strip() or None
-        w = WorkspaceClient(config=Config(host=host, token=token))
-        me = w.current_user.me()
-        groups = getattr(me, "groups", None) or []
         return {g.display for g in groups if getattr(g, "display", None)}
     except Exception as exc:
         logger.warning("Failed to resolve user groups (defaulting to none): %s", exc)
@@ -150,7 +188,7 @@ def is_admin(request: Any) -> bool:
 
     Resolution order (any one grants admin): the caller's email is listed in
     ``ADMIN_EMAILS`` (CSV); membership in ``ADMIN_GROUP`` (default
-    ``"iot-admins"``) via ``_user_groups``; or the app-owner fallback.
+    ``"<prefix>-admins"``) via ``_user_groups``; or the app-owner fallback.
     Defensive throughout: any failure denies rather than raises.
     """
     try:

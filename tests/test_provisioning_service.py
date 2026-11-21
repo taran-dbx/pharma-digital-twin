@@ -23,7 +23,7 @@ from tests._fakes import fake_credential
 
 
 SP_CLIENT_ID = "00000000-0000-0000-0000-000000000000"
-PROJECT_ID = "iot-demo"
+PROJECT_ID = "pharma-twin-demo"
 BRANCH_ID = "production"
 ENDPOINT_NAME = f"projects/{PROJECT_ID}/branches/{BRANCH_ID}/endpoints/primary"
 
@@ -302,11 +302,9 @@ class TestEnsureStreamingSP:
         w = _make_sp_ws(existing_keys=[])
         with (
             patch("iot_twin.services.provisioning_service.grant_app_can_use") as grant_mock,
-            patch(
-                "iot_twin.services.provisioning_service._app_name", return_value="iot-digital-twin"
-            ),
+            patch("iot_twin.services.provisioning_service._app_name", return_value="pharma-twin"),
         ):
-            out = await provisioning_service.ensure_streaming_sp(w, "iot-secrets")
+            out = await provisioning_service.ensure_streaming_sp(w, "pharma-twin-secrets")
 
         assert out["client_id"] == "fresh-app-id"
         assert out["status"] in ("created", "ok")
@@ -329,11 +327,9 @@ class TestEnsureStreamingSP:
         )
         with (
             patch("iot_twin.services.provisioning_service.grant_app_can_use") as grant_mock,
-            patch(
-                "iot_twin.services.provisioning_service._app_name", return_value="iot-digital-twin"
-            ),
+            patch("iot_twin.services.provisioning_service._app_name", return_value="pharma-twin"),
         ):
-            out = await provisioning_service.ensure_streaming_sp(w, "iot-secrets")
+            out = await provisioning_service.ensure_streaming_sp(w, "pharma-twin-secrets")
 
         w.service_principals.create.assert_not_called()
         w.service_principals.list.assert_called_once()
@@ -347,11 +343,9 @@ class TestEnsureStreamingSP:
         w.service_principals.create.side_effect = Exception("not authorized")
         with (
             patch("iot_twin.services.provisioning_service.grant_app_can_use"),
-            patch(
-                "iot_twin.services.provisioning_service._app_name", return_value="iot-digital-twin"
-            ),
+            patch("iot_twin.services.provisioning_service._app_name", return_value="pharma-twin"),
         ):
-            out = await provisioning_service.ensure_streaming_sp(w, "iot-secrets")
+            out = await provisioning_service.ensure_streaming_sp(w, "pharma-twin-secrets")
 
         # Non-fatal: surfaces a skipped/failed result but returns a dict.
         assert isinstance(out["results"], list)
@@ -387,7 +381,7 @@ class TestProvisionLakebaseRoleBackCompat:
                 branch_id=BRANCH_ID,
                 endpoint_name=ENDPOINT_NAME,
                 password=fake_credential("legacy"),  # intentional legacy kwarg
-                role_name="iot_app_user",
+                role_name="pharma_twin_app_user",
             )
 
         assert isinstance(results, list)

@@ -123,7 +123,7 @@ class TestCheckDeltaTables:
         """Health rejects the unused direct realtime table [C7251][defect][regression]."""
         rows = [
             {
-                "table_schema": "rtm_lakets_zb",
+                "table_schema": "pharma_twin_zb",
                 "table_name": "manufacturing_realtime",
             }
         ]
@@ -131,7 +131,7 @@ class TestCheckDeltaTables:
             "example-catalog",
             ["realtime"],
             _run_sql_returning(rows),
-            schema="rtm_lakets_zb",
+            schema="pharma_twin_zb",
             industry="manufacturing",
         )
 
@@ -145,18 +145,18 @@ class TestCheckDeltaTables:
 @pytest.mark.asyncio
 class TestCheckCheckpointVolume:
     async def test_pass_when_volume_present(self, monkeypatch):
-        monkeypatch.setenv("UC_SCHEMA", "shared_schema")
+        monkeypatch.setenv("UC_SCHEMA", "pharma_twin_shared_schema")
         rows = [{"volume_name": "stream_checkpoints"}]
         run_sql = _run_sql_returning(rows)
         res = await hc.check_checkpoint_volume("iot_pharma", run_sql)
         assert res["status"] == hc.PASS
-        assert "volume_schema = 'shared_schema'" in run_sql.await_args.args[0]
+        assert "volume_schema = 'pharma_twin_shared_schema'" in run_sql.await_args.args[0]
 
     async def test_fail_when_volume_absent(self, monkeypatch):
-        monkeypatch.setenv("UC_SCHEMA", "shared_schema")
+        monkeypatch.setenv("UC_SCHEMA", "pharma_twin_shared_schema")
         res = await hc.check_checkpoint_volume("iot_pharma", _run_sql_returning([]))
         assert res["status"] == hc.FAIL
-        assert "iot_pharma.shared_schema.stream_checkpoints" in res["detail"]
+        assert "iot_pharma.pharma_twin_shared_schema.stream_checkpoints" in res["detail"]
 
 
 # ===========================================================================
@@ -167,7 +167,7 @@ class TestCheckMetricsRecent:
     @pytest.fixture(autouse=True)
     def _one_schema(self, monkeypatch):
         monkeypatch.setenv("UC_CATALOG", "shared_catalog")
-        monkeypatch.setenv("UC_SCHEMA", "shared_schema")
+        monkeypatch.setenv("UC_SCHEMA", "pharma_twin_shared_schema")
 
     async def test_pass_when_rows_present(self):
         rows = [{"n": 42, "latest": "2026-07-06T10:00:00Z"}]
@@ -175,7 +175,7 @@ class TestCheckMetricsRecent:
         res = await hc.check_metrics_recent(["realtime"], run_sql, industry="pharmaceutical")
         assert res["status"] == hc.PASS
         sql = run_sql.await_args.args[0]
-        assert "shared_catalog.shared_schema.pharmaceutical_metrics" in sql
+        assert "shared_catalog.pharma_twin_shared_schema.pharmaceutical_metrics" in sql
         assert "WHERE mode = 'realtime'" in sql
 
     async def test_skip_when_no_rows_yet(self):
@@ -686,7 +686,7 @@ def _all_good_deps():
 class TestGatherChecks:
     async def test_zerobus_uses_one_schema_catalog_tables_grants_and_uc_secret(self, monkeypatch):
         monkeypatch.setenv("UC_CATALOG", "example_eu_catalog")
-        monkeypatch.setenv("UC_SCHEMA", "rtm_lakets_zb")
+        monkeypatch.setenv("UC_SCHEMA", "pharma_twin_zb")
         setup = {
             **_healthy_setup(),
             "industry": "pharmaceutical",
@@ -698,12 +698,12 @@ class TestGatherChecks:
         async def run_sql(sql, *args, **kwargs):
             queries.append(sql)
             if "information_schema.schemata" in sql:
-                return _sql_result([{"schema_name": "rtm_lakets_zb"}])
+                return _sql_result([{"schema_name": "pharma_twin_zb"}])
             if "information_schema.tables" in sql:
                 return _sql_result(
                     [
                         {
-                            "table_schema": "rtm_lakets_zb",
+                            "table_schema": "pharma_twin_zb",
                             "table_name": "pharmaceutical_zerobus",
                         }
                     ]
@@ -730,7 +730,7 @@ class TestGatherChecks:
 
         sql = "\n".join(queries)
         assert "example_eu_catalog.information_schema" in sql
-        assert "iot_pharmaceutical" not in sql
+        assert "pharma_twin_pharmaceutical" not in sql
         assert "pharmaceutical_zerobus" in sql or any(
             check["name"] == hc.DELTA_TABLES_CHECK and check["status"] == hc.PASS
             for check in result["checks"]
@@ -740,7 +740,7 @@ class TestGatherChecks:
             full_name="example_eu_catalog",
         )
         ws.secrets_uc.get_secret.assert_called_once_with(
-            "example_eu_catalog.rtm_lakets_zb.app_sp_oauth",
+            "example_eu_catalog.pharma_twin_zb.app_sp_oauth",
             include_value=False,
         )
         failures = [check for check in result["checks"] if check["status"] == hc.FAIL]

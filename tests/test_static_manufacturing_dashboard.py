@@ -57,12 +57,17 @@ def test_manufacturing_view_has_no_invented_metrics_c7230():
         assert invented not in bundle
     for label in (
         "Spindle 3 temperature",
-        "Operating limit",
-        "Spindle 3 status",
-        "Open alerts",
+        "Parts at risk",
+        "Projected RFT",
+        "Time to detect",
+        "NCRs opened",
         "Last device event",
     ):
         assert f'case "{label}":' in kpis
+    # Quality tiles derive from the excursion, the lot clock and signed decisions only.
+    quality = _source("lib", "manufacturing-quality.ts")
+    assert "lotDisposition(window.start, window.end)" in quality
+    assert "Math.random" not in quality and "Math.random" not in kpis
     assert "spindleLimitFrom(rules)" in model
     for source in (kpis, model):
         assert "input_rows_per_second" not in source
@@ -75,15 +80,16 @@ def test_manufacturing_realtime_data_is_industry_scoped_c7232():
 
     assert section.count('r.industry === "manufacturing"') >= 2
     assert 'useIndustryAlerts("manufacturing")' in section
-    assert 'inspect: { health: "no-feed" as const, readout: "no sensor feed" }' in section
+    # CMM station reads only the metrology-lab ambient sensor; no invented results.
+    assert 'inspect: cmmStation(signal(CMM_LAB_SENSOR, "°C"))' in section
 
 
 def test_machining_cell_twin_is_accessible_c7231():
-    """[C7231][defect][smoke][regression] MILL -> INSPECT -> PACK twin is labelled and selectable."""
+    """[C7231][defect][smoke][regression] MILL -> CMM -> PACK implant twin is labelled and selectable."""
     bundle = _bundle()
     story = _source("lib", "manufacturing-story.ts")
 
-    assert "Machining cell twin: mill, inspect, pack" in bundle
+    assert "Implant cell twin: mill, CMM inspect, clean and sterile pack" in bundle
     assert 'aria-label":"Cell stations"' in bundle
     assert "Interactive 3D manufacturing factory" not in bundle
     assert "Reference · MES not connected" in story

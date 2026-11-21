@@ -1,0 +1,92 @@
+# captured 2026-11-20T15:58:06Z — Lakebase -> Unity Catalog Change Data Feed (Lakehouse Sync, cdf-config lakets_cdf)
+## rows in the UC history table by change type
+[
+ {
+  "_pg_change_type": "insert",
+  "first_event": "2026-11-20T14:44:03.436Z",
+  "last_event": "2026-11-20T15:55:15.006Z",
+  "last_sync": "2026-11-20T15:56:19.697",
+  "n": "2097569"
+ },
+ {
+  "_pg_change_type": "delete",
+  "first_event": "2026-11-20T14:44:03.436Z",
+  "last_event": "2026-11-20T14:44:03.700Z",
+  "last_sync": "2026-11-20T14:45:47.420",
+  "n": "100"
+ }
+]
+## Delta commit history (newest 8)
+[
+ {
+  "operation": "wal2delta.append",
+  "rows_written": "",
+  "timestamp": "2026-11-20T15:56:31.000Z",
+  "version": "173"
+ },
+ {
+  "operation": "wal2delta.append",
+  "rows_written": "",
+  "timestamp": "2026-11-20T15:56:16.000Z",
+  "version": "172"
+ },
+ {
+  "operation": "wal2delta.append",
+  "rows_written": "",
+  "timestamp": "2026-11-20T15:56:02.000Z",
+  "version": "171"
+ },
+ {
+  "operation": "wal2delta.append",
+  "rows_written": "",
+  "timestamp": "2026-11-20T15:55:47.000Z",
+  "version": "170"
+ },
+ {
+  "operation": "wal2delta.append",
+  "rows_written": "",
+  "timestamp": "2026-11-20T15:55:32.000Z",
+  "version": "169"
+ },
+ {
+  "operation": "wal2delta.append",
+  "rows_written": "",
+  "timestamp": "2026-11-20T15:55:16.000Z",
+  "version": "168"
+ },
+ {
+  "operation": "wal2delta.append",
+  "rows_written": "",
+  "timestamp": "2026-11-20T15:55:01.000Z",
+  "version": "167"
+ },
+ {
+  "operation": "wal2delta.append",
+  "rows_written": "",
+  "timestamp": "2026-11-20T15:54:47.000Z",
+  "version": "166"
+ }
+]
+## table properties (change data feed)
+[
+ {
+  "key": "delta.feature.domainMetadata",
+  "value": "supported"
+ },
+ {
+  "key": "delta.feature.invariants",
+  "value": "supported"
+ },
+ {
+  "key": "delta.feature.timestampNtz",
+  "value": "supported"
+ },
+ {
+  "key": "delta.minReaderVersion",
+  "value": "3"
+ },
+ {
+  "key": "delta.minWriterVersion",
+  "value": "7"
+ }
+]

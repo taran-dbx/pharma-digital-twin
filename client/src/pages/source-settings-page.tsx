@@ -82,6 +82,7 @@ import type {
   UserSettings,
   TieringConfig,
 } from "@/lib/types";
+import { DEFAULT_RESOURCE_PREFIX, sharedSecretScope } from "@/lib/resource-names";
 
 interface SourceAdvancedOption {
   key: string;
@@ -723,7 +724,9 @@ export function SourceSettingsPage({ pipelineId, pipelineResources, onValidityCh
           config_step: configStep,
         } as Record<string, unknown>,
         resources: {
-          secret_scope: globalSettings?.secrets?.scope || "iot-secrets",
+          secret_scope:
+            globalSettings?.secrets?.scope ||
+            sharedSecretScope(appDefaults?.resource_prefix || DEFAULT_RESOURCE_PREFIX),
         },
       });
 
@@ -752,7 +755,7 @@ export function SourceSettingsPage({ pipelineId, pipelineResources, onValidityCh
     } catch {
       toast.error("Failed to save config.");
     }
-  }, [pipelineId, selectedPipeline, processingMode, selectedSource, kafkaBootstrap, kafkaTopic, kafkaGroup, kafkaSecurity, kinesisStream, kinesisRegion, ehConnString, ehName, rmqHost, rmqPort, rmqQueue, rmqUser, psProjectId, psSubscription, sourceCredentials, sourceAdvancedConfig, sinkTable, checkpointLocation, rtmSink, microbatchSinks, lakebaseMode, lbHost, lbPort, lbDatabase, lbUser, lbPassword, lbProjectId, lbBranchId, lbPgTable, wsAppUrl, lakebaseBufferSize, wsBufferSize, metricsEnabled, metricsTable, customMetrics, workers, workerNodeType, dbrVersion, autoTerminate, notebookSparkConf, clusterSparkConf, notebookOverride, configStep, globalSettings?.secrets?.scope]);
+  }, [pipelineId, selectedPipeline, processingMode, selectedSource, kafkaBootstrap, kafkaTopic, kafkaGroup, kafkaSecurity, kinesisStream, kinesisRegion, ehConnString, ehName, rmqHost, rmqPort, rmqQueue, rmqUser, psProjectId, psSubscription, sourceCredentials, sourceAdvancedConfig, sinkTable, checkpointLocation, rtmSink, microbatchSinks, lakebaseMode, lbHost, lbPort, lbDatabase, lbUser, lbPassword, lbProjectId, lbBranchId, lbPgTable, wsAppUrl, lakebaseBufferSize, wsBufferSize, metricsEnabled, metricsTable, customMetrics, workers, workerNodeType, dbrVersion, autoTerminate, notebookSparkConf, clusterSparkConf, notebookOverride, configStep, globalSettings?.secrets?.scope, appDefaults?.resource_prefix]);
 
   const configRestored = useRef(false);
   useEffect(() => {
@@ -1301,7 +1304,9 @@ export function SourceSettingsPage({ pipelineId, pipelineResources, onValidityCh
       try {
         const { wheel_path } = await api.uploadSimulatorWheel();
         const pipeline = await api.getPipeline(pipelineId);
-        const secretScope = globalSettings?.secrets?.scope || "iot-secrets";
+        const secretScope =
+          globalSettings?.secrets?.scope ||
+          sharedSecretScope(appDefaults?.resource_prefix || DEFAULT_RESOURCE_PREFIX);
 
         const producerNotebook = generateDataProducerNotebook({
           wheelPath: wheel_path,
@@ -1974,36 +1979,36 @@ export function SourceSettingsPage({ pipelineId, pipelineResources, onValidityCh
                       {selectedSource === "kafka" && (
                         <>
                           <InputField label="Bootstrap Servers" placeholder="broker1:9092,broker2:9092" value={kafkaBootstrap} onChange={setKafkaBootstrap} />
-                          <InputField label="Topic" placeholder="iot-sensor-data" value={kafkaTopic} onChange={setKafkaTopic} />
-                          <InputField label="Consumer Group" placeholder="iot-twin-consumer" value={kafkaGroup} onChange={setKafkaGroup} />
+                          <InputField label="Topic" placeholder="sensor-data" value={kafkaTopic} onChange={setKafkaTopic} />
+                          <InputField label="Consumer Group" placeholder="twin-consumer" value={kafkaGroup} onChange={setKafkaGroup} />
                           <SelectField label="Security Protocol" value={kafkaSecurity} onChange={setKafkaSecurity} options={["SASL_SSL", "PLAINTEXT", "SSL", "SASL_PLAINTEXT"]} />
                         </>
                       )}
                       {selectedSource === "kinesis" && (
                         <>
-                          <InputField label="Stream Name" placeholder="iot-sensor-stream" value={kinesisStream} onChange={setKinesisStream} />
+                          <InputField label="Stream Name" placeholder="sensor-stream" value={kinesisStream} onChange={setKinesisStream} />
                           <InputField label="AWS Region" placeholder="us-east-1" value={kinesisRegion} onChange={setKinesisRegion} />
                         </>
                       )}
                       {selectedSource === "event_hub" && (
                         <>
                           <InputField label="Connection String" placeholder="Endpoint=sb://..." value={ehConnString} onChange={setEhConnString} colSpan={2} />
-                          <InputField label="Event Hub Name" placeholder="iot-events" value={ehName} onChange={setEhName} />
+                          <InputField label="Event Hub Name" placeholder="sensor-events" value={ehName} onChange={setEhName} />
                         </>
                       )}
                       {selectedSource === "rabbitmq" && (
                         <>
                           <InputField label="Host" placeholder="rabbitmq.example.com" value={rmqHost} onChange={setRmqHost} />
                           <InputField label="Port" placeholder="5672" value={rmqPort} onChange={setRmqPort} />
-                          <InputField label="Queue" placeholder="iot-queue" value={rmqQueue} onChange={setRmqQueue} />
+                          <InputField label="Queue" placeholder="sensor-queue" value={rmqQueue} onChange={setRmqQueue} />
                           <InputField label="Username" placeholder="guest" value={rmqUser} onChange={setRmqUser} />
                         </>
                       )}
                       {selectedSource === "pubsub" && (
                         <>
                           <InputField label="Project ID" placeholder="my-gcp-project" value={psProjectId} onChange={setPsProjectId} />
-                          <InputField label="Topic ID (for producer)" placeholder="iot-sensor-data" value={psTopicId} onChange={setPsTopicId} />
-                          <InputField label="Subscription (for consumer)" placeholder="iot-subscription" value={psSubscription} onChange={setPsSubscription} />
+                          <InputField label="Topic ID (for producer)" placeholder="sensor-data" value={psTopicId} onChange={setPsTopicId} />
+                          <InputField label="Subscription (for consumer)" placeholder="sensor-subscription" value={psSubscription} onChange={setPsSubscription} />
                         </>
                       )}
                     </div>

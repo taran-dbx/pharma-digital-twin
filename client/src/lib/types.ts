@@ -370,6 +370,10 @@ export interface AlertRecord {
   acknowledged_by: string | null;
   cleared_at: string | null;
   metadata?: Record<string, unknown>;
+  /** "predicted" for the thermal-risk model alert, "breached" for limit rules. */
+  alert_kind?: "predicted" | "breached";
+  /** Model risk score on predicted alerts (also in metadata.risk_score). */
+  risk_score?: number | null;
 }
 
 export interface AlertListResponse {
@@ -527,10 +531,112 @@ export interface AlertLifecycleEvent {
   cleared_at: string | null;
   sensor_type?: string;
   timestamp?: string;
+  alert_kind?: "predicted" | "breached";
+  risk_score?: number | null;
+  metadata?: Record<string, unknown>;
 }
 
-/** Operator decisions recorded against an alert episode (never machine commands). */
-export type AlertResponseAction = "hold_batch" | "send_to_inspect" | "request_maintenance";
+/**
+ * Signed operator decisions recorded against an alert episode (never machine
+ * commands). `hold_batch` / `send_to_inspect` are the legacy CNC-cell names,
+ * still accepted by the API and shown in history.
+ */
+export type AlertResponseAction =
+  | "quarantine_lot"
+  | "open_ncr"
+  | "request_cmm_inspection"
+  | "request_maintenance"
+  | "hold_batch"
+  | "send_to_inspect";
+
+/** 21 CFR 11.50-style meaning of an electronic signature. */
+export type SignatureMeaning = "authored" | "reviewed" | "approved" | "responsible";
+
+/** What the operator signs with a decision. */
+export interface DecisionSignoff {
+  reason: string;
+  comment?: string;
+  signature_meaning: SignatureMeaning;
+  /** Set when the decision applies an AI action plan; the server records who applied it. */
+  action_plan_id?: string;
+}
+
+/** Owner roles an AI action-plan step can be assigned to. */
+export type ActionPlanOwnerRole = "Operator" | "QA" | "Maintenance" | "Manufacturing Eng";
+
+export interface ActionPlanClaim {
+  text: string;
+  citations: string[];
+}
+
+export interface ActionPlanStep {
+  order: number;
+  owner_role: ActionPlanOwnerRole;
+  action: string;
+  response_action: Exclude<AlertResponseAction, "hold_batch" | "send_to_inspect"> | null;
+  citations: string[];
+}
+
+export interface ActionPlanBody {
+  summary: ActionPlanClaim;
+  disposition: {
+    quarantine: { lots: string[]; serials: string[]; rationale: string; citations: string[] };
+    cmm_inspection: { scope: string; serials: string[]; citations: string[] };
+    ncr: { required: boolean; rationale: string; citations: string[] };
+    maintenance_request: { required: boolean; rationale: string; citations: string[] };
+  };
+  risk_narrative: ActionPlanClaim;
+  steps: ActionPlanStep[];
+}
+
+/** One audited AI action plan (advisory; never applied automatically). */
+export interface ActionPlanRecord {
+  plan_id: string;
+  alert_id: string;
+  requested_by: string;
+  requested_at: string;
+  endpoint: string;
+  model: string | null;
+  model_version: string | null;
+  prompt_template_version: string;
+  prompt_hash: string;
+  grounding_hash: string;
+  grounding_check: "pass" | "fail";
+  grounding_reasons: string[];
+  status: "generated" | "rejected" | "error";
+  error: string | null;
+  latency_ms: number | null;
+  usage: { prompt_tokens: number | null; completion_tokens: number | null; total_tokens: number | null };
+  plan: ActionPlanBody | null;
+  citation_ids: string[];
+  applied_by: string | null;
+  applied_at: string | null;
+  applied_response_id: string | null;
+  /** Set when a person applied a plan that had not passed the grounding check. */
+  applied_override_reason?: string | null;
+  /** True when the server returned the latest plan because its grounding was unchanged. */
+  reused?: boolean;
+  advisory: true;
+}
+
+export interface GroundingRow {
+  id: string;
+  source: string;
+  /** The row's own key within its source (renamed from `key`; older audit rows may still carry `key`). */
+  ref: string;
+  data: Record<string, unknown>;
+}
+
+/** Full trace: the plan plus the exact rows it was given. */
+export interface ActionPlanTrace extends ActionPlanRecord {
+  grounding_rows: GroundingRow[];
+  response: Record<string, unknown>;
+}
+
+export interface ActionPlanList {
+  alert_id: string;
+  plans: ActionPlanRecord[];
+}
 
 export interface AlertResponseRecord {
   id: string;
@@ -545,8 +651,24 @@ export interface AlertResponseRecord {
     asset?: string;
     component?: string;
     last_service?: { event_id: string; kind: string; notes: string; started_at: string };
+    hold?: string;
+    lot_ids?: string[];
+    parts_at_risk?: string[];
+    parts_released?: number;
+    parts_to_measure?: string[];
+    dhr_refs?: string[];
+    ncr_id?: string;
+    disposition?: string;
+    projected_rft?: { pct: number; good: number; parts_started: number; parts_at_risk: number } | null;
   };
   created_at: string;
+  reason?: string | null;
+  comment?: string | null;
+  /** `legacy-unsigned` for legacy actions posted without signing fields. */
+  signature_meaning?: SignatureMeaning | "legacy-unsigned" | null;
+  signed_at?: string | null;
+  /** Printed signature: "<signer> · <meaning> · <signed at>". */
+  signature?: string | null;
 }
 
 export interface AlertResponseEvent {
@@ -555,7 +677,7 @@ export interface AlertResponseEvent {
   alert_id: string;
   response: AlertResponseRecord;
   created?: boolean;
-  /** Set when the decision also stopped the cell (send_to_inspect). */
+  /** Set when the decision also stopped the cell (request_cmm_inspection). */
   production?: ProductionState;
   production_error?: string;
 }
@@ -586,6 +708,8 @@ export interface AlertEpisodeDecision {
   station: "PACK" | "INSPECT" | "MILL" | null;
   recorded_by: string;
   created_at: string;
+  reason?: string | null;
+  signature_meaning?: SignatureMeaning | "legacy-unsigned" | null;
 }
 
 /** One open → cleared run of an alert rule, rebuilt from the event log. */

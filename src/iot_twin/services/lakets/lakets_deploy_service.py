@@ -12,7 +12,10 @@ import base64
 import logging
 from typing import Any
 
-logger = logging.getLogger("iot_digital_twin.services.lakets_deploy")
+from iot_twin.core import resource_names
+from iot_twin.core.config import assert_owned_name
+
+logger = logging.getLogger("pharma_twin.services.lakets_deploy")
 
 # Notebook source is inlined rather than read from disk.  `databricks sync`
 # treats any `.py` file starting with ``# Databricks notebook source`` as a
@@ -581,7 +584,6 @@ else:
 """
 
 # Workspace path where the notebook is uploaded (under the running user's home).
-_WS_SUBDIR = "iot-digital-twin/lakets"
 _WS_FILENAME = "retention"  # no extension — Databricks infers from import format
 
 # Daily 03:00 UTC.  Quartz syntax required by the Jobs API (seconds + ? for DOW).
@@ -605,7 +607,18 @@ def _notebook_source_bytes() -> bytes:
 
 
 def _job_display_name(project_id: str, branch_id: str) -> str:
-    return f"LakeTS Retention — {project_id}/{branch_id}"
+    return resource_names.lakets_job_name("Retention", project_id, branch_id)
+
+
+def _require_owned_project(project_id: str) -> None:
+    """Reject a missing or non-owned Lakebase project before touching any job.
+
+    Jobs are looked up and reset by display name, so a foreign project id
+    (e.g. an upstream LakeTS project) must never reach that lookup.
+    """
+    if not project_id:
+        raise ValueError("project_id is required")
+    assert_owned_name(project_id, what="LakeTS project_id")
 
 
 def deploy_retention_job(
@@ -620,8 +633,7 @@ def deploy_retention_job(
 
     Returns a dict with ``{job_id, notebook_path, schedule, created_or_updated}``.
     """
-    if not project_id:
-        raise ValueError("project_id is required")
+    _require_owned_project(project_id)
 
     from databricks.sdk import WorkspaceClient
     from databricks.sdk.service import jobs as dj
@@ -631,10 +643,12 @@ def deploy_retention_job(
     w = WorkspaceClient()
     user = w.current_user.me()
     user_email = user.user_name
-    workspace_path = f"/Workspace/Users/{user_email}/{_WS_SUBDIR}/{_WS_FILENAME}"
+    workspace_path = (
+        f"/Workspace/Users/{user_email}/{resource_names.lakets_workspace_subdir()}/{_WS_FILENAME}"
+    )
 
     # ── 1. Ensure parent folders exist ────────────────────────────────────
-    parent = f"/Workspace/Users/{user_email}/{_WS_SUBDIR}"
+    parent = f"/Workspace/Users/{user_email}/{resource_names.lakets_workspace_subdir()}"
     try:
         w.workspace.mkdirs(parent)
     except Exception as exc:
@@ -703,7 +717,7 @@ def deploy_retention_job(
         ),
         max_concurrent_runs=1,
         tags={
-            "app": "iot-digital-twin",
+            "app": resource_names.app_name(),
             "component": "lakets-retention",
             "project": project_id,
         },
@@ -749,7 +763,7 @@ def deploy_retention_job(
 def _ws_path(w: Any, filename: str) -> str:
     """Workspace path for ``filename`` under the running user's LakeTS subdir."""
     user_email = w.current_user.me().user_name
-    return f"/Workspace/Users/{user_email}/{_WS_SUBDIR}/{filename}"
+    return f"/Workspace/Users/{user_email}/{resource_names.lakets_workspace_subdir()}/{filename}"
 
 
 def _upload_notebook(w: Any, dw: Any, workspace_path: str, content: bytes) -> None:
@@ -788,8 +802,7 @@ def _deploy_ops_job(
 
     Returns ``{"job": <name>, "job_id": <id>, "status": "created"|"updated"}``.
     """
-    if not project_id:
-        raise ValueError("project_id is required")
+    _require_owned_project(project_id)
 
     from databricks.sdk.service import jobs as dj
     from databricks.sdk.service import workspace as dw
@@ -844,7 +857,7 @@ def _deploy_ops_job(
         ),
         max_concurrent_runs=1,
         tags={
-            "app": "iot-digital-twin",
+            "app": resource_names.app_name(),
             "component": component,
             "project": project_id,
         },
@@ -885,7 +898,7 @@ def deploy_partition_manager_job(
     """
     return _deploy_ops_job(
         w,
-        job_name=f"LakeTS Partition Manager — {project_id}/{branch_id}",
+        job_name=resource_names.lakets_job_name("Partition Manager", project_id, branch_id),
         task_key="lakets_partition_manager",
         component="lakets-partition-manager",
         notebook_source=_PARTITION_MANAGER_NOTEBOOK_SOURCE,
@@ -910,7 +923,7 @@ def deploy_rollup_refresh_job(
     """
     return _deploy_ops_job(
         w,
-        job_name=f"LakeTS Rollup Refresh — {project_id}/{branch_id}",
+        job_name=resource_names.lakets_job_name("Rollup Refresh", project_id, branch_id),
         task_key="lakets_rollup_refresh",
         component="lakets-rollup-refresh",
         notebook_source=_ROLLUP_REFRESH_NOTEBOOK_SOURCE,
@@ -936,7 +949,7 @@ def deploy_tiering_job(
     """
     return _deploy_ops_job(
         w,
-        job_name=f"LakeTS Tiering — {project_id}/{branch_id}",
+        job_name=resource_names.lakets_job_name("Tiering", project_id, branch_id),
         task_key="lakets_tiering",
         component="lakets-tiering",
         notebook_source=_TIERING_NOTEBOOK_SOURCE,
@@ -965,8 +978,7 @@ def deploy_lakets_ops_jobs(
     retention, and cold-tiering jobs (each gated by its flag) and returns one
     ``{"job", "job_id", "status"}`` entry per deployed job.
     """
-    if not project_id:
-        raise ValueError("project_id is required")
+    _require_owned_project(project_id)
 
     results: list[dict] = []
 

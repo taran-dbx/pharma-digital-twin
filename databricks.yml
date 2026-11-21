@@ -1,30 +1,44 @@
-# Declarative Automation Bundle for the IoT Digital Twin app.
+# Declarative Automation Bundle for the Pharma Digital Twin app.
+#
+# ISOLATION GUARD: this bundle is a fork of the upstream IoT Digital Twin and is
+# deployed side by side with it in the same workspaces. Every name it owns is
+# derived from `resource_prefix` (default pharma-twin). It must NEVER bind to,
+# deploy over or reuse an upstream resource (app iot-*, jobs iot-<industry>-<mode>,
+# Lakebase projects iot-*, schema rtm_lakets_zb, scope iot-*, topics iot.*).
+# tests/test_resource_isolation.py enforces this on every PR.
 # All workspace-specific values are variables with placeholders; real values
 # come from the (gitignored) .databricks/bundle/<target>/variable-overrides.json
 # (copy deploy/variable-overrides.json.example), `--var name=value` or BUNDLE_VAR_<name>.
 # Workspace-specific variables deliberately have NO default, so a missing value
 # fails validation instead of deploying placeholders. See docs/deployment.md.
 bundle:
-  name: iot-digital-twin
+  name: pharma-digital-twin
 
 include:
   - resources/*.yml
 
 variables:
+  resource_prefix:
+    description: "Prefix for every resource name the app creates at runtime (jobs, topics, catalogs, Lakebase projects, scopes, clusters). Lower-case letters/digits/hyphens; must not be in the upstream 'iot' namespace."
+    default: pharma-twin
+  resource_prefix_ident:
+    description: "Underscore form of resource_prefix for UC/Postgres identifiers (DABs has no string replace). Override TOGETHER with resource_prefix, e.g. acme-lab -> acme_lab."
+    default: pharma_twin
   app_name:
-    description: "Databricks App name (workspace-global, <= 30 chars, lowercase/digits/hyphens). Dev default is shared: override per developer (e.g. iot-twin-dev-<initials>). Prod pins iot-digital-twin."
-    default: iot-twin-dev
+    description: "Databricks App name (workspace-global, <= 30 chars, lowercase/digits/hyphens). Dev default is shared: override per developer (e.g. pharma-twin-dev-<initials>). Prod pins the bare resource_prefix."
+    default: ${var.resource_prefix}-dev
   uc_catalog:
     description: Unity Catalog catalog holding the twin data.
   uc_schema:
     description: Unity Catalog schema holding the twin data.
-    default: rtm_lakets_zb
+    default: ${var.resource_prefix_ident}
   warehouse_id:
     description: SQL warehouse id the app queries (granted CAN_USE).
   genie_space_id:
     description: Genie space id for the copilot (granted CAN_VIEW).
   lakebase_project:
     description: Lakebase (Postgres) project backing the app.
+    default: ${var.resource_prefix}-backend
   lakebase_branch:
     description: Lakebase branch id.
     default: production
@@ -35,6 +49,7 @@ variables:
     description: Lakebase endpoint host (PGHOST).
   pipelines_lakebase_project:
     description: Lakebase project used for per-pipeline streaming sinks.
+    default: ${var.resource_prefix}-pipelines
   msk_bootstrap_servers:
     description: Comma-separated MSK bootstrap servers.
   zerobus_server_endpoint:
@@ -48,13 +63,44 @@ variables:
     default: zerobus-client-secret
   industries:
     description: Comma-separated enabled industries.
-    default: pharmaceutical,manufacturing
+    default: manufacturing,pharmaceutical
   admin_group:
     description: Workspace group whose members are app admins.
-    default: iot-admins
+    default: ${var.resource_prefix}-admins
+  genai_endpoint:
+    description: "Foundation Model serving endpoint for the AI action plan (granted CAN_QUERY, injected as GENAI_ENDPOINT). Any READY chat endpoint works, e.g. databricks-claude-haiku-5-5 or databricks-meta-llama-3-3-70b-instruct."
+    default: databricks-claude-sonnet-5-5
+  secret_scope:
+    description: "Secret scope holding app secrets. Create it and the pseudonym key before deploying (see docs/genai-action-plan.md#people-and-free-text-pii)."
+    default: pharma-twin-secrets
+  genai_pseudonym_salt_key:
+    description: "Key in secret_scope holding the AI action-plan pseudonym HMAC key (>= 16 chars, e.g. openssl rand -hex 32). Injected as GENAI_PSEUDONYM_SALT (READ)."
+    default: genai-pseudonym-salt
   usage_tracking_enabled:
     description: Usage tracking via dbdemos-tracker ("false" to opt out).
     default: "true"
+  # Spindle 3 thermal-risk model (resources/risk_model.yml, docs/ml-risk-model.md).
+  risk_model_schema:
+    description: UC schema (in uc_catalog) holding the registered thermal-risk model.
+    default: pharma_twin
+  risk_model_short_name:
+    description: UC model name; the full name is <uc_catalog>.<risk_model_schema>.<this>.
+    default: spindle_thermal_risk
+  risk_model_version:
+    description: "Model version the endpoint serves after a bundle deploy (keep it at the current @champion: every training run prints the --var to use)."
+    default: "4"
+  risk_endpoint_name:
+    description: Model Serving endpoint for the thermal-risk model.
+    default: pharma-twin-spindle-risk
+  risk_job_name:
+    description: Training job name.
+    default: pharma-twin-risk-model-train
+  risk_training_data_source:
+    description: "auto (real telemetry when it has enough excursions, else synthetic), synthetic or real."
+    default: auto
+  risk_alert_threshold:
+    description: "Predicted-alert cut-off. \"model\" uses the decision_threshold the served model version ships; a number overrides it."
+    default: model
 
 # Ships the built SPA (static/dist is tracked), the package, app.yaml, the
 # vendored wheels (simulator, dbdemos-tracker) and requirements. Replaces .databricksignore.
@@ -78,13 +124,20 @@ sync:
 
 targets:
   dev:
+    # Development mode decorates names: the risk job becomes
+    # "[dev <user>] pharma-twin-risk-model-train" and the endpoint
+    # "dev_<user>_pharma-twin-spindle-risk". That endpoint serves the same UC
+    # version (risk_model_version) and the app and job follow it through
+    # ${resources.model_serving_endpoints.spindle_risk.name}.
     mode: development
     default: true
     # workspace host is taken from --profile / DATABRICKS_CONFIG_PROFILE; never committed.
 
-  # WARNING: prod resolves to the LIVE app name (iot-digital-twin). Always run
-  # `databricks bundle deployment bind iot_twin iot-digital-twin -t prod` first,
-  # review `databricks bundle plan -t prod`, and never deploy without prod
+  # ISOLATION GUARD: prod creates its OWN app (named resource_prefix, default pharma-twin). Do NOT run
+  # `databricks bundle deployment bind` against any existing app, and never point
+  # app_name at an upstream app: the upstream IoT Digital Twin is live in the same
+  # workspace and must not be adopted, updated or deleted by this bundle.
+  # Review `databricks bundle plan -t prod` before deploying, and provide prod
   # overrides (.databricks/bundle/prod/variable-overrides.json): the workspace
   # variables have no defaults and validation fails until they are provided.
   prod:
@@ -92,7 +145,7 @@ targets:
     workspace:
       root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
     variables:
-      app_name: iot-digital-twin
+      app_name: ${var.resource_prefix}
     permissions:
       - level: CAN_MANAGE
         user_name: ${workspace.current_user.userName}

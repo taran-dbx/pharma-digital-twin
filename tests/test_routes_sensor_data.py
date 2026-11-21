@@ -1285,11 +1285,11 @@ class TestStreamingMetrics:
 # bug fix: realtime/microbatch/zerobus each land in their own schema/table).
 # ---------------------------------------------------------------------------
 _UC_CATALOG = "example_eu_catalog"
-_UC_SCHEMA = "rtm_lakets_zb"
+_UC_SCHEMA = "pharma_twin_zb"
 
 
 def _patch_dbsql_timeseries_deps(
-    catalog: str | None = "iot_pharmaceutical",
+    catalog: str | None = "pharma_twin_pharmaceutical",
     warehouse_id: str | None = "wh-1",
     exec_result: dict | None = None,
     exec_side_effect: Exception | None = None,
@@ -1494,7 +1494,7 @@ class TestDbsqlTimeseries:
 
         patches, exec_mock = _patch_dbsql_timeseries_deps()
         exec_mock.side_effect = [chart_result, Exception("latest warehouse timeout")]
-        with caplog.at_level("WARNING", logger="iot_digital_twin.routes.sensor_data"):
+        with caplog.at_level("WARNING", logger="pharma_twin.routes.sensor_data"):
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
                 async with AsyncClient(transport=transport, base_url="http://test") as client:
                     resp = await client.get(
@@ -1568,8 +1568,8 @@ class TestDbsqlTimeseries:
         assert resp.status_code == 200
         body = resp.json()
         assert body["mode"] == "zerobus"
-        # Legacy path (no industry param): iot_pharmaceutical.zerobus.iot_sensor_data
-        assert body["table"] == "iot_pharmaceutical.zerobus.iot_sensor_data"
+        # Legacy path (no industry param): pharma_twin_pharmaceutical.zerobus.iot_sensor_data
+        assert body["table"] == "pharma_twin_pharmaceutical.zerobus.iot_sensor_data"
 
     async def test_mode_defaults_to_microbatch_when_inference_fails(self) -> None:
         # No `mode` param, and the pipeline row lookup yields nothing usable.

@@ -1,4 +1,4 @@
-"""Bootstrap iot-digital-twin + iot-lakets-demo Lakebase projects on example-demo-emea."""
+"""Bootstrap the app-backend + LakeTS demo Lakebase projects (prefix-derived names)."""
 
 from __future__ import annotations
 
@@ -15,13 +15,14 @@ for _path in (_ROOT / "src", _ROOT):
 
 from scripts._profile import require_profile
 
+from iot_twin.core import resource_names
 from iot_twin.services.provisioning_service import provision_lakebase_project_and_branch
 
 
 async def main() -> int:
     targets = [
-        ("iot-digital-twin", "production"),
-        ("iot-lakets-demo", "production"),
+        (resource_names.app_backend_project(), "production"),
+        (resource_names.lakets_demo_project(), "production"),
     ]
     for project_id, branch_id in targets:
         print(f"\n── {project_id}/{branch_id} ──")

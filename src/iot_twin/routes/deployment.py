@@ -16,8 +16,11 @@ from databricks.sdk.service.workspace import ImportFormat
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
+from iot_twin.core import resource_names
 from iot_twin.core.auth import get_current_user
 from iot_twin.core.state import AppState, get_app_state
+from iot_twin.routes._admin import ADMIN_ONLY
+from iot_twin.routes._ownership import reject_foreign_cluster, reject_foreign_job
 from iot_twin.services.databricks_sdk import detect_cloud
 from iot_twin.services.pipelines.pipeline_service import track_resource
 from iot_twin.services.runtime_wheel_service import (
@@ -41,7 +44,7 @@ except ImportError:  # pragma: no cover — transitional fallback
         )
 
 
-logger = logging.getLogger("iot_digital_twin.routes.deployment")
+logger = logging.getLogger("pharma_twin.routes.deployment")
 
 router = APIRouter(tags=["deployment"])
 
@@ -62,7 +65,7 @@ async def upload_wheel(user_email: str = Depends(get_current_user)):
         w = WorkspaceClient()
         me = w.current_user.me()
         username = me.user_name or "unknown"
-        ws_dir = f"/Workspace/Users/{username}/.iot-digital-twin/lib"
+        ws_dir = f"{resource_names.user_workspace_dir(username)}/lib"
         ws_path = f"{ws_dir}/{WHEEL_FILENAME}"
 
         try:
@@ -88,7 +91,7 @@ async def upload_wheel(user_email: str = Depends(get_current_user)):
         return JSONResponse(status_code=500, content={"error": "Wheel upload failed"})
 
 
-@router.post("/api/test-connectivity/submit")
+@router.post("/api/test-connectivity/submit", dependencies=ADMIN_ONLY)
 async def submit_connectivity_test(request: Request, user_email: str = Depends(get_current_user)):
     """Upload a test notebook and submit a one-time serverless run."""
     try:
@@ -112,7 +115,7 @@ async def submit_connectivity_test(request: Request, user_email: str = Depends(g
         me = w.current_user.me()
         username = me.user_name or "unknown"
         ts = int(time.time())
-        notebook_path = f"/Workspace/Users/{username}/.iot-digital-twin/connectivity_test_{ts}"
+        notebook_path = f"{resource_names.user_workspace_dir(username)}/connectivity_test_{ts}"
         parent_folder = notebook_path.rsplit("/", 1)[0]
 
         try:
@@ -130,7 +133,7 @@ async def submit_connectivity_test(request: Request, user_email: str = Depends(g
         logger.info("Uploaded connectivity test notebook to %s", notebook_path)
 
         waiter = w.jobs.submit(
-            run_name=f"iot-connectivity-test-{ts}",
+            run_name=resource_names.run_name("connectivity-test", str(ts)),
             tasks=[
                 SubmitTask(
                     task_key="connectivity_test",
@@ -208,10 +211,16 @@ async def get_connectivity_test_status(run_id: int, user_email: str = Depends(ge
                     "message": "Run completed but output could not be retrieved.",
                 }
 
-            # Clean up the temp notebook
+            # Clean up the temp notebook, but only one this app uploaded: the run id
+            # comes from the URL, so its notebook path could be anyone's.
             if run.tasks and run.tasks[0].notebook_task:
                 try:
-                    w.workspace.delete(run.tasks[0].notebook_task.notebook_path)
+                    nb_path = run.tasks[0].notebook_task.notebook_path or ""
+                    own_dir = resource_names.user_workspace_dir(w.current_user.me().user_name)
+                    if nb_path.startswith(own_dir + "/") and ".." not in nb_path:
+                        w.workspace.delete(nb_path)
+                    else:
+                        logger.warning("Not deleting notebook outside %s: %s", own_dir, nb_path)
                 except Exception:
                     pass
 
@@ -228,7 +237,7 @@ async def get_connectivity_test_status(run_id: int, user_email: str = Depends(ge
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
-@router.post("/api/cluster/{cluster_id}/validate")
+@router.post("/api/cluster/{cluster_id}/validate", dependencies=ADMIN_ONLY)
 async def validate_on_cluster(
     cluster_id: str, request: Request, user_email: str = Depends(get_current_user)
 ):
@@ -254,10 +263,13 @@ async def validate_on_cluster(
         from databricks.sdk.service.workspace import ImportFormat, Language
 
         w = WorkspaceClient()
+        # Arbitrary notebook code runs on this cluster: owned clusters only.
+        if rejected := reject_foreign_cluster(w, cluster_id):
+            return rejected
 
         me = w.current_user.me()
         username = me.user_name or "unknown"
-        notebook_path = f"/Workspace/Users/{username}/.iot-digital-twin/validate_{int(time.time())}"
+        notebook_path = f"{resource_names.user_workspace_dir(username)}/validate_{int(time.time())}"
 
         parent_folder = notebook_path.rsplit("/", 1)[0]
         try:
@@ -461,7 +473,7 @@ def _coerce_json_dict(raw: Any) -> dict:
     return {}
 
 
-@router.post("/api/cluster/deploy-job")
+@router.post("/api/cluster/deploy-job", dependencies=ADMIN_ONLY)
 async def deploy_job(
     request: Request,
     user_email: str = Depends(get_current_user),
@@ -509,10 +521,36 @@ async def deploy_job(
 
         w = WorkspaceClient()
 
+        # Check for existing job_id — reuse instead of creating a new one
+        existing_job_id = body.get("job_id")
+        pipeline_id = body.get("pipeline_id")
+
+        # Also check the pipeline's stored resources if no job_id in request
+        if not existing_job_id and pipeline_id and state.db_available and state.db:
+            try:
+                import json as _json
+
+                row = await state.db.fetchrow(
+                    "SELECT resources FROM pipelines WHERE id = $1::uuid", pipeline_id
+                )
+                if row:
+                    res = (
+                        _json.loads(row["resources"])
+                        if isinstance(row["resources"], str)
+                        else (row["resources"] or {})
+                    )
+                    existing_job_id = res.get("job_id")
+            except Exception:
+                pass
+
+        # Verify a reused job id BEFORE any workspace write (notebook upload, reset).
+        if existing_job_id and (rejected := reject_foreign_job(w, existing_job_id)):
+            return rejected
+
         me = w.current_user.me()
         username = me.user_name or "unknown"
         notebook_path = (
-            f"/Workspace/Users/{username}/.iot-digital-twin/sss_pipeline_{int(time.time())}"
+            f"{resource_names.user_workspace_dir(username)}/sss_pipeline_{int(time.time())}"
         )
 
         from databricks.sdk.service.workspace import ImportFormat, Language
@@ -536,7 +574,7 @@ async def deploy_job(
         producer_notebook_path = None
         if producer_notebook_content:
             producer_notebook_path = (
-                f"/Workspace/Users/{username}/.iot-digital-twin/data_producer_{int(time.time())}"
+                f"{resource_names.user_workspace_dir(username)}/data_producer_{int(time.time())}"
             )
             w.workspace.import_(
                 path=producer_notebook_path,
@@ -611,32 +649,10 @@ async def deploy_job(
                 ),
             )
 
-        # Check for existing job_id — reuse instead of creating a new one
-        existing_job_id = body.get("job_id")
-        pipeline_id = body.get("pipeline_id")
-
-        # Also check the pipeline's stored resources if no job_id in request
-        if not existing_job_id and pipeline_id and state.db_available and state.db:
-            try:
-                import json as _json
-
-                row = await state.db.fetchrow(
-                    "SELECT resources FROM pipelines WHERE id = $1::uuid", pipeline_id
-                )
-                if row:
-                    res = (
-                        _json.loads(row["resources"])
-                        if isinstance(row["resources"], str)
-                        else (row["resources"] or {})
-                    )
-                    existing_job_id = res.get("job_id")
-            except Exception:
-                pass
-
         host = os.getenv("DATABRICKS_HOST", "").rstrip("/")
 
         if existing_job_id:
-            # Update the existing job with new notebook and config
+            # Update the existing job (ownership verified above, before any write).
             jid = int(existing_job_id)
             try:
                 w.jobs.cancel_all_runs(job_id=jid)
@@ -646,10 +662,11 @@ async def deploy_job(
             w.jobs.reset(
                 job_id=jid,
                 new_settings=JobSettings(
-                    name=f"IoT-SSS-Pipeline-{jid}",
+                    name=resource_names.run_name("sss-pipeline", str(jid)),
                     continuous=Continuous(pause_status=PauseStatus.UNPAUSED),
                     tasks=tasks,
                     environments=environments,
+                    tags=resource_names.resource_tags("sss-pipeline"),
                 ),
             )
             job_id = jid
@@ -658,10 +675,11 @@ async def deploy_job(
         else:
             # Create a brand new job
             job = w.jobs.create(
-                name=f"IoT-SSS-Pipeline-{int(time.time())}",
+                name=resource_names.run_name("sss-pipeline", str(int(time.time()))),
                 continuous=Continuous(pause_status=PauseStatus.UNPAUSED),
                 tasks=tasks,
                 environments=environments,
+                tags=resource_names.resource_tags("sss-pipeline"),
             )
             job_id = job.job_id
             job_url = f"{host}/#job/{job_id}" if host else ""

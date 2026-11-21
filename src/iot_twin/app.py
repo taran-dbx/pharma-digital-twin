@@ -16,17 +16,21 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from iot_twin.core.config import INDUSTRIES, UPDATE_RATE_HZ
+from iot_twin.core.config import INDUSTRIES, UPDATE_RATE_HZ, NotOwnedError
 from iot_twin.core.paths import SPA_DIST_DIR, SPA_INDEX, STATIC_DIR
 from iot_twin.core.shutdown import install_sigterm_handler, shutdown
 from iot_twin.core.state import AppState
+from iot_twin.core.workspace_config import validate_isolation_config
 from iot_twin.routes import create_api_router
+from iot_twin.routes._ownership import not_owned_response
 from iot_twin.routes.industries_admin import start_industry_runtime_refresh
 from iot_twin.services.alerts.alert_snapshot_sync import start_alert_snapshot_sync
 from iot_twin.services.deployment.deployment_service import (
     RuntimeOAuthCredentialError,
     sync_runtime_oauth_secret,
 )
+from iot_twin.services.genai.audit_sync import start_genai_audit_sync
+from iot_twin.services.genai.status import init_genai_privacy
 from iot_twin.services.simulator_service import run_simulator
 from iot_twin.services.usage_tracking import UsageTracker, UsageTrackingMiddleware
 
@@ -34,7 +38,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
-logger = logging.getLogger("iot_digital_twin")
+logger = logging.getLogger("pharma_twin")
 
 # Usage tracking (dbdemos-tracker): a no-op until started; opt out with
 # USAGE_TRACKING_ENABLED=false. See services/usage_tracking.py.
@@ -72,13 +76,15 @@ async def lifespan(application: FastAPI):
     install_sigterm_handler(state)
 
     logger.info("=== IoT Digital Twin starting ===")
+    # Fail fast on a bad prefix or a foreign (non-owned) resource override.
+    logger.info("Resource isolation: %s", validate_isolation_config())
     logger.info("PGHOST=%s", os.getenv("PGHOST", "(not set)"))
     logger.info("LAKEBASE_ENDPOINT=%s", os.getenv("LAKEBASE_ENDPOINT", "(not set)"))
     logger.info("ZEROBUS_SERVER_ENDPOINT=%s", os.getenv("ZEROBUS_SERVER_ENDPOINT", "(not set)"))
     logger.info("DATABRICKS_CLIENT_ID=%s", os.getenv("DATABRICKS_CLIENT_ID", "(not set)"))
     logger.info("INDUSTRIES=%s", INDUSTRIES)
 
-    # --- Single Lakebase connection (iot-app-backend, OAuth) ---
+    # --- Single Lakebase connection (<prefix>-backend, OAuth) ---
     # One AppBackendConnectionManager serves both state.db and state.app_backend_db
     # so existing callsites on either field keep working without modification.
     if os.getenv("PGHOST"):
@@ -94,12 +100,13 @@ async def lifespan(application: FastAPI):
             state.app_backend_available = True
             state.db_error = None
             state.app_backend_error = None
-            logger.info("Lakebase connection pool ready (iot-app-backend)")
+            logger.info("Lakebase connection pool ready (<prefix>-backend)")
             await app_schema.ensure_app_schema(app_db)
             await app_db.ensure_pipelines_table()
             await app_db.ensure_user_settings_table()
             await app_db.ensure_source_bindings_table()
             logger.info("App-backend schema ensured")
+            await init_genai_privacy(app_db)
         except Exception as exc:
             err_msg = f"{type(exc).__name__}: {exc}"
             logger.warning(
@@ -119,6 +126,7 @@ async def lifespan(application: FastAPI):
         state.db_error = "PGHOST not set"
         state.app_backend_available = False
         state.app_backend_error = "PGHOST not set"
+        await init_genai_privacy(None)
 
     secret_sync = asyncio.create_task(publish_runtime_oauth_secret())
     # Off the startup path: the workspace-id lookup must not delay boot.
@@ -128,6 +136,7 @@ async def lifespan(application: FastAPI):
     state.simulator_task = asyncio.create_task(run_simulator(state))
     start_industry_runtime_refresh(state)
     start_alert_snapshot_sync(state)
+    start_genai_audit_sync(state)
 
     logger.info("=== IoT Digital Twin started (db=%s) ===", state.db_available)
     yield
@@ -142,6 +151,14 @@ async def lifespan(application: FastAPI):
 # Application factory
 # ---------------------------------------------------------------------------
 app = FastAPI(title="IoT Digital Twin", lifespan=lifespan)
+
+
+@app.exception_handler(NotOwnedError)
+async def _not_owned_handler(_request, exc: NotOwnedError):
+    """Backstop: a rejected request name is a 403; a non-owned env name is a 500."""
+    return not_owned_response(exc)
+
+
 app.add_middleware(UsageTrackingMiddleware, tracker=usage_tracker)
 
 # Every router (API, setup, admin, validation, SPA root) is registered by

@@ -23,3 +23,36 @@ def fake_credential(label: str) -> str:
         raise ValueError(f"fake credential label must be a simple word, got {label!r}")
     head, *tail = _FAKE_MARKER
     return "-".join((head, label, *tail))
+
+
+def owned_job_settings() -> object:
+    """A ``jobs.get()`` result that passes ``assert_owned_job`` (prefix name + app tag)."""
+    from types import SimpleNamespace
+
+    from iot_twin.core import resource_names
+
+    return SimpleNamespace(
+        settings=SimpleNamespace(
+            name=resource_names.pipeline_name("test", "realtime"),
+            tags=resource_names.resource_tags("pipeline"),
+        )
+    )
+
+
+def owned_cluster_info() -> object:
+    """A ``clusters.get()`` result that passes ``assert_owned_cluster``."""
+    from types import SimpleNamespace
+
+    from iot_twin.core import resource_names
+
+    return SimpleNamespace(
+        cluster_name=resource_names.cluster_name("test"),
+        custom_tags={"app": resource_names.app_name()},
+    )
+
+
+def own_jobs_and_clusters(w):
+    """Make a mock WorkspaceClient's jobs / clusters look owned by this app; returns ``w``."""
+    w.jobs.get.return_value = owned_job_settings()
+    w.clusters.get.return_value = owned_cluster_info()
+    return w

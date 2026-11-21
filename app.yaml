@@ -4,11 +4,14 @@ command:
   - "uvicorn --app-dir src iot_twin.app:app --host 0.0.0.0 --port ${DATABRICKS_APP_PORT:-8000}"
 
 env:
+  - name: RESOURCE_PREFIX
+    value: "pharma-twin"
+
   - name: UC_CATALOG
     value: "example-catalog"
 
   - name: UC_SCHEMA
-    value: "rtm_lakets_zb"
+    value: "pharma_twin"
 
   - name: PGHOST
     value: "example-lakebase.database.us-east-1.cloud.databricks.com"
@@ -20,10 +23,10 @@ env:
     value: "5432"
 
   - name: LAKEBASE_PROJECT
-    value: "iot-app-backend-example"
+    value: "pharma-twin-backend-example"
 
   - name: LAKEBASE_ENDPOINT
-    value: "projects/iot-app-backend-example/branches/production/endpoints/primary"
+    value: "projects/pharma-twin-backend-example/branches/production/endpoints/primary"
 
   - name: DATABRICKS_SQL_WAREHOUSE_ID
     valueFrom: sql-warehouse
@@ -53,19 +56,25 @@ env:
     value: "iot-rtm-sc"
 
   - name: PIPELINES_LAKEBASE_PROJECT
-    value: "iot-pipelines-example"
+    value: "pharma-twin-pipelines-example"
 
   - name: MSK_BOOTSTRAP_SERVERS
     value: "b-1-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198,b-2-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198,b-3-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198"
 
   - name: INDUSTRIES
-    value: "pharmaceutical,manufacturing"
+    value: "manufacturing,pharmaceutical"
 
   - name: ADMIN_GROUP
-    value: "iot-admins"
+    value: "pharma-twin-admins"
 
   - name: GENIE_SPACE_ID
     valueFrom: genie-space
+
+  - name: GENAI_ENDPOINT
+    valueFrom: genai-endpoint
+
+  - name: GENAI_PSEUDONYM_SALT
+    valueFrom: genai-pseudonym-salt
 
   - name: USAGE_TRACKING_ENABLED
     value: "true"

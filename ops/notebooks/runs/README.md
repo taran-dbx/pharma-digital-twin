@@ -59,6 +59,10 @@ the text versions with `ops/html_fallback.py`.
 - `redact=true` is mandatory. A run with `redact=false` must never be committed.
 - Tests (`tests/test_health_run_snapshots.py`) validate nbformat, the label, the kept outputs and
   the identifier / secret-shape scans over every file here. They do not re-execute anything.
-- The pipeline (job) name `iot-<industry>-<mode>` is shown as-is: it is the app's fixed naming
-  convention, not a workspace identifier.
+- **Snapshots are records, not runnable notebooks.** The committed snapshots were captured
+  from the upstream deployment before this fork, so they show its names (e.g. jobs named
+  `iot-<industry>-<mode>`). The first code cell of every snapshot is
+  `raise RuntimeError("snapshot only: ...")`, so "Run all" stops before touching any workspace.
+  `ops/export_run_notebook.py` adds that cell to every new export. To check a pipeline, run
+  `ops/notebooks/pipeline_health_check.ipynb`, never a snapshot.
 - Delete old snapshots rather than editing them.

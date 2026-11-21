@@ -16,7 +16,7 @@ import asyncio
 import logging
 from typing import Any
 
-logger = logging.getLogger("iot_digital_twin.services.uc_secrets")
+logger = logging.getLogger("pharma_twin.services.uc_secrets")
 
 
 def _new_ws() -> Any:

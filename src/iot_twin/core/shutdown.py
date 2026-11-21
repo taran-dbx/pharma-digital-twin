@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from iot_twin.core.state import AppState
 
-logger = logging.getLogger("iot_digital_twin.shutdown")
+logger = logging.getLogger("pharma_twin.shutdown")
 
 
 def install_sigterm_handler(state: AppState) -> None:
@@ -33,6 +33,7 @@ async def shutdown(state: AppState) -> None:
             state.simulator_task,
             state.industry_runtime_refresh_task,
             getattr(state, "alert_snapshot_sync_task", None),
+            getattr(state, "genai_audit_sync_task", None),
         )
         if task is not None
     }

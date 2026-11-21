@@ -1,0 +1,58 @@
+# captured 2026-11-20T14:56:26Z — every resource this deployment created, by name
+## App
+{
+ "name": "pharma-twin-dev",
+ "url": "https://pharma-twin-dev-<workspace-id>.aws.databricksapps.com",
+ "service_principal_client_id": "02ab07ab-<sp-client-id>",
+ "service_principal_name": "<sp-display-name>"
+}
+compute ACTIVE app RUNNING
+## Bundle
+bundle name: pharma-digital-twin ; root: /Workspace/Users/<owner>/.bundle/pharma-digital-twin/dev
+## Jobs created by the app (name contains pharma-twin)
+  pharma-twin-manufacturing-realtime
+  LakeTS Retention — pharma-twin-pipelines/manufacturing
+  LakeTS Tiering — pharma-twin-pipelines/manufacturing
+  LakeTS Rollup Refresh — pharma-twin-pipelines/manufacturing
+  LakeTS Partition Manager — pharma-twin-pipelines/manufacturing
+## Clusters
+  pharma-twin-validate-manufacturing RUNNING
+## Lakebase projects / branches
+  projects/pharma-twin-backend/branches/production
+  projects/pharma-twin-pipelines/branches/manufacturing
+  projects/pharma-twin-pipelines/branches/production
+## Ledger (provisioned_resource) for setup
+  service_principal      02ab07ab-<sp-client-id>  [healthy]
+  service_principal      02ab07ab-<sp-client-id>  [healthy]
+  lakebase_project       projects/pharma-twin-pipelines  [healthy]
+  uc_schema              <catalog>.pharma_twin  [healthy]
+  uc_schema              <catalog>.pharma_twin  [healthy]
+  uc_table               <catalog>.pharma_twin.manufacturing_realtime  [healthy]
+  uc_table               <catalog>.pharma_twin.manufacturing_microbatch  [healthy]
+  uc_table               <catalog>.pharma_twin.manufacturing_zerobus  [healthy]
+  uc_table               <catalog>.pharma_twin.manufacturing_metrics  [healthy]
+  uc_table               <catalog>.pharma_twin.manufacturing_realtime  [healthy]
+  uc_table               <catalog>.pharma_twin.manufacturing_microbatch  [healthy]
+  uc_table               <catalog>.pharma_twin.manufacturing_zerobus  [healthy]
+  uc_table               <catalog>.pharma_twin.manufacturing_metrics  [healthy]
+  uc_table               manufacturing.public.sensor_readings  [healthy]
+  lakebase_branch        projects/pharma-twin-pipelines/branches/manufacturing  [healthy]
+  lakebase_endpoint      projects/pharma-twin-pipelines/branches/manufacturing/endpoints/primary  [healthy]
+  lakebase_read_replica  projects/pharma-twin-pipelines/branches/manufacturing/endpoints/replica  [healthy]
+  lakebase_role          manufacturing:02ab07ab-<sp-client-id>  [healthy]
+  cdf_sync               projects/pharma-twin-pipelines/branches/manufacturing/databases/databricks-postgres/cdf-configs/lakets_cdf  [healthy]
+  job                    <id>  [healthy]
+  job                    <id>  [healthy]
+  job                    <id>  [healthy]
+  job                    <id>  [healthy]
+  job                    <id>  [healthy]
+  grant                  <catalog>.pharma_twin:USE CATALOG:02ab07ab-<sp-client-id>  [healthy]
+  grant                  <catalog>.pharma_twin:explicit SELECT, MODIFY on metrics table for Zerobus:02ab07ab-<sp-client-id>  [healthy]
+  grant                  <catalog>.pharma_twin:USE CATALOG:02ab07ab-<sp-client-id>  [healthy]
+  grant                  <catalog>.pharma_twin:explicit SELECT, MODIFY on metrics table for Zerobus:02ab07ab-<sp-client-id>  [healthy]
+  genie_space            <genie-id>  [healthy]
+## Kafka topics (from deploy payload / validation)
+  pharma-twin.manufacturing.realtime (consumed), pharma-twin.manufacturing.microbatch (created by the validation topics step)
+## Original deployment untouched (read-only check)
+  iot-digital-twin ACTIVE sp <upstream-sp, not ours>
+  iot-twin-dev-<owner> ACTIVE sp <upstream-sp, not ours>

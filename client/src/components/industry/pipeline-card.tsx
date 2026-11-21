@@ -48,6 +48,7 @@ import {
   type ModeRuntimeStatus,
 } from "@/lib/admin-api";
 import { buildIndustryDeployPayload } from "@/lib/industry-deploy-config";
+import { topicName, useResourcePrefix } from "@/lib/resource-names";
 import { DataFlowModalContent } from "./data-flow-modal-content";
 import { RuntimeHealthCheck } from "./runtime-health-check";
 import { SampleModalContent } from "./sample-modal-content";
@@ -303,6 +304,7 @@ export function PipelineCard({
   realRuntimeDetail,
   realRestartable = false,
 }: PipelineCardProps) {
+  const resourcePrefix = useResourcePrefix();
   const [busy, setBusy] = useState(false);
   const [frequencySaving, setFrequencySaving] = useState(false);
   const [rateHz, setRateHz] = useState(modeRateHz);
@@ -602,7 +604,7 @@ export function PipelineCard({
       </div>
       {mode.id !== "zerobus" && (
         <div className="fc-topic">
-          Topic <b>iot.{industry.id}.{mode.id}</b>
+          Topic <b>{topicName(resourcePrefix, industry.id, mode.id)}</b>
         </div>
       )}
 

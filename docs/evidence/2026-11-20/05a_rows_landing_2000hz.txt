@@ -1,0 +1,13 @@
+# Producer -> MSK -> RTM consumer -> Lakebase: rows landing over time
+# Run A: producer at the default 2000 Hz (producer heartbeat: ack_rps ~1795, failed=0), consumer job 2 workers.
+# Sampled every ~60 s from the pipeline branch (pg_stat_user_tables n_tup_ins over sensor_readings chunks, max(event_time)).
+utc_time | total_inserted | inserted_since_prev | rows_per_s | newest_event_time | lag_s | rows_last_60s
+15:51:07 | 1828966 | None | None | 15:26:57.555901 | 1450.3 | 0
+15:52:16 | 1867069 | 38103 | 556 | 15:51:50.226607 | 26.2 | 38503
+15:53:20 | 1927869 | 60800 | 955 | 15:52:44.170017 | 35.9 | 9089
+15:54:22 | 1987069 | 59200 | 952 | 15:53:36.664596 | 45.6 | 5421
+15:55:27 | 2048469 | 61400 | 947 | 15:54:30.964645 | 56.2 | 1437
+
+# Finding: the consumer sustains ~950 rows/s into the LakeTS ChronoTable (same with 1 or 2 workers), below the
+# ~1795 rows/s produced, so lag grows ~10 s per minute at 2000 Hz. Earlier 1-worker run: 15:05-15:11 kept up
+# (~107k rows/min), then fell behind. Delta (CDF) total at 15:47: 1,828,766 rows.

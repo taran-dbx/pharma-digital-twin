@@ -15,8 +15,8 @@ class NotFoundError(RuntimeError):
 
 def test_database_parent_uses_api_resource_id_c7212() -> None:
     """The API resource id is hyphenated, unlike the SQL database name [C7212][defect]."""
-    assert cdf.database_parent("pharmaceutical", project_id="iot-pipelines") == (
-        "projects/iot-pipelines/branches/pharmaceutical/databases/databricks-postgres"
+    assert cdf.database_parent("pharmaceutical", project_id="pharma-twin-pipelines") == (
+        "projects/pharma-twin-pipelines/branches/pharmaceutical/databases/databricks-postgres"
     )
 
 

@@ -22,7 +22,7 @@
  * Pipeline resolution: the industry catalog (`getCatalog`) only reports each
  * mode's lifecycle status, not its pipeline id — so the id is resolved via
  * the same `/api/pipelines` list `dashboard-page.tsx` already reads, trying
- * the deterministic curated name first (`iot-<industry>-<mode>`, mirroring
+ * the deterministic curated name first (`<prefix>-<industry>-<mode>`, mirroring
  * `services/industry_service.py::pipeline_name`) and falling back to any
  * pipeline tagged with this industry whose sink config matches the mode.
  * If nothing resolves, the mode's "Start pipeline" empty state is shown.
@@ -70,6 +70,7 @@ import { RateChart } from "@/components/dashboard/lakets/rate-chart";
 import { GapfillChart } from "@/components/dashboard/lakets/gapfill-chart";
 import { HistogramChart } from "@/components/dashboard/lakets/histogram-chart";
 import { useRefreshInterval, RefreshIntervalSelect } from "@/components/dashboard/refresh-interval-select";
+import { pipelineName, useResourcePrefix } from "@/lib/resource-names";
 
 const MODES: readonly PipelineMode[] = ["realtime", "microbatch", "zerobus"];
 
@@ -369,6 +370,7 @@ type PanelPipeline = Pick<Pipeline, "id" | "resources">;
 
 export function ModeDashboardPage() {
   const { industry: industryId, mode } = useParams<{ industry: string; mode: string }>();
+  const resourcePrefix = useResourcePrefix();
 
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
@@ -514,13 +516,13 @@ export function ModeDashboardPage() {
       const byId = pipelines.find((p) => p.id === pipelineIdFromCatalog);
       if (byId) return byId;
     }
-    const expectedName = `iot-${industryId}-${mode}`;
+    const expectedName = pipelineName(resourcePrefix, industryId, mode);
     return (
       pipelines.find((p) => p.name === expectedName) ??
       pipelines.find((p) => p.industry === industryId && pipelineMatchesMode(p, mode)) ??
       null
     );
-  }, [pipelines, industryId, mode, pipelineIdFromCatalog]);
+  }, [pipelines, industryId, mode, pipelineIdFromCatalog, resourcePrefix]);
 
   // When the catalog says a pipeline exists for this mode but the list didn't
   // carry its row, fetch it directly by id so the dashboard resolves.

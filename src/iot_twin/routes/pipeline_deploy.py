@@ -32,7 +32,7 @@ from iot_twin.services import app_permissions, cdf_reconciliation_service
 from iot_twin.services.deployment import deployment_repo, deployment_service
 from iot_twin.services.genie import genie_provisioning
 
-logger = logging.getLogger("iot_digital_twin.routes.pipeline_deploy")
+logger = logging.getLogger("pharma_twin.routes.pipeline_deploy")
 
 router = APIRouter()
 

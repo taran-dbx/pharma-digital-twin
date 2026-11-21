@@ -11,6 +11,7 @@ import { Fragment } from "react";
 
 import type { ModeView } from "@/lib/admin-api";
 import type { Industry } from "@/lib/industries-api";
+import { useResourcePrefix } from "@/lib/resource-names";
 import { archNodes, MODE_LABEL, NodeIcon } from "./arch-nodes";
 
 export interface ArchDiagramProps {
@@ -19,6 +20,7 @@ export interface ArchDiagramProps {
 }
 
 export function ArchDiagram({ industry, modes }: ArchDiagramProps) {
+  const resourcePrefix = useResourcePrefix();
   const deployed = industry.modes
     .map((mode) => ({
       mode,
@@ -48,7 +50,7 @@ export function ArchDiagram({ industry, modes }: ArchDiagramProps) {
             <small>{runtime.status}</small>
           </span>
           <div className="arch">
-            {archNodes(industry, mode.id).map((node, i) => (
+            {archNodes(industry, mode.id, resourcePrefix).map((node, i) => (
               <Fragment key={`${node.t}-${i}`}>
                 {i > 0 && (
                   <div className="aarrow" aria-hidden="true">

@@ -1,0 +1,101 @@
+{
+  "decision_threshold": 0.47,
+  "endpoint": "pharma-twin-spindle-risk",
+  "first_sample_over_cutoff_s_after_ramp_start": 12,
+  "lead_before_onset_s": 7,
+  "onset_s_after_ramp_start": 19,
+  "samples": [
+    {
+      "risk_score": 0.2375,
+      "s_after_ramp_start": -10,
+      "temp_last": 45.0,
+      "temp_slope": 0.0
+    },
+    {
+      "risk_score": 0.2375,
+      "s_after_ramp_start": -8,
+      "temp_last": 45.0,
+      "temp_slope": 0.0
+    },
+    {
+      "risk_score": 0.2375,
+      "s_after_ramp_start": -6,
+      "temp_last": 45.0,
+      "temp_slope": 0.0
+    },
+    {
+      "risk_score": 0.2375,
+      "s_after_ramp_start": -4,
+      "temp_last": 45.0,
+      "temp_slope": 0.0
+    },
+    {
+      "risk_score": 0.2375,
+      "s_after_ramp_start": -2,
+      "temp_last": 45.0,
+      "temp_slope": 0.0
+    },
+    {
+      "risk_score": 0.2375,
+      "s_after_ramp_start": 0,
+      "temp_last": 45.0,
+      "temp_slope": 0.0
+    },
+    {
+      "risk_score": 0.2375,
+      "s_after_ramp_start": 2,
+      "temp_last": 46.666667,
+      "temp_slope": 0.243123
+    },
+    {
+      "risk_score": 0.2375,
+      "s_after_ramp_start": 4,
+      "temp_last": 48.333333,
+      "temp_slope": 0.791887
+    },
+    {
+      "risk_score": 0.2375,
+      "s_after_ramp_start": 6,
+      "temp_last": 50.0,
+      "temp_slope": 1.624062
+    },
+    {
+      "risk_score": 0.2785,
+      "s_after_ramp_start": 8,
+      "temp_last": 51.666667,
+      "temp_slope": 2.717422
+    },
+    {
+      "risk_score": 0.395,
+      "s_after_ramp_start": 10,
+      "temp_last": 53.333333,
+      "temp_slope": 4.049736
+    },
+    {
+      "risk_score": 0.6041,
+      "s_after_ramp_start": 12,
+      "temp_last": 55.0,
+      "temp_slope": 5.598777
+    },
+    {
+      "risk_score": 0.6479,
+      "s_after_ramp_start": 14,
+      "temp_last": 56.666667,
+      "temp_slope": 7.342317
+    },
+    {
+      "risk_score": 0.6834,
+      "s_after_ramp_start": 16,
+      "temp_last": 58.333333,
+      "temp_slope": 9.258127
+    },
+    {
+      "risk_score": 0.6994,
+      "s_after_ramp_start": 18,
+      "temp_last": 60.0,
+      "temp_slope": 11.323979
+    }
+  ],
+  "scenario": "live producer heat event: +25 \u00b0C over 30 s from 45 \u00b0C, vibration/power nominal (no precursor)",
+  "served_model_name": "spindle_thermal_risk-4"
+}

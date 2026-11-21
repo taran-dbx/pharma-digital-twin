@@ -1,5 +1,11 @@
 """Maintainable four-industry domain catalog.
 
+The ``manufacturing`` industry id is kept for table/topic/pipeline names; its
+user-facing story is Trinity Medical's orthopaedic-implant machining cell
+(MILL → CMM INSPECT → CLEAN / PASSIVATE → STERILE PACK). Stable IDs such as
+``mfg-site-detroit`` predate that story and stay unchanged so persisted alerts,
+decisions and dashboards keep resolving; only display names changed.
+
 Stable site/asset/component/sensor IDs, simulator aliases, KPI bindings,
 alert-rule definitions, and lightweight maintenance fixtures. Sensor
 ``name`` values match the iot_simulator catalog (energy uses the
@@ -82,6 +88,13 @@ class AlertRule:
     correlate_operator: str = "gt"
     correlate_threshold: float | None = None
     action: str = ""
+    # Validation references (e.g. OQ/PQ protocol ids) as ordered key/value pairs.
+    metadata: tuple[tuple[str, str], ...] = ()
+
+
+def rule_metadata(rule: AlertRule) -> dict[str, str]:
+    """The rule's validation references as a JSON-ready dict."""
+    return dict(rule.metadata)
 
 
 @dataclass(frozen=True)
@@ -144,6 +157,7 @@ def _manufacturing() -> IndustryDomain:
     assy = "mfg-asset-assy-1"
     press = "mfg-asset-press-1"
     compressor = "mfg-asset-compressor-1"
+    cmm = "mfg-asset-cmm-1"
     spindle = "mfg-comp-spindle"
     return IndustryDomain(
         industry_id="manufacturing",
@@ -151,12 +165,12 @@ def _manufacturing() -> IndustryDomain:
         sites=(
             SiteNode(
                 site_id=site,
-                name="Detroit Plant",
+                name="Trinity Medical · Warsaw, IN",
                 assets=(
                     AssetNode(
                         asset_id=cnc,
                         site_id=site,
-                        name="CNC-1",
+                        name="CNC-1 5-axis mill",
                         components=(
                             ComponentNode(
                                 component_id=spindle,
@@ -173,13 +187,40 @@ def _manufacturing() -> IndustryDomain:
                         ),
                     ),
                     AssetNode(
+                        asset_id=cmm,
+                        site_id=site,
+                        name="CMM-1 metrology lab",
+                        components=(
+                            ComponentNode(
+                                component_id="mfg-comp-cmm-lab",
+                                name="Metrology lab environment",
+                                sensors=(
+                                    _sns(
+                                        "mfg",
+                                        "hvac_zone_1_temp",
+                                        site,
+                                        cmm,
+                                        "mfg-comp-cmm-lab",
+                                    ),
+                                    _sns(
+                                        "mfg",
+                                        "hvac_zone_1_humidity",
+                                        site,
+                                        cmm,
+                                        "mfg-comp-cmm-lab",
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                    AssetNode(
                         asset_id=assy,
                         site_id=site,
-                        name="Assembly line 1",
+                        name="Sterile pack line",
                         components=(
                             ComponentNode(
                                 component_id="mfg-comp-line-drive",
-                                name="Line drive",
+                                name="Pouch sealer drive",
                                 sensors=(
                                     _sns(
                                         "mfg",
@@ -212,11 +253,11 @@ def _manufacturing() -> IndustryDomain:
                     AssetNode(
                         asset_id=press,
                         site_id=site,
-                        name="Hydraulic press 1",
+                        name="Clean & passivation line",
                         components=(
                             ComponentNode(
                                 component_id="mfg-comp-hydraulics",
-                                name="Hydraulics",
+                                name="Wash & passivation bath",
                                 sensors=(
                                     _sns(
                                         "mfg",
@@ -241,7 +282,7 @@ def _manufacturing() -> IndustryDomain:
                     AssetNode(
                         asset_id=compressor,
                         site_id=site,
-                        name="Air compressor 1",
+                        name="Clean dry air compressor",
                         components=(
                             ComponentNode(
                                 component_id="mfg-comp-air-end",
@@ -282,7 +323,9 @@ def _manufacturing() -> IndustryDomain:
             KpiBinding("mfg-kpi-temp", "Spindle 3 temperature", "cnc_1_spindle_temp", "°C"),
             KpiBinding("mfg-kpi-vibration", "Spindle 3 vibration", "cnc_1_vibration", "mm/s"),
             KpiBinding("mfg-kpi-spindle-speed", "Spindle 3 speed", "cnc_1_spindle_speed", "RPM"),
-            KpiBinding("mfg-kpi-line-speed", "Pack line speed", "assy_line_1_speed", "m/min"),
+            KpiBinding(
+                "mfg-kpi-line-speed", "Sterile pack line speed", "assy_line_1_speed", "m/min"
+            ),
         ),
         alert_rules=(
             AlertRule(
@@ -291,10 +334,22 @@ def _manufacturing() -> IndustryDomain:
                 "gt",
                 60.0,
                 "crit",
-                "M-SPINDLE-OVERTEMP",
+                "VPP-SPINDLE3-TEMP",
                 duration_s=2.0,
                 hysteresis=5.0,
-                action="Inspection required",
+                action=(
+                    "QA hold: quarantine parts machined outside the validated limit, "
+                    "open an NCR and send them to CMM"
+                ),
+                metadata=(
+                    ("parameter_type", "validated_process_parameter"),
+                    ("parameter", "Spindle 3 temperature"),
+                    ("validated_limit", "60 °C"),
+                    ("oq_ref", "OQ-TM-CNC1-014"),
+                    ("pq_ref", "PQ-TM-HS12-022"),
+                    ("process_spec", "PS-TM-MILL-HS-003 rev C"),
+                    ("risk", "Dimensional nonconformance: stem taper and neck geometry"),
+                ),
             ),
             AlertRule(
                 "mfg-alert-vibration",
@@ -302,10 +357,26 @@ def _manufacturing() -> IndustryDomain:
                 "gt",
                 8.0,
                 "warn",
-                "M-SPINDLE-VIBE",
+                "SPC-SPINDLE3-VIBE",
+                action="Surface-finish risk: verify Ra at CMM",
+                metadata=(
+                    ("parameter_type", "monitored_process_parameter"),
+                    ("parameter", "Spindle 3 vibration"),
+                ),
             ),
             AlertRule(
-                "mfg-alert-press", "mfg-sns-press_1_pressure", "lt", 120.0, "warn", "M-PRESS-LOW"
+                "mfg-alert-press",
+                "mfg-sns-press_1_pressure",
+                "lt",
+                120.0,
+                "warn",
+                "CLN-PASSIVATION-PRESS-LOW",
+                action="Verify passivation bath circulation before releasing the load",
+                metadata=(
+                    ("parameter_type", "validated_process_parameter"),
+                    ("parameter", "Passivation line pressure"),
+                    ("process_spec", "PS-TM-CLN-PAS-007 rev B"),
+                ),
             ),
         ),
         maintenance_history=(
@@ -316,7 +387,7 @@ def _manufacturing() -> IndustryDomain:
                 "inspection",
                 "2026-09-01T08:00:00Z",
                 "2026-09-01T12:00:00Z",
-                "Spindle bearing inspection",
+                "Spindle bearing inspection; thermal compensation re-verified per OQ-TM-CNC1-014",
             ),
             MaintenanceEvent(
                 "mfg-mnt-002",
@@ -325,7 +396,7 @@ def _manufacturing() -> IndustryDomain:
                 "planned",
                 "2026-09-12T06:00:00Z",
                 "2026-09-12T10:00:00Z",
-                "Hydraulic oil change",
+                "Passivation bath change and concentration check",
             ),
         ),
     )
@@ -963,7 +1034,9 @@ def reference_payload(industry: str) -> dict:
                 "severity": rule.severity,
                 "fault_code": rule.fault_code,
                 "hysteresis": rule.hysteresis,
+                "duration_s": rule.duration_s,
                 "action": rule.action,
+                "metadata": rule_metadata(rule),
             }
             for rule in domain.alert_rules
         ],

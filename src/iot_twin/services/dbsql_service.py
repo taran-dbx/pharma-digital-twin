@@ -8,7 +8,7 @@ import os
 import re
 from typing import Any
 
-logger = logging.getLogger("iot_digital_twin.services.dbsql")
+logger = logging.getLogger("pharma_twin.services.dbsql")
 
 _CATALOG_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
 

@@ -1,9 +1,13 @@
 import type {
+  ActionPlanList,
+  ActionPlanRecord,
+  ActionPlanTrace,
   AlertHistoryResponse,
   AlertLifecycleEvent,
   AlertListResponse,
   AlertRecord,
   AlertResponseAction,
+  DecisionSignoff,
   AlertResponseEvent,
   AlertResponseList,
   GenieAskRequest,
@@ -145,6 +149,8 @@ export interface AppDefaults {
   uc_catalog?: string;
   /** UC_SCHEMA — single schema holding all industry-prefixed managed tables (Task 3/4). */
   uc_schema?: string;
+  /** RESOURCE_PREFIX — prefix of every resource name (`pharma-twin` by default). */
+  resource_prefix?: string;
 }
 
 export const api = {
@@ -606,11 +612,22 @@ export const api = {
   listAlertResponses: (alertId: string) =>
     request<AlertResponseList>(`/alerts/${alertId}/responses`),
 
-  recordAlertResponse: (alertId: string, action: AlertResponseAction) =>
+  recordAlertResponse: (alertId: string, action: AlertResponseAction, signoff: DecisionSignoff) =>
     request<AlertResponseEvent>(`/alerts/${alertId}/responses`, {
       method: "POST",
-      body: JSON.stringify({ action }),
+      body: JSON.stringify({ action, ...signoff }),
     }),
+
+  /** `force` regenerates even when the grounding is unchanged (otherwise the latest plan is reused). */
+  generateActionPlan: (alertId: string, mode?: string, force = false) =>
+    request<ActionPlanRecord>(`/alerts/${alertId}/action-plan`, {
+      method: "POST",
+      body: JSON.stringify({ ...(mode ? { mode } : {}), ...(force ? { force: true } : {}) }),
+    }),
+
+  listActionPlans: (alertId: string) => request<ActionPlanList>(`/alerts/${alertId}/action-plan`),
+
+  getActionPlanTrace: (planId: string) => request<ActionPlanTrace>(`/genai/audit/${planId}`),
 
   getAlertHistory: (industry: string, hours = 1) =>
     request<AlertHistoryResponse>(

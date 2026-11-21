@@ -38,7 +38,7 @@ class TestDeployRetentionJob:
             ),
         ):
             result = lakets_deploy_service.deploy_retention_job(
-                project_id="iot-lakets-demo",
+                project_id="pharma-twin-lakets-demo",
             )
 
         assert result["job_id"] == 42
@@ -53,10 +53,12 @@ class TestDeployRetentionJob:
         w = _fake_workspace_client()
         existing = MagicMock(
             job_id=99,
-            settings=MagicMock(name="LakeTS Retention — iot-lakets-demo/production"),
+            settings=MagicMock(
+                name="pharma-twin LakeTS Retention — pharma-twin-lakets-demo/production"
+            ),
         )
         # MagicMock intercepts .name attr access; set explicitly
-        existing.settings.name = "LakeTS Retention — iot-lakets-demo/production"
+        existing.settings.name = "pharma-twin LakeTS Retention — pharma-twin-lakets-demo/production"
         w.jobs.list.return_value = [existing]
 
         with (
@@ -68,7 +70,7 @@ class TestDeployRetentionJob:
             ),
         ):
             result = lakets_deploy_service.deploy_retention_job(
-                project_id="iot-lakets-demo",
+                project_id="pharma-twin-lakets-demo",
             )
 
         assert result["job_id"] == 99
@@ -87,7 +89,7 @@ class TestDeployRetentionJob:
             ),
         ):
             lakets_deploy_service.deploy_retention_job(
-                project_id="my-proj",
+                project_id="pharma-twin-my-proj",
                 branch_id="staging",
                 database="custom_db",
             )
@@ -95,7 +97,7 @@ class TestDeployRetentionJob:
         _, kwargs = w.jobs.create.call_args
         task = kwargs["tasks"][0]
         assert task.notebook_task.base_parameters == {
-            "project_id": "my-proj",
+            "project_id": "pharma-twin-my-proj",
             "branch_id": "staging",
             "database": "custom_db",
         }
@@ -129,12 +131,15 @@ class TestDeployPartitionManagerJob:
     def test_creates_job_when_none_exists(self) -> None:
         w = _ops_workspace_client()
         result = lakets_deploy_service.deploy_partition_manager_job(
-            w, "iot-lakets-demo", "production"
+            w, "pharma-twin-lakets-demo", "production"
         )
 
         assert result["job_id"] == 7
         assert result["status"] == "created"
-        assert result["job"] == "LakeTS Partition Manager — iot-lakets-demo/production"
+        assert (
+            result["job"]
+            == "pharma-twin LakeTS Partition Manager — pharma-twin-lakets-demo/production"
+        )
         w.workspace.import_.assert_called_once()
         w.jobs.create.assert_called_once()
         w.jobs.reset.assert_not_called()
@@ -148,11 +153,11 @@ class TestDeployPartitionManagerJob:
 
     def test_updates_job_when_exists(self) -> None:
         w = _ops_workspace_client()
-        name = "LakeTS Partition Manager — iot-lakets-demo/production"
+        name = "pharma-twin LakeTS Partition Manager — pharma-twin-lakets-demo/production"
         w.jobs.list.return_value = [_existing_job(name, 55)]
 
         result = lakets_deploy_service.deploy_partition_manager_job(
-            w, "iot-lakets-demo", "production"
+            w, "pharma-twin-lakets-demo", "production"
         )
 
         assert result["job_id"] == 55
@@ -169,11 +174,16 @@ class TestDeployRollupRefreshJob:
 
     def test_creates_job_when_none_exists(self) -> None:
         w = _ops_workspace_client()
-        result = lakets_deploy_service.deploy_rollup_refresh_job(w, "iot-lakets-demo", "production")
+        result = lakets_deploy_service.deploy_rollup_refresh_job(
+            w, "pharma-twin-lakets-demo", "production"
+        )
 
         assert result["job_id"] == 7
         assert result["status"] == "created"
-        assert result["job"] == "LakeTS Rollup Refresh — iot-lakets-demo/production"
+        assert (
+            result["job"]
+            == "pharma-twin LakeTS Rollup Refresh — pharma-twin-lakets-demo/production"
+        )
         w.jobs.create.assert_called_once()
         w.jobs.reset.assert_not_called()
 
@@ -182,10 +192,12 @@ class TestDeployRollupRefreshJob:
 
     def test_updates_job_when_exists(self) -> None:
         w = _ops_workspace_client()
-        name = "LakeTS Rollup Refresh — iot-lakets-demo/production"
+        name = "pharma-twin LakeTS Rollup Refresh — pharma-twin-lakets-demo/production"
         w.jobs.list.return_value = [_existing_job(name, 88)]
 
-        result = lakets_deploy_service.deploy_rollup_refresh_job(w, "iot-lakets-demo", "production")
+        result = lakets_deploy_service.deploy_rollup_refresh_job(
+            w, "pharma-twin-lakets-demo", "production"
+        )
 
         assert result["job_id"] == 88
         assert result["status"] == "updated"
@@ -201,11 +213,13 @@ class TestDeployTieringJob:
 
     def test_creates_job_when_none_exists(self) -> None:
         w = _ops_workspace_client()
-        result = lakets_deploy_service.deploy_tiering_job(w, "iot-lakets-demo", "production")
+        result = lakets_deploy_service.deploy_tiering_job(
+            w, "pharma-twin-lakets-demo", "production"
+        )
 
         assert result["job_id"] == 7
         assert result["status"] == "created"
-        assert result["job"] == "LakeTS Tiering — iot-lakets-demo/production"
+        assert result["job"] == "pharma-twin LakeTS Tiering — pharma-twin-lakets-demo/production"
         w.workspace.import_.assert_called_once()
         w.jobs.create.assert_called_once()
         w.jobs.reset.assert_not_called()
@@ -216,10 +230,12 @@ class TestDeployTieringJob:
 
     def test_updates_job_when_exists(self) -> None:
         w = _ops_workspace_client()
-        name = "LakeTS Tiering — iot-lakets-demo/production"
+        name = "pharma-twin LakeTS Tiering — pharma-twin-lakets-demo/production"
         w.jobs.list.return_value = [_existing_job(name, 77)]
 
-        result = lakets_deploy_service.deploy_tiering_job(w, "iot-lakets-demo", "production")
+        result = lakets_deploy_service.deploy_tiering_job(
+            w, "pharma-twin-lakets-demo", "production"
+        )
 
         assert result["job_id"] == 77
         assert result["status"] == "updated"
@@ -249,14 +265,14 @@ class TestDeployLakeTSOpsJobs:
             return_value={"job_id": 1, "job_name": "ret", "action": "created"},
         ) as mock_ret:
             results = lakets_deploy_service.deploy_lakets_ops_jobs(
-                w, "iot-lakets-demo", "production"
+                w, "pharma-twin-lakets-demo", "production"
             )
 
         assert len(results) == 4
         jobs = {r["job"] for r in results}
-        assert "LakeTS Partition Manager — iot-lakets-demo/production" in jobs
-        assert "LakeTS Rollup Refresh — iot-lakets-demo/production" in jobs
-        assert "LakeTS Tiering — iot-lakets-demo/production" in jobs
+        assert "pharma-twin LakeTS Partition Manager — pharma-twin-lakets-demo/production" in jobs
+        assert "pharma-twin LakeTS Rollup Refresh — pharma-twin-lakets-demo/production" in jobs
+        assert "pharma-twin LakeTS Tiering — pharma-twin-lakets-demo/production" in jobs
         mock_ret.assert_called_once()
         for r in results:
             assert set(r) == {"job", "job_id", "status"}
@@ -267,7 +283,7 @@ class TestDeployLakeTSOpsJobs:
         with patch.object(lakets_deploy_service, "deploy_retention_job"):
             results = lakets_deploy_service.deploy_lakets_ops_jobs(
                 w,
-                "iot-lakets-demo",
+                "pharma-twin-lakets-demo",
                 "production",
                 partition_manager=False,
                 rollup=False,
@@ -276,14 +292,16 @@ class TestDeployLakeTSOpsJobs:
             )
 
         assert len(results) == 1
-        assert results[0]["job"] == "LakeTS Tiering — iot-lakets-demo/production"
+        assert (
+            results[0]["job"] == "pharma-twin LakeTS Tiering — pharma-twin-lakets-demo/production"
+        )
 
     def test_tiering_omitted_when_false(self) -> None:
         w = _ops_workspace_client()
         with patch.object(lakets_deploy_service, "deploy_retention_job"):
             results = lakets_deploy_service.deploy_lakets_ops_jobs(
                 w,
-                "iot-lakets-demo",
+                "pharma-twin-lakets-demo",
                 "production",
                 partition_manager=False,
                 rollup=False,
@@ -298,7 +316,7 @@ class TestDeployLakeTSOpsJobs:
         with patch.object(lakets_deploy_service, "deploy_retention_job") as mock_ret:
             results = lakets_deploy_service.deploy_lakets_ops_jobs(
                 w,
-                "iot-lakets-demo",
+                "pharma-twin-lakets-demo",
                 "production",
                 partition_manager=True,
                 rollup=False,
@@ -307,7 +325,9 @@ class TestDeployLakeTSOpsJobs:
             )
 
         assert len(results) == 1
-        assert results[0]["job"] == ("LakeTS Partition Manager — iot-lakets-demo/production")
+        assert results[0]["job"] == (
+            "pharma-twin LakeTS Partition Manager — pharma-twin-lakets-demo/production"
+        )
         mock_ret.assert_not_called()
 
     def test_only_rollup(self) -> None:
@@ -315,7 +335,7 @@ class TestDeployLakeTSOpsJobs:
         with patch.object(lakets_deploy_service, "deploy_retention_job"):
             results = lakets_deploy_service.deploy_lakets_ops_jobs(
                 w,
-                "iot-lakets-demo",
+                "pharma-twin-lakets-demo",
                 "production",
                 partition_manager=False,
                 rollup=True,
@@ -324,7 +344,10 @@ class TestDeployLakeTSOpsJobs:
             )
 
         assert len(results) == 1
-        assert results[0]["job"] == "LakeTS Rollup Refresh — iot-lakets-demo/production"
+        assert (
+            results[0]["job"]
+            == "pharma-twin LakeTS Rollup Refresh — pharma-twin-lakets-demo/production"
+        )
 
 
 def test_all_lakets_notebooks_retry_postgres_recovery_with_backoff() -> None:

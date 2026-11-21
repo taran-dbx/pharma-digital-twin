@@ -78,7 +78,7 @@ interface HistoricalDbsqlProps {
    * per-mode dashboard) should always pass it; when omitted the backend
    * infers it from the pipeline's own source config. */
   mode?: PipelineMode;
-  /** Industry id — lets the backend resolve the catalog as iot_<industry>
+  /** Industry id — lets the backend resolve the catalog as <prefix_ident>_<industry>
    * directly (industry-first pipelines have no legacy `pipelines` row / catalog
    * mapping). Passed by the per-mode dashboard. */
   industry?: string;

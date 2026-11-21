@@ -25,11 +25,13 @@ bodies; this page only lists routes.
   runtime. Admin endpoints (`/api/admin/*`) require an admin (see
   [architecture.md](architecture.md#authentication-and-authorization)).
 * Live data is pushed over Server-Sent Events at `GET /api/events`.
-* Errors use FastAPI's standard JSON error body (`{"detail": ...}`).
+* Errors use FastAPI's standard JSON error body (`{"detail": ...}`), except the outcome
+  summaries (`routes/value.py`), which wrap every answer in
+  `{"success", "data", "error", "meta"}` (see [value-model.md](value-model.md#api)).
 
 ## Routes by router module
 
-Generated from the routers registered in the app (132 HTTP routes in the routers, 1
+Generated from the routers registered in the app (134 HTTP routes in the routers, 1
 WebSocket, plus the SPA catch-all in `app.py`). Regenerate by listing `router.routes` for
 each module in `routes/__init__.py`.
 
@@ -46,6 +48,19 @@ Alert list, history, acknowledge, responses, evaluate.
 | GET | `/api/alerts/{alert_id}/responses` |
 | POST | `/api/alerts/{alert_id}/responses` |
 | POST | `/api/alerts/evaluate` |
+
+`POST …/responses` accepts an optional `action_plan_id`: the signed decision then
+marks that AI action plan applied (who, when, which response).
+
+### `routes/genai.py`
+
+Grounded, audited AI action plans (advisory). See [genai-action-plan.md](genai-action-plan.md).
+
+| Method | Path |
+|---|---|
+| POST | `/api/alerts/{alert_id}/action-plan` |
+| GET | `/api/alerts/{alert_id}/action-plan` |
+| GET | `/api/genai/audit/{plan_id}` |
 
 ### `routes/cluster.py`
 
@@ -324,6 +339,15 @@ Current user and user settings.
 | GET | `/api/me` |
 | GET | `/api/settings` |
 | PUT | `/api/settings` |
+
+### `routes/value.py`
+
+Executive savings model and operations metrics for one pipeline.
+
+| Method | Path |
+|---|---|
+| GET | `/api/value/summary` |
+| GET | `/api/ops/summary` |
 
 ### `routes/validation_admin.py`
 

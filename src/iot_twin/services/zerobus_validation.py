@@ -3,7 +3,7 @@ VALIDATION flow (spec §1.10 zerobus).
 
 Today ``services/validation/validation_steps.py``'s ``produce_test`` / ``auth_probe``
 executors are no-op stubs that return ``PASSED`` without ever ingesting a row
-— ``iot_<industry>.zerobus.iot_sensor_data`` stays at 0 rows.  This module is
+— ``<prefix_ident>_<industry>.zerobus.iot_sensor_data`` stays at 0 rows.  This module is
 a self-contained replacement: a Python-source **string builder**
 (:func:`zerobus_produce_snippet`, mirroring the convention in
 ``services/validation/validation_snippets.py`` — ``_PREAMBLE``/``_ok``/``_fail``/
@@ -11,7 +11,7 @@ a self-contained replacement: a Python-source **string builder**
 :func:`auth_probe`.
 
 LIVE-VERIFIED 2026-07-06 against ``example-us-east`` /
-``iot_pharmaceutical.zerobus.iot_sensor_data`` (0 rows -> 25 rows via a
+the pharmaceutical ``zerobus.iot_sensor_data`` table (0 rows -> 25 rows via a
 throwaway spike using the exact shape this module generates):
 
 1. **Column names, not ``SensorRecord`` field names.**  The Zerobus SDK's
@@ -48,6 +48,7 @@ Wiring from ``services/validation/validation_steps.py`` (this module does NOT ed
 file — the coordinator wires it in)::
 
     import os
+    from iot_twin.core import resource_names
     from iot_twin.services import zerobus_validation as zbv
 
     async def auth_probe(ctx: StepContext) -> StepResult:
@@ -55,7 +56,7 @@ file — the coordinator wires it in)::
         workspace_url = os.getenv("DATABRICKS_HOST", "")
         server_endpoint = os.getenv("ZEROBUS_SERVER_ENDPOINT", "")
         table_fqn = f"{cfg['catalog']}.zerobus.iot_sensor_data"
-        scope_name = "iot-secrets"
+        scope_name = resource_names.shared_secret_scope()
         ok, detail = zbv.auth_probe(
             workspace_url, server_endpoint, table_fqn,
             secret_scope=scope_name, secret_key=zbv.ZEROBUS_OAUTH_ENTRY_NAME,
@@ -92,6 +93,7 @@ import os
 import socket
 from typing import Any
 
+from iot_twin.core.config import get_resource_prefix_ident
 from iot_twin.models.sensor_schema import field_by_record
 
 __all__ = [
@@ -462,11 +464,9 @@ def produce(
     # docstring point 2; same guard as in zerobus_produce_snippet).
     ws_url = workspace_url if workspace_url.startswith("http") else f"https://{workspace_url}"
 
-    # Derive industry from catalog name (iot_<industry>).
+    # Derive industry from catalog name (<prefix_ident>_<industry>).
     catalog_part = table_fqn.split(".")[0]
-    industry = (
-        catalog_part.removeprefix("iot_") if catalog_part.startswith("iot_") else catalog_part
-    )
+    industry = catalog_part.removeprefix(f"{get_resource_prefix_ident()}_")
 
     try:
         table_props = TableProperties(table_fqn)

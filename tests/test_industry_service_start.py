@@ -3,10 +3,11 @@ import asyncio
 import pytest
 
 import iot_twin.services.industry.industry_service as isvc
+from tests._fakes import owned_job_settings
 
 UC_CATALOG = "test_catalog"
-UC_SCHEMA = "test_schema"
-PIPELINES_LAKEBASE_PROJECT = "test_pipelines"
+UC_SCHEMA = "pharma_twin_test"
+PIPELINES_LAKEBASE_PROJECT = "pharma-twin-test-pipelines"
 
 
 @pytest.fixture(autouse=True)
@@ -49,7 +50,7 @@ def test_start_zerobus_skips_lakebase(monkeypatch):
     monkeypatch.setattr(isvc, "_provision_catalog_schema", lambda *a, **k: None)
     monkeypatch.setattr(isvc, "_deploy_and_start", lambda *a, **k: {"status": "starting"})
     out = _run(isvc.start_mode(None, "automotive", "zerobus"))
-    assert out["pipeline"] == "iot-automotive-zerobus"
+    assert out["pipeline"] == "pharma-twin-automotive-zerobus"
     assert calls["branch"] == 0  # no Lakebase for zerobus
     assert calls["sp"] == 1
 
@@ -80,7 +81,7 @@ def test_start_mode_includes_topic_step_for_streaming_modes(monkeypatch):
     out = _run(isvc.start_mode(None, "energy", "microbatch"))
 
     topic_steps = [s for s in out["steps"] if s.get("step") == "topic"]
-    assert topic_steps == [{"step": "topic", "topic": "iot.energy.microbatch"}]
+    assert topic_steps == [{"step": "topic", "topic": "pharma-twin.energy.microbatch"}]
     # microbatch has uses_lakebase=False -> no lakebase_branch step recorded
     assert not any(s.get("step") == "lakebase_branch" for s in out["steps"])
 
@@ -153,7 +154,7 @@ def test_stop_mode_sets_stopped_status_and_reports_idle(monkeypatch):
 
     assert set_calls == [isvc._STOPPED_STATUS]
     assert out["status"] == "idle"
-    assert out["pipeline"] == "iot-manufacturing-realtime"
+    assert out["pipeline"] == "pharma-twin-manufacturing-realtime"
     assert out["steps"][0]["result"]["status"] == "skipped"
 
 
@@ -208,6 +209,9 @@ def test_deploy_and_start_zerobus_with_job_triggers_run(monkeypatch):
             self.ran = job_id
             return _FakeRun()
 
+        def get(self, job_id):
+            return owned_job_settings()
+
     class _FakeWorkspace:
         def __init__(self):
             self.jobs = _FakeJobs()
@@ -251,7 +255,7 @@ def test_provision_catalog_schema_calls_provision_uc_catalog(monkeypatch):
 
     result = _run(isvc._provision_catalog_schema("pharmaceutical", "realtime"))
 
-    assert calls["uc"] == {"catalog_pattern": "iot_pharmaceutical", "schemas": ["realtime"]}
+    assert calls["uc"] == {"catalog_pattern": "pharma_twin_pharmaceutical", "schemas": ["realtime"]}
     assert result == [{"resource": "ok", "status": "created"}]
 
 
@@ -268,7 +272,7 @@ def test_provision_lakebase_branch_calls_setup_pipeline_lakebase(monkeypatch):
 
     result = _run(isvc._provision_lakebase_branch(None, "energy", "realtime", "pid-1"))
 
-    assert calls["params"]["lb_project_id"] == "iot-energy-realtime"
+    assert calls["params"]["lb_project_id"] == "pharma-twin-energy-realtime"
     assert calls["params"]["create_new_project"] is True
     assert calls["params"]["pipeline_id"] == "pid-1"
     assert result == {"success": True, "steps": []}

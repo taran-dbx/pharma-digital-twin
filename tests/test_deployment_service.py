@@ -10,7 +10,6 @@ integration test.
 from __future__ import annotations
 
 import base64
-import inspect
 import os
 from unittest.mock import ANY, AsyncMock, MagicMock
 
@@ -18,6 +17,7 @@ import pytest
 
 from iot_twin.services.deployment import deployment_service as ds
 from iot_twin.services.production_control import PRODUCTION_CONTROL_PLACEHOLDER
+from tests._fakes import own_jobs_and_clusters
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +38,7 @@ def _ws() -> MagicMock:
     w.jobs.reset = MagicMock(return_value=None)
     w.jobs.cancel_all_runs = MagicMock(return_value=None)
     w.config.host = "https://e2.cloud.databricks.com"
-    return w
+    return own_jobs_and_clusters(w)
 
 
 def _db(setup: dict, deployment: dict | None = None) -> MagicMock:
@@ -82,7 +82,7 @@ def _mock_cdf_reconciliation(monkeypatch):
     monkeypatch.setenv("DATABRICKS_CLIENT_ID", "current-app-sp")
     monkeypatch.setenv("DATABRICKS_CLIENT_SECRET", "current-app-secret")
     monkeypatch.setenv("UC_CATALOG", "configured-catalog")
-    monkeypatch.setenv("UC_SCHEMA", "configured-schema")
+    monkeypatch.setenv("UC_SCHEMA", "pharma_twin_configured")
     monkeypatch.setattr(
         ds.uc_secrets,
         "put_secret",
@@ -98,7 +98,7 @@ class TestConsumerCredentialNormalization:
         """Uploaded consumers use the app SP and UC secret [C7215][defect][regression]."""
         monkeypatch.setenv("DATABRICKS_CLIENT_ID", "current-app-sp")
         monkeypatch.setenv("UC_CATALOG", "configured-catalog")
-        monkeypatch.setenv("UC_SCHEMA", "configured-schema")
+        monkeypatch.setenv("UC_SCHEMA", "pharma_twin_configured")
         source = (
             f'APP_SECRET_SCOPE = "{LEGACY_SCOPE_NAME}"\n'
             '_lb_ci = dbutils.secrets.get(APP_SECRET_SCOPE, "sss-industries-client-id")\n'
@@ -110,7 +110,7 @@ class TestConsumerCredentialNormalization:
         assert '_APP_SP_CLIENT_ID = "current-app-sp"' in normalized
         assert "_lb_ci = _APP_SP_CLIENT_ID" in normalized
         assert 'catalog="configured-catalog"' in normalized
-        assert 'schema="configured-schema"' in normalized
+        assert 'schema="pharma_twin_configured"' in normalized
         assert 'key="app_sp_oauth"' in normalized
         assert "APP_SECRET_SCOPE" not in normalized
         assert "sss-industries-client" not in normalized
@@ -118,7 +118,7 @@ class TestConsumerCredentialNormalization:
     def test_rejects_missing_runtime_config_c7215(self, monkeypatch):
         monkeypatch.delenv("DATABRICKS_CLIENT_ID", raising=False)
         monkeypatch.setenv("UC_CATALOG", "configured-catalog")
-        monkeypatch.setenv("UC_SCHEMA", "configured-schema")
+        monkeypatch.setenv("UC_SCHEMA", "pharma_twin_configured")
         source = '_lb_ci = dbutils.secrets.get(APP_SECRET_SCOPE, "sss-industries-client-id")'
 
         with pytest.raises(ds.RuntimeOAuthCredentialError, match="DATABRICKS_CLIENT_ID"):
@@ -127,7 +127,7 @@ class TestConsumerCredentialNormalization:
     def test_rejects_unrecognized_legacy_secret_syntax_c7215(self, monkeypatch):
         monkeypatch.setenv("DATABRICKS_CLIENT_ID", "current-app-sp")
         monkeypatch.setenv("UC_CATALOG", "configured-catalog")
-        monkeypatch.setenv("UC_SCHEMA", "configured-schema")
+        monkeypatch.setenv("UC_SCHEMA", "pharma_twin_configured")
         source = (
             "_lb_cs = dbutils.secrets.get("
             'scope=APP_SECRET_SCOPE, key="sss-industries-client-secret")'
@@ -159,7 +159,7 @@ class TestRuntimeOauthSecret:
         assert result["status"] == "updated"
         put_secret.assert_awaited_once_with(
             "configured-catalog",
-            "configured-schema",
+            "pharma_twin_configured",
             "app_sp_oauth",
             "current-app-secret",
             ws=ANY,
@@ -351,13 +351,28 @@ class TestSparkTasks:
         )
         assert [t.task_key for t in tasks] == ["rtm_consumer"]
 
-    def test_pipeline_tasks_have_job_level_retry_safety_net(self):
-        """[C7234][defect][regression] Pipeline tasks restart after sink failure."""
-        source = inspect.getsource(ds.build_spark_tasks)
+    def test_continuous_pipeline_tasks_have_no_task_retry_policy(self):
+        """Spark pipeline jobs are Continuous; the Jobs API rejects task retry policies there.
 
-        assert source.count("max_retries=3") == 2
-        assert source.count("min_retry_interval_millis=30_000") == 2
-        assert source.count("retry_on_timeout=True") == 2
+        ``jobs.create`` fails with ``retryPolicy is not allowed in continuous job``. The
+        continuous trigger itself restarts a failed run, which is the restart-after-sink-failure
+        safety net, so the tasks must not carry ``max_retries`` / ``retry_on_timeout``.
+        """
+        tasks = ds.build_spark_tasks(
+            mode="realtime",
+            consumer_notebook_path="/c",
+            producer_notebook_path="/p",
+            node_type="m5d.large",
+            num_workers=1,
+            single_user_name="u",
+            cloud="aws",
+        )
+
+        assert [t.task_key for t in tasks] == ["rtm_consumer", "data_producer"]
+        for task in tasks:
+            assert task.max_retries is None
+            assert task.min_retry_interval_millis is None
+            assert task.retry_on_timeout is None
 
 
 # ---------------------------------------------------------------------------
@@ -390,7 +405,7 @@ class TestDeployPipeline:
         )
 
         assert result["job_id"] == 4242
-        assert result["job_name"] == "iot-pharmaceutical-realtime"
+        assert result["job_name"] == "pharma-twin-pharmaceutical-realtime"
         assert result["num_workers"] == 2  # 6 partitions / 4 cores → 2
         assert result["spark_version"] == "18.2.x-scala2.13"
         assert result["tasks"] == ["rtm_consumer", "data_producer"]
@@ -446,7 +461,7 @@ class TestDeployPipeline:
             producer_notebook="# p",
             w=w,
         )
-        assert result["job_name"] == "iot-pharmaceutical-microbatch"
+        assert result["job_name"] == "pharma-twin-pharmaceutical-microbatch"
         w.jobs.create.assert_called_once()
 
     @pytest.mark.asyncio
@@ -463,7 +478,7 @@ class TestDeployPipeline:
             gate_override=True,
             w=w,
         )
-        assert result["job_name"] == "iot-pharmaceutical-microbatch"
+        assert result["job_name"] == "pharma-twin-pharmaceutical-microbatch"
         w.jobs.create.assert_called_once()
 
     @pytest.mark.asyncio
@@ -486,7 +501,7 @@ class TestDeployPipeline:
         db = _db(setup, {"id": "dep-rt", "mode": "realtime", "partition_count": 6})
         w = _ws()
         existing = MagicMock(job_id=999, settings=MagicMock())
-        existing.settings.name = "iot-pharmaceutical-realtime"
+        existing.settings.name = "pharma-twin-pharmaceutical-realtime"
         w.jobs.list.return_value = [existing]
         calls = []
         w.jobs.update.side_effect = lambda **_kwargs: calls.append("pause")
@@ -749,6 +764,7 @@ class TestLifecycle:
 # ---------------------------------------------------------------------------
 # Live deploy — integration (skipped unless explicitly enabled)
 # ---------------------------------------------------------------------------
+@pytest.mark.integration
 @pytest.mark.skipif(
     os.getenv("RUN_DEPLOY_INTEGRATION") != "1",
     reason="live deploy integration test — set RUN_DEPLOY_INTEGRATION=1 to run",

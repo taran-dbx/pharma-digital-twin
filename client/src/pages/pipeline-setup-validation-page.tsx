@@ -177,7 +177,7 @@ export function PipelineSetupValidationPage() {
     };
   }, []);
 
-  const industry = INDUSTRIES.find((i) => i.id === industryId) ?? INDUSTRIES[1];
+  const industry = INDUSTRIES.find((i) => i.id === industryId) ?? INDUSTRIES[0];
   const partitions = 6;
 
   // Build the setup-draft payload from the current form state.

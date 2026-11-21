@@ -7,7 +7,10 @@ import logging
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-logger = logging.getLogger("iot_digital_twin.routes.jobs")
+from iot_twin.routes._admin import ADMIN_ONLY
+from iot_twin.routes._ownership import reject_foreign_job
+
+logger = logging.getLogger("pharma_twin.routes.jobs")
 
 router = APIRouter(tags=["jobs"])
 
@@ -79,14 +82,16 @@ async def get_job_status(job_id: int):
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
-@router.post("/api/job/{job_id}/stop")
+@router.post("/api/job/{job_id}/stop", dependencies=ADMIN_ONLY)
 async def stop_job(job_id: int):
-    """Cancel all active runs and pause the continuous schedule."""
+    """Cancel all active runs and pause the continuous schedule (owned jobs only)."""
     try:
         from databricks.sdk import WorkspaceClient
         from databricks.sdk.service.jobs import Continuous, JobSettings, PauseStatus
 
         w = WorkspaceClient()
+        if rejected := reject_foreign_job(w, job_id):
+            return rejected
         w.jobs.cancel_all_runs(job_id=job_id)
         w.jobs.update(
             job_id=job_id,
@@ -101,14 +106,16 @@ async def stop_job(job_id: int):
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
-@router.post("/api/job/{job_id}/restart")
+@router.post("/api/job/{job_id}/restart", dependencies=ADMIN_ONLY)
 async def restart_job(job_id: int):
-    """Unpause the continuous schedule and trigger a new run."""
+    """Unpause the continuous schedule and trigger a new run (owned jobs only)."""
     try:
         from databricks.sdk import WorkspaceClient
         from databricks.sdk.service.jobs import Continuous, JobSettings, PauseStatus
 
         w = WorkspaceClient()
+        if rejected := reject_foreign_job(w, job_id):
+            return rejected
         w.jobs.update(
             job_id=job_id,
             new_settings=JobSettings(

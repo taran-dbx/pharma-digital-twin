@@ -19,7 +19,10 @@ export const MANUFACTURING: GenieIndustryFixture = {
   name: "Manufacturing",
   setupId: PIPELINE_SETUP_ID,
   deploymentId: PIPELINE_DEPLOYMENT_ID,
-  starters: ["How has spindle temperature trended this shift?", "Which station raised the most alerts?"],
+  starters: [
+    "Which lots were machined while Spindle 3 was outside its validated limit?",
+    "How long did it take to detect each Spindle 3 excursion this week?",
+  ],
   heading: /Manufacturing twin/,
 };
 
@@ -91,7 +94,7 @@ const tableResult = {
     { name: "fault_code", type: "STRING" },
     { name: "operator", type: "STRING" },
   ],
-  rows: [["MILL", "M-SPINDLE-HOT", "shift-a"]],
+  rows: [["MILL", "VPP-SPINDLE3-TEMP", "shift-a"]],
   truncated: false,
 };
 

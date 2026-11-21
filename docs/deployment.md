@@ -1,8 +1,14 @@
 # Deploying with Declarative Automation Bundles (DABs)
 
-> **WARNING: `prod` resolves to the live app name (`iot-digital-twin`).** Always
-> `databricks bundle deployment bind` first, review `databricks bundle plan -t prod`,
-> and never deploy without prod overrides
+> **ISOLATION GUARD: this app is deployed side by side with the upstream IoT
+> Digital Twin in the same workspace.** `prod` creates its **own** app
+> (`pharma-twin`); never run `databricks bundle deployment bind` against an
+> existing app and never set `app_name` to an upstream app name. Every
+> runtime-created resource (jobs, Kafka topics, catalogs, Lakebase projects,
+> secret scopes, clusters, workspace folders) is named from `resource_prefix` /
+> `RESOURCE_PREFIX` (default `pharma-twin`); a prefix in the upstream `iot`
+> namespace is rejected at startup. Review `databricks bundle plan -t prod`, and
+> never deploy without prod overrides
 > (`.databricks/bundle/prod/variable-overrides.json`). Workspace variables have no
 > defaults, so validation fails until they are supplied; do not work around that
 > with placeholder values.
@@ -28,7 +34,7 @@ Never commit a workspace host. Pass the CLI profile with `--profile` (or
 make bundle-validate PROFILE=<profile>              # validate --strict, target dev
 databricks bundle validate --strict -t dev --output json --profile <profile>   # inspect resolved app name
 databricks bundle deploy -t dev --profile <profile>
-databricks bundle run iot_twin -t dev --profile <profile>   # (re)deploys source + starts the app
+databricks bundle run pharma_twin -t dev --profile <profile>   # (re)deploys source + starts the app
 databricks apps logs <app-name> --profile <profile>
 databricks bundle destroy -t dev --profile <profile>        # dev only
 ```
@@ -39,7 +45,7 @@ Validation needs workspace auth, so it is **not** run in CI; run it locally
 Things worth knowing about the workflow:
 
 * `bundle deploy` uploads the files and applies the app's resources and config, but
-  it does **not** start the app or deploy the source. Run `bundle run iot_twin` for
+  it does **not** start the app or deploy the source. Run `bundle run pharma_twin` for
   that; it normally takes about 60 s to reach `RUNNING`.
 * Deploys are idempotent. A repeated `bundle deploy` prints `Resources: 1 changed`,
   yet the deployment id and app state are unchanged.
@@ -56,10 +62,15 @@ validation. Copy `deploy/variable-overrides.json.example` (placeholders only) to
 gitignored `.databricks/bundle/<target>/variable-overrides.json` and fill in real
 values (or use `--var name=value` / `BUNDLE_VAR_<name>`). `make bundle-validate`
 stops with a clear message when the file for `BUNDLE_TARGET` is missing.
-Variables with defaults are not workspace-specific: `app_name` (dev default
-`iot-twin-dev`, fixed to `iot-digital-twin` in `prod`), `uc_schema`,
-`lakebase_branch`, `lakebase_database`, `industries`, `admin_group` and
-`zerobus_secret_key`. `uc_catalog` has **no** default.
+Variables with defaults are not workspace-specific. `resource_prefix` (`pharma-twin`)
+drives the defaults of `app_name` (`<prefix>-dev`, the bare `<prefix>` in `prod`),
+`lakebase_project` (`<prefix>-backend`), `pipelines_lakebase_project`
+(`<prefix>-pipelines`), `admin_group` (`<prefix>-admins`) and the Genie resource label
+(`<prefix>-genie`). DABs has no string replace, so the underscore form is a separate
+variable: `resource_prefix_ident` (`pharma_twin`) drives `uc_schema`. **Override
+`resource_prefix` and `resource_prefix_ident` together** (e.g. `acme-lab` / `acme_lab`).
+`lakebase_branch`, `lakebase_database`, `industries` and `zerobus_secret_key` also have
+defaults. `uc_catalog` has **no** default.
 
 ### Required variables (no default)
 
@@ -73,23 +84,25 @@ checked against `databricks.yml` by `tests/test_bundle_config.py`.
 | `uc_catalog` | `UC_CATALOG` | `example-catalog` |
 | `warehouse_id` | `sql-warehouse` resource (CAN_USE) | `0123456789abcdef` |
 | `genie_space_id` | `genie-space` resource (CAN_VIEW) | 32-char hex space id |
-| `lakebase_project` | `lakebase` resource, `LAKEBASE_PROJECT`, `LAKEBASE_ENDPOINT` | `iot-app-backend-example` |
 | `pghost` | `PGHOST` | `<endpoint>.database.<region>.cloud.databricks.com` |
-| `pipelines_lakebase_project` | `PIPELINES_LAKEBASE_PROJECT` | `iot-pipelines-example` |
 | `msk_bootstrap_servers` | `MSK_BOOTSTRAP_SERVERS` | `b-1....:9198,b-2....:9198` |
 | `zerobus_server_endpoint` | `ZEROBUS_SERVER_ENDPOINT` | `<id>.zerobus.<region>.cloud.databricks.com` |
 | `zerobus_client_id` | `ZEROBUS_CLIENT_ID` | service principal client id |
-| `uc_service_credential` | `UC_SERVICE_CREDENTIAL` | `iot-rtm-sc` |
+| `uc_service_credential` | `UC_SERVICE_CREDENTIAL` | `iot-rtm-sc` (shared credential, deliberately reused) |
 <!-- required-variables:end -->
 
 ### All variables
 
 | Variable | Env var / resource it feeds | Notes |
 | --- | --- | --- |
-| `app_name` | App name | Workspace-global, max 30 chars. Dev default is the fixed `iot-twin-dev`, so override it per developer (e.g. `iot-twin-dev-<initials>`, check `bundle validate --output json`); `prod` is fixed to `iot-digital-twin` |
+| `resource_prefix` | `RESOURCE_PREFIX` | Prefix of every runtime-created resource name (default `pharma-twin`). Must not be in the upstream `iot` namespace |
+| `resource_prefix_ident` | `uc_schema` default | Underscore form of `resource_prefix` (default `pharma_twin`); override together with it |
+| `app_name` | App name | Workspace-global, max 30 chars. Dev default is the fixed `pharma-twin-dev`, so override it per developer (e.g. `pharma-twin-dev-<initials>`, check `bundle validate --output json`); `prod` is fixed to `pharma-twin` |
 | `uc_catalog`, `uc_schema` | `UC_CATALOG`, `UC_SCHEMA` | |
 | `warehouse_id` | `sql-warehouse` resource (CAN_USE) → `DATABRICKS_SQL_WAREHOUSE_ID` via `value_from` | |
 | `genie_space_id` | `genie-space` resource (CAN_VIEW) → `GENIE_SPACE_ID` via `value_from` | |
+| `genai_endpoint` | `genai-endpoint` serving-endpoint resource (CAN_QUERY) → `GENAI_ENDPOINT` via `value_from` | Default `databricks-claude-sonnet-5-5`; any READY chat endpoint works. Upgrading adds the UC table `intelligence_genai_audit` to the Genie allowlist. Re-provision existing Genie spaces afterwards. See [genai-action-plan.md](genai-action-plan.md#genie-upgrade) |
+| `secret_scope`, `genai_pseudonym_salt_key` | `genai-pseudonym-salt` secret resource (READ) → `GENAI_PSEUDONYM_SALT` via `value_from` | Defaults `pharma-twin-secrets` / `genai-pseudonym-salt`. **Required for bundle deploys:** the resource is always declared, so create the secret before deploying (see *Fresh app prerequisites*). The Lakebase-persisted fallback key applies only to local or non-bundle runs. See [genai-action-plan.md](genai-action-plan.md#people-and-free-text-pii) |
 | `lakebase_project`, `lakebase_branch`, `lakebase_database` | `lakebase` Postgres resource (CAN_CONNECT_AND_CREATE), `LAKEBASE_PROJECT`, `LAKEBASE_ENDPOINT` | |
 | `pghost` | `PGHOST` | Not injected by the Postgres resource; keep as a variable |
 | `pipelines_lakebase_project` | `PIPELINES_LAKEBASE_PROJECT` | |
@@ -99,6 +112,10 @@ checked against `databricks.yml` by `tests/test_bundle_config.py`.
 | `zerobus_secret_key` | `ZEROBUS_SECRET_KEY` | Default `zerobus-client-secret` (the runtime default). `app.yaml` emits it empty, but the Apps API rejects empty env values in a bundle `config` |
 | `industries`, `admin_group` | `INDUSTRIES`, `ADMIN_GROUP` | Admin access is group based. The optional `ADMIN_EMAILS` (CSV) is **not** in the bundle; see below |
 | `usage_tracking_enabled` | `USAGE_TRACKING_ENABLED` | Default `"true"`; set `"false"` to opt out of dbdemos-tracker usage tracking (see README) |
+| `risk_model_schema`, `risk_model_short_name`, `risk_model_version` | UC model `<uc_catalog>.pharma_twin.spindle_thermal_risk`, `RISK_MODEL_NAME`, served version | Thermal-risk model; see [ml-risk-model.md](ml-risk-model.md). `risk_model_version` (default `4`) must equal the current `@champion`, otherwise `bundle deploy` reverts the endpoint to an older version |
+| `risk_endpoint_name` | `risk-endpoint` serving resource (CAN_QUERY) → `RISK_ENDPOINT_NAME` via `value_from` | Default `pharma-twin-spindle-risk`. A new workspace needs one training run before the first deploy ([bootstrap](ml-risk-model.md#bootstrap-on-a-new-workspace)) |
+| `risk_job_name`, `risk_training_data_source` | Training job | Defaults `pharma-twin-risk-model-train`, `auto` |
+| `risk_alert_threshold` | `RISK_ALERT_THRESHOLD` | Predicted-alert cut-off. Default `model`: the served model version ships its `decision_threshold`; a number overrides it |
 
 **Per-pipeline Genie spaces** need no extra bundle variable or app resource:
 after each deploy the app creates one Genie space per `(pipeline, mode)` for every
@@ -142,27 +159,100 @@ package (`iot_twin.core.paths`). The env var still overrides it.
 
 ## Dev vs prod
 
-* `dev` (`mode: development`, default): creates its own app with a distinct
-  name and a per-user workspace folder. Safe to `destroy`.
+* `dev` (`mode: development`, default): creates its own app with a distinct name
+  and a per-user workspace folder.
+  * Development mode decorates the other resource names, so each developer gets
+    their own copies:
+    * the risk job is `[dev <user>] pharma-twin-risk-model-train`;
+    * the endpoint is `dev_<user>_pharma-twin-spindle-risk`.
+  * The dev endpoint serves the same registered UC model version
+    (`risk_model_version`, currently 4). The app and the job follow it through
+    `${resources.model_serving_endpoints.spindle_risk.name}`, so nothing
+    hardcodes the endpoint name.
+  * A resource-isolation guard that requires `pharma-twin*` names (RESOURCE_PREFIX)
+    must allowlist exactly this dev-mode decoration: a `[dev <user>] ` prefix on
+    jobs and a `dev_<user>_` prefix on serving endpoints.
+  * **Safe to `destroy`.** It removes the dev app, the dev job and the dev endpoint.
+    It does not touch the UC model (not a bundle resource) or an endpoint created
+    outside the bundle, such as the script-created `pharma-twin-spindle-risk`.
 * `prod` (`mode: production`): explicit `root_path`, fixed app name
-  `iot-digital-twin`, `CAN_MANAGE` for the deployer and `admin_group`.
+  `pharma-twin`, `CAN_MANAGE` for the deployer and `admin_group`.
 
-## Prod must bind, not create
+## Prod creates its own app; never bind
 
-App names are workspace-global. The live app already exists, so
-`databricks bundle deploy -t prod` would fail on the name conflict, or (if it
-were deleted first) create a new app with a new service principal that has none
-of the existing grants. Bind instead:
+App names are workspace-global, and the upstream IoT Digital Twin app is live in
+the same workspace. This bundle's `prod` target creates a **new** app named
+`pharma-twin` with its own service principal (grant it as described under
+"Fresh app prerequisites"). Do **not** run `databricks bundle deployment bind`
+against any existing app: binding would make the next deploy replace that app's
+resources and env, and `bundle destroy` would delete it. If `bundle deploy -t prod`
+fails on a name conflict, the fix is a different `app_name`, never a bind.
+
+Resources shared with the upstream deployment on purpose (never created, renamed or
+deleted by this app): the SQL warehouse, the MSK cluster, the UC service credential
+(`uc_service_credential`), the catalog (`uc_catalog`) and its external location.
+Everything the app creates inside them is prefixed.
+
+## Resource isolation at runtime
+
+Besides the naming prefix, the app refuses at runtime to touch anything outside its
+own namespace:
+
+* **Ownership checks.** Every Lakebase project, endpoint, secret scope, UC catalog /
+  schema, Kafka topic and ledger row that comes from a request body, an env override
+  or the database must start with `RESOURCE_PREFIX` (or its underscore form), and must
+  not be in the upstream `iot` namespace. A UC target may also be the shared
+  `UC_CATALOG`, but then its schema must be owned.
+  * A rejected **request** gets `403`.
+  * A non-owned **env** value (e.g. `UC_SCHEMA=rtm_lakets_zb`) is an
+    `isolation misconfiguration` (`500`), and the app refuses to start.
+  * Teardown refuses the whole setup before any deleter runs if one ledger row is
+    foreign.
+* **Objects addressed by ID.** Jobs and clusters are re-fetched before any cancel,
+  pause/unpause, reset, run-now, start, terminate or delete. Both checks must pass:
+  * the name carries the prefix;
+  * the `app` tag (jobs) or `custom_tags.app` (clusters) equals the app name.
+
+  This app stamps those tags on every job and cluster it creates. A lookup that
+  fails is a rejection; a job that no longer exists is "already absent". Pipeline
+  `PUT` can no longer write `resources`, so a job or cluster id cannot be planted.
+* **Admin-only write routes.** `/api/settings/provision*`, `/api/provision/*`,
+  `POST /api/pipelines/{id}/secrets`, `/api/lakets/sync/check`,
+  `/api/lakets/retention/deploy`, `/api/setup/pipeline-lakebase`,
+  `/api/job/{id}/stop|restart`, `/api/cluster/deploy-job`,
+  `/api/cluster/{id}/validate|start`, `/api/cluster/provision`,
+  `/api/test-connectivity/submit` and `POST /api/warehouses` now need an app
+  admin. The admin email is `current_user.me()` for the caller's own forwarded
+  token, verified by the workspace; the token is never decoded locally. That is the same check as the industry admin API: `ADMIN_EMAILS`, membership
+  of `ADMIN_GROUP` (default `<prefix>-admins`), or the app owner.
+  * The Settings page's provision buttons therefore work for admins only.
+  * The industry setup → provision → validate → deploy flow already used
+    `/api/admin/...` and is unchanged.
+* **Direct-mode Lakebase is off.** Direct mode means connecting with a request-supplied
+  host/user/password; a host name does not reveal its project. Set
+  `ALLOW_DIRECT_LAKEBASE=true` (env) to allow it. Even then:
+  * the route is admin-only;
+  * the body must name an owned `project_id`;
+  * the host must be one of that project's endpoint hosts.
+  * Autoscale (OAuth) mode is unaffected. The Settings flow that switches to direct
+    mode after setting a role password resolves the host from the owned project
+    itself, so it keeps working.
+
+### Adopting the script-created risk endpoint
+
+`scripts/submit_risk_model_training.py --create-endpoint` creates
+`pharma-twin-spindle-risk` outside the bundle. Only a **non-development** target
+that owns the unprefixed name (`prod`, or a future staging target) should adopt it,
+before its first deploy:
 
 ```bash
-databricks bundle deployment bind iot_twin iot-digital-twin -t prod --profile <profile>
-databricks bundle deploy -t prod --profile <profile>
+databricks bundle deployment bind spindle_risk pharma-twin-spindle-risk -t prod --profile <profile>
+databricks bundle deploy -t prod --var risk_model_version=4 --profile <profile>
 ```
 
-After binding, the next deploy applies the bundle's `resources` and `config` to
-the existing app, replacing its current resources and env. Review
-`databricks bundle plan -t prod` first. `bundle destroy` on a bound `prod` app
-deletes it; do not use it there.
+Never bind it from `dev`. The dev endpoint name is `dev_<user>_…`, so a bind there
+would plan a rename of an immutable endpoint name. In dev the bundle creates its
+own prefixed endpoint, and the script-created one stays as it is.
 
 ## Fresh app prerequisites
 
@@ -205,6 +295,25 @@ Add the external location and service credential grants listed under
 **Genie.** Per-pipeline spaces also need the permission to create Genie spaces and
 `CAN_USE` on the warehouse (already granted by the `sql-warehouse` resource). See
 [genie.md](genie.md).
+
+**AI action-plan pseudonym key.** `resources/app.yml` always declares the
+`genai-pseudonym-salt` secret resource (scope `${var.secret_scope}`, key
+`${var.genai_pseudonym_salt_key}`, `READ`). A DAB app resource cannot be made
+optional, so a deploy fails when the scope or key does not exist. Create both
+before the first deploy, and before redeploying an app that predates this
+resource:
+
+```bash
+databricks secrets create-scope pharma-twin-secrets --profile <profile>
+databricks secrets put-secret pharma-twin-secrets genai-pseudonym-salt \
+  --string-value "$(openssl rand -hex 32)" --profile <profile>
+```
+
+The resource grants the app SP `READ` on the scope. The fallback to a random
+key persisted in Lakebase (`genai_settings`) applies only to runs without the
+bundle resource, such as local runs or an app deployed without
+`resources/app.yml`. `GET /api/genai/status` (admin) shows the key source in
+use. See [genai-action-plan.md](genai-action-plan.md#people-and-free-text-pii).
 
 Workspace group membership in `admin_group` is for users, not the SP.
 

@@ -23,7 +23,7 @@ from iot_twin.routes.genie import _http_for, _sdk_call
 from iot_twin.services import genie_service
 from iot_twin.services.genie import genie_space_service
 
-logger = logging.getLogger("iot_digital_twin.routes.genie_pipelines")
+logger = logging.getLogger("pharma_twin.routes.genie_pipelines")
 
 router = APIRouter()
 

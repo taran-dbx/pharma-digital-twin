@@ -37,6 +37,7 @@ from databricks.sdk.service.compute import (
     Language as CmdLanguage,
 )
 
+from iot_twin.core import resource_names
 from iot_twin.core.workspace_config import get_secret_scope
 from iot_twin.models.metrics_schema import ALL_METRIC_MODES, metrics_table_location
 from iot_twin.models.sensor_schema import delta_table_ddl
@@ -46,6 +47,7 @@ from iot_twin.services import zerobus_validation as zbv
 from iot_twin.services.dbsql_service import execute_dbsql
 from iot_twin.services.industry import industry_catalog_service as cat
 from iot_twin.services.lakets import lakets_service as lakets_svc
+from iot_twin.services.ownership import assert_owned_cluster
 from iot_twin.services.pipelines import pipeline_project_service as pps
 from iot_twin.services.uc_ident import sql_fqn
 from iot_twin.services.validation import validation_config as vc
@@ -68,7 +70,7 @@ _WRITE_TEST_WINDOW_BEFORE = timedelta(minutes=30)
 _WRITE_TEST_WINDOW_AFTER = timedelta(minutes=5)
 _FALLBACK_LOOKBACK = timedelta(minutes=15)
 
-logger = logging.getLogger("iot_digital_twin.services.validation_steps")
+logger = logging.getLogger("pharma_twin.services.validation_steps")
 
 # Interactive validation cluster bring-up ceiling.  This workspace's AWS
 # instance acquisition for the GP fleet node can take ~12 min (observed
@@ -347,6 +349,7 @@ def _create_validation_cluster(ws: Any, spec: dict) -> str:
         data_security_mode=DataSecurityMode.SINGLE_USER,
         single_user_name=spec["single_user_name"],
         runtime_engine=RuntimeEngine.STANDARD,  # Photon OFF
+        custom_tags=spec.get("custom_tags"),
         aws_attributes=AwsAttributes(
             first_on_demand=aws.get("first_on_demand", spec["num_workers"] + 1),
             ebs_volume_count=aws.get("ebs_volume_count", 1),
@@ -372,8 +375,13 @@ async def _wait_cluster_running(ws: Any, cluster_id: str) -> None:
 
 
 def _terminate_cluster_sync(ws: Any, cluster_id: str) -> None:
-    """Best-effort terminate ``cluster_id`` (Clusters ``delete`` = terminate)."""
+    """Best-effort terminate ``cluster_id`` (Clusters ``delete`` = terminate).
+
+    The id comes from stored validation state, so ownership (name prefix + app
+    tag) is re-verified first; a foreign cluster is never terminated.
+    """
     try:
+        assert_owned_cluster(ws, cluster_id)
         ws.clusters.delete(cluster_id=cluster_id)
     except Exception as exc:  # pragma: no cover - best-effort cleanup
         logger.warning("failed to terminate validation cluster %s: %s", cluster_id, exc)
@@ -407,7 +415,7 @@ async def provision_cluster(ctx: StepContext) -> StepResult:
         node_type_id=node_type_id,
         num_workers=sizing["workers"],
         single_user_name=user,
-        cluster_name=f"iot-validate-{cfg['industry']}",
+        cluster_name=resource_names.cluster_name("validate", cfg["industry"]),
         spark_version=spark_version,
     )
     cluster_id = await asyncio.to_thread(_create_validation_cluster, ws, spec)

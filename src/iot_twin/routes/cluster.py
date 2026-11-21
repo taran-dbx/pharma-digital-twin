@@ -10,11 +10,15 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
+from iot_twin.core import resource_names
 from iot_twin.core.state import AppState, get_app_state
+from iot_twin.routes._admin import ADMIN_ONLY
+from iot_twin.routes._ownership import reject_foreign_cluster, reject_foreign_name
 from iot_twin.services.databricks_sdk import detect_cloud
+from iot_twin.services.ownership import cluster_tags
 from iot_twin.services.pipelines.pipeline_service import track_resource
 
-logger = logging.getLogger("iot_digital_twin.routes.cluster")
+logger = logging.getLogger("pharma_twin.routes.cluster")
 
 router = APIRouter(tags=["cluster"])
 
@@ -99,7 +103,7 @@ async def list_spark_versions():
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
-@router.post("/api/cluster/provision")
+@router.post("/api/cluster/provision", dependencies=ADMIN_ONLY)
 async def provision_cluster(request: Request, state: AppState = Depends(get_app_state)):
     """Create an all-purpose compute cluster and return its ID.
 
@@ -117,7 +121,9 @@ async def provision_cluster(request: Request, state: AppState = Depends(get_app_
     auto_terminate_min = int(body.get("auto_terminate_min", 30))
     spark_conf = body.get("spark_conf", {})
     spark_conf["spark.databricks.streaming.realTimeMode.enabled"] = "true"
-    cluster_name = body.get("cluster_name", f"iot-digital-twin-{int(time.time())}")
+    cluster_name = body.get("cluster_name") or resource_names.cluster_name(str(int(time.time())))
+    if rejected := reject_foreign_name(cluster_name, what="cluster_name"):
+        return rejected
 
     if not worker_node_type or not spark_version:
         return JSONResponse(
@@ -156,6 +162,7 @@ async def provision_cluster(request: Request, state: AppState = Depends(get_app_
             autotermination_minutes=auto_terminate_min,
             spark_conf=spark_conf,
             data_security_mode=DataSecurityMode.SINGLE_USER,
+            custom_tags=cluster_tags(),  # ownership marker for later by-id checks
             **no_spot_kwargs,
         )
         cluster_id = resp.cluster_id
@@ -194,13 +201,15 @@ async def cluster_status(cluster_id: str):
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
-@router.post("/api/cluster/{cluster_id}/start")
+@router.post("/api/cluster/{cluster_id}/start", dependencies=ADMIN_ONLY)
 async def start_cluster(cluster_id: str):
-    """Restart a terminated cluster."""
+    """Restart a terminated cluster (owned clusters only)."""
     try:
         from databricks.sdk import WorkspaceClient
 
         w = WorkspaceClient()
+        if rejected := reject_foreign_cluster(w, cluster_id):
+            return rejected
         w.clusters.start(cluster_id=cluster_id)
         return {"cluster_id": cluster_id, "state": "STARTING"}
 

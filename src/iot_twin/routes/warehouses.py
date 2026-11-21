@@ -7,7 +7,10 @@ import logging
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-logger = logging.getLogger("iot_digital_twin.routes.warehouses")
+from iot_twin.core import resource_names
+from iot_twin.routes._admin import ADMIN_ONLY
+
+logger = logging.getLogger("pharma_twin.routes.warehouses")
 
 router = APIRouter(tags=["warehouses"])
 
@@ -36,7 +39,7 @@ async def list_warehouses():
         return JSONResponse(status_code=500, content={"error": str(exc)[:300]})
 
 
-@router.post("/api/warehouses")
+@router.post("/api/warehouses", dependencies=ADMIN_ONLY)
 async def create_warehouse(request: Request):
     """Create a new serverless SQL warehouse."""
     try:
@@ -44,7 +47,7 @@ async def create_warehouse(request: Request):
     except Exception as exc:
         return JSONResponse(status_code=400, content={"error": f"Invalid JSON: {exc}"})
 
-    name = body.get("name", "iot-digital-twin")
+    name = body.get("name") or resource_names.warehouse_name()
     cluster_size = body.get("cluster_size", "2X-Small")
     auto_stop_mins = body.get("auto_stop_mins", 10)
 

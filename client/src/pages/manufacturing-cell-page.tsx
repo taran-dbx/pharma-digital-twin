@@ -1,8 +1,9 @@
 /**
- * Manufacturing operator page for the CNC cell (MILL → INSPECT → PACK).
- * Reads top to bottom the way a shift lead works an incident: is the cell
- * producing, what is wrong, what was decided, and is the data platform
- * keeping up. Pipeline internals live in a collapsed deep dive.
+ * Operator page for Trinity Medical's orthopaedic-implant cell
+ * (MILL → CMM → CLEAN / PASSIVATE → STERILE PACK). Reads top to bottom the way
+ * a QA lead works an excursion: is the cell in its validated state, which
+ * parts are at risk, what was signed, and is the data platform keeping up.
+ * Pipeline internals live in a collapsed deep dive.
  */
 import { useCallback, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Link } from "react-router-dom";
@@ -17,6 +18,7 @@ import { useMachiningCellModel, type MachiningCellModel } from "@/components/cel
 import { CellStationCard } from "@/components/dashboard/cell-station-card";
 import { GenieCopilot } from "@/components/dashboard/genie-copilot";
 import type { CellCue } from "@/components/twin/machining-cell";
+import { CellValuePanel, CellViewTabs, type CellView } from "@/components/value/value-views";
 import { useAlertHistory } from "@/hooks/use-alert-history";
 import { usePlatformMetrics } from "@/hooks/use-platform-metrics";
 import type {
@@ -26,7 +28,7 @@ import type {
   IndustryMaintenanceEvent,
   PipelineMode,
 } from "@/lib/industries-api";
-import { RESPONSE_STEPS, type CellStationId } from "@/lib/manufacturing-story";
+import { RESPONSE_STEPS, STOPPING_ACTION, type CellStationId } from "@/lib/manufacturing-story";
 import type { AlertRecord, AlertResponseAction, ZerobusMetricsResponse } from "@/lib/types";
 
 import "@/components/cell/cell-page.css";
@@ -44,6 +46,8 @@ function StationCard({ model, selected, stacked }: { model: MachiningCellModel; 
       tiles={model.tiles}
       decisions={model.episode.decisions}
       batchHeld={model.batchHeld}
+      disposition={model.quality.disposition}
+      risk={model.risk}
       stacked={stacked}
     />
   );
@@ -123,6 +127,7 @@ export function ManufacturingCellPage({
   ].join("|");
   const { history, error: historyError } = useAlertHistory(industry.id, changeKey);
 
+  const [view, setView] = useState<CellView>("cell");
   const [selected, setSelected] = useState<CellStationId>("mill");
   const [cue, setCue] = useState<CellCue | null>(null);
   const [genieOpen, setGenieOpen] = useState(false);
@@ -138,7 +143,7 @@ export function ManufacturingCellPage({
       stageRef.current?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
     }
     setSelected(step.station);
-    setCue({ station: step.station, view: action === "send_to_inspect" ? "cell" : step.station, at: Date.now() });
+    setCue({ station: step.station, view: action === STOPPING_ACTION ? "cell" : step.station, at: Date.now() });
   }, []);
   const onExplain = useCallback((alert: AlertRecord) => {
     setExplainAlert(alert);
@@ -167,11 +172,12 @@ export function ManufacturingCellPage({
       controllable={controllable}
       onRecorded={onRecorded}
       onExplain={onExplain}
+      mode={mode}
     />
   );
 
   return (
-    <section id="view-dashboard" className={`cellops is-${production.phase}`} style={style}>
+    <section id="view-dashboard" className={`cellops is-${production.phase}`} style={style} data-view={view}>
       <div className="crumbs">
         <Link to="/industries">Industries</Link>
         <span className="sep">/</span>
@@ -193,7 +199,10 @@ export function ManufacturingCellPage({
         onOpenGenie={() => setGenieOpen(true)}
       />
 
-      {showKpis && <CellKpis kpis={industry.kpis} model={model} powered={powered} />}
+      <CellViewTabs value={view} onChange={setView} />
+      <CellValuePanel view={view} industry={industry.id} pipelineId={pipelineId} nonce={nonce} />
+
+      {showKpis && <CellKpis kpis={industry.kpis} model={model} powered={powered} episodes={history?.episodes} />}
 
       <div className="cellops-main">
         <div className="cellops-main__stage" ref={stageRef}>
@@ -237,7 +246,10 @@ export function ManufacturingCellPage({
         />
       </div>
 
-      <footer>Manufacturing cell · alert decisions and production stops are recorded in Lakebase.</footer>
+      <footer>
+        Trinity Medical implant cell · signed quality decisions and production stops are recorded in Lakebase. Demo
+        data; not a validated system or QMS of record.
+      </footer>
     </section>
   );
 }

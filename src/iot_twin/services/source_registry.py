@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-logger = logging.getLogger("iot_digital_twin.services.source_registry")
+logger = logging.getLogger("pharma_twin.services.source_registry")
 
 
 # ---------------------------------------------------------------------------

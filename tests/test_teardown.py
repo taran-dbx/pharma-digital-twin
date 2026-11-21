@@ -3,7 +3,7 @@
 Unit tests use a mocked DB to assert the orchestrator dispatches per-resource
 deleters in DESCENDING teardown_order, marks each ledger row deleted, and then
 deletes the setup (FK cascade removes metadata).  An integration test against
-the live iot-app-backend project proves nothing is orphaned after teardown.
+the live pharma-twin-backend project proves nothing is orphaned after teardown.
 """
 
 from __future__ import annotations
@@ -17,6 +17,13 @@ from iot_twin.models import app_schema
 from iot_twin.services import resource_ledger, teardown_service
 from iot_twin.services.deployment import deployment_repo
 from iot_twin.services.pipelines import pipeline_setup_repo
+
+
+@pytest.fixture(autouse=True)
+def _shared_catalog(monkeypatch):
+    """Fixtures put setup tables in the shared catalog "shared" (UC_CATALOG)."""
+    monkeypatch.setenv("UC_CATALOG", "shared")
+
 
 pytestmark = pytest.mark.asyncio
 
@@ -40,7 +47,7 @@ async def test_teardown_dispatches_in_descending_order(mock_db) -> None:
             {
                 "id": "r2",
                 "resource_type": "kafka_topic",
-                "identifier": "t",
+                "identifier": "pharma-twin.t",
                 "setup_id": "setup-1",
                 "metadata": {},
                 "teardown_order": 50,
@@ -48,7 +55,7 @@ async def test_teardown_dispatches_in_descending_order(mock_db) -> None:
             {
                 "id": "r1",
                 "resource_type": "uc_catalog",
-                "identifier": "c",
+                "identifier": "pharma_twin_c",
                 "setup_id": "setup-1",
                 "metadata": {},
                 "teardown_order": 10,
@@ -171,7 +178,7 @@ async def test_teardown_failure_does_not_cascade_orphan(mock_db) -> None:
 
 
 async def test_teardown_skips_shared_resources(mock_db) -> None:
-    # Shared SP / secret-scope / iot-pipelines project rows carry
+    # Shared SP / secret-scope / pharma-twin-pipelines project rows carry
     # ``metadata.shared`` and must never be deleted per-industry — even when a
     # deleter is registered for their type.
     mock_db.fetch = AsyncMock(
@@ -180,7 +187,7 @@ async def test_teardown_skips_shared_resources(mock_db) -> None:
                 "id": "r1",
                 "resource_type": "service_principal",
                 "setup_id": "setup-1",
-                "identifier": "iot-sss-industries",
+                "identifier": "pharma-twin-sss-industries",
                 "metadata": {"shared": True},
                 "teardown_order": 1,
             },
@@ -221,7 +228,7 @@ async def test_teardown_preserves_catalog_schema_and_sibling_resources_c7113(
                 "setup_id": "setup-1",
                 "deployment_id": "deployment-1",
                 "resource_type": "uc_table",
-                "identifier": "shared.schema.target_zerobus",
+                "identifier": "shared.pharma_twin.target_zerobus",
                 "metadata": {"managed": True},
                 "teardown_order": 20,
             },
@@ -230,7 +237,7 @@ async def test_teardown_preserves_catalog_schema_and_sibling_resources_c7113(
                 "setup_id": "setup-2",
                 "deployment_id": "deployment-2",
                 "resource_type": "uc_table",
-                "identifier": "shared.schema.sibling_zerobus",
+                "identifier": "shared.pharma_twin.sibling_zerobus",
                 "metadata": {},
                 "teardown_order": 20,
             },
@@ -239,7 +246,7 @@ async def test_teardown_preserves_catalog_schema_and_sibling_resources_c7113(
                 "setup_id": "setup-1",
                 "deployment_id": None,
                 "resource_type": "uc_schema",
-                "identifier": "shared.schema",
+                "identifier": "shared.pharma_twin",
                 "metadata": {},
                 "teardown_order": 15,
             },
@@ -263,7 +270,7 @@ async def test_teardown_preserves_catalog_schema_and_sibling_resources_c7113(
 
     job_delete.assert_awaited_once()
     table_delete.assert_awaited_once()
-    assert table_delete.await_args.args[0]["identifier"] == "shared.schema.target_zerobus"
+    assert table_delete.await_args.args[0]["identifier"] == "shared.pharma_twin.target_zerobus"
     schema_delete.assert_not_awaited()
     assert result["success"] is True
     assert [step["action"] for step in result["steps"]] == [
@@ -285,7 +292,7 @@ async def test_uc_table_without_pipeline_ownership_fails_closed_c7113(
                 "setup_id": None,
                 "deployment_id": None,
                 "resource_type": "uc_table",
-                "identifier": "shared.schema.target_zerobus",
+                "identifier": "shared.pharma_twin.target_zerobus",
                 "metadata": {"managed": True},
                 "teardown_order": 20,
             }
@@ -315,7 +322,7 @@ async def test_setup_owned_uc_table_is_deleted_without_deployment_id_c7113(
                 "setup_id": "setup-1",
                 "deployment_id": None,
                 "resource_type": "uc_table",
-                "identifier": "shared.schema.target_zerobus",
+                "identifier": "shared.pharma_twin.target_zerobus",
                 "metadata": {"managed": True, "kind": "zerobus"},
                 "teardown_order": 20,
             }
@@ -335,7 +342,7 @@ async def test_setup_owned_uc_table_is_deleted_without_deployment_id_c7113(
 
 
 # ---------------------------------------------------------------------------
-# Integration — live iot-app-backend, nothing orphaned
+# Integration — live pharma-twin-backend, nothing orphaned
 # ---------------------------------------------------------------------------
 @pytest_asyncio.fixture()
 async def schema_ready(app_backend_conn):
@@ -351,7 +358,7 @@ async def test_teardown_leaves_nothing_orphaned(schema_ready) -> None:
         db,
         setup_id=setup["id"],
         resource_type="uc_catalog",
-        identifier="iot_pharmaceutical",
+        identifier="pharma_twin_pharmaceutical",
         teardown_order=10,
     )
     await resource_ledger.record_resource(
@@ -359,7 +366,7 @@ async def test_teardown_leaves_nothing_orphaned(schema_ready) -> None:
         setup_id=setup["id"],
         deployment_id=dep["id"],
         resource_type="kafka_topic",
-        identifier="iot.pharmaceutical.realtime",
+        identifier="pharma-twin.pharmaceutical.realtime",
         teardown_order=50,
     )
 

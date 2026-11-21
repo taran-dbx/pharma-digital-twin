@@ -24,6 +24,67 @@ if SRC_ROOT not in sys.path:
 # import time). Tests that exercise tracking build their own UsageTracker.
 os.environ.setdefault("USAGE_TRACKING_ENABLED", "false")
 
+# ---------------------------------------------------------------------------
+# Live-workspace opt-in
+# ---------------------------------------------------------------------------
+# Tests that talk to a real workspace are OFF unless PHARMA_TWIN_LIVE_TESTS=1,
+# even when DATABRICKS_CONFIG_PROFILE points at a real workspace: this app
+# shares workspaces with the upstream deployment, so a stray live call must be
+# impossible by default. ``integration``-marked tests are skipped and any real
+# ``WorkspaceClient`` construction raises (mocks are unaffected).
+LIVE_TESTS_ENV = "PHARMA_TWIN_LIVE_TESTS"
+
+
+def live_tests_enabled() -> bool:
+    return os.getenv(LIVE_TESTS_ENV) == "1"
+
+
+def require_live_tests() -> str:
+    """Skip unless live tests are opted in; return the explicit CLI profile."""
+    if not live_tests_enabled():
+        pytest.skip(f"live workspace test: set {LIVE_TESTS_ENV}=1 to run")
+    profile = os.getenv("DATABRICKS_CONFIG_PROFILE", "").strip()
+    if not profile:
+        pytest.skip("live workspace test: set DATABRICKS_CONFIG_PROFILE explicitly")
+    return profile
+
+
+def pytest_collection_modifyitems(config, items):  # noqa: ARG001 - pytest hook signature
+    if live_tests_enabled():
+        return
+    skip = pytest.mark.skip(reason=f"live workspace test: set {LIVE_TESTS_ENV}=1 to run")
+    for item in items:
+        if "integration" in item.keywords:
+            item.add_marker(skip)
+
+
+class LiveWorkspaceBlocked(RuntimeError):
+    """Raised when a test constructs a real WorkspaceClient without the opt-in."""
+
+
+@pytest.fixture(autouse=True)
+def _block_live_workspace(monkeypatch):
+    """Make real ``WorkspaceClient`` construction fail unless live tests are opted in."""
+    if live_tests_enabled():
+        yield
+        return
+    try:
+        from databricks.sdk import WorkspaceClient
+    except Exception:  # pragma: no cover - SDK stubbed / unavailable
+        yield
+        return
+    if not isinstance(WorkspaceClient, type):  # stubbed SDK
+        yield
+        return
+
+    def _blocked(self, *args, **kwargs):
+        raise LiveWorkspaceBlocked(
+            f"real WorkspaceClient constructed in a test; set {LIVE_TESTS_ENV}=1 for live tests"
+        )
+
+    monkeypatch.setattr(WorkspaceClient, "__init__", _blocked)
+    yield
+
 
 # ---------------------------------------------------------------------------
 # Conditionally pre-mock databricks.sdk to prevent architecture-mismatch
@@ -89,6 +150,8 @@ _pre_mock_sdk()
 from iot_twin.core.state import AppState
 from iot_twin.domain.catalog import list_alert_rules
 from tests._fakes import fake_credential
+from tests._genai_fixtures import keyed  # noqa: F401 - shared fixture
+from tests._genai_pg import pg, pg_server  # noqa: F401 - shared fixtures
 
 
 @pytest.fixture()
@@ -178,33 +241,41 @@ def mock_ws_client() -> MagicMock:
 
 
 # ---------------------------------------------------------------------------
-# Integration fixture — live iot-app-backend Lakebase project
+# Integration fixture — live app-backend Lakebase project (opt-in only)
 # ---------------------------------------------------------------------------
 # The app-backend data layer (models/app_schema.py + services repos) is
-# validated against the real ``iot-app-backend`` Lakebase project.  Each test
-# runs inside a throwaway schema (``test_phase1_<hex>``) that is dropped on
-# teardown, so nothing pollutes ``production``.  The fixture ``pytest.skip``s
-# when the project is unreachable (no creds / offline CI) so the mocked unit
-# tests still run everywhere.
-APP_BACKEND_ENDPOINT = "projects/iot-app-backend/branches/production/endpoints/primary"
+# validated against this deployment's OWN app-backend Lakebase project
+# (``resource_names.app_backend_project()``, overridable via
+# APP_BACKEND_LAKEBASE_ENDPOINT, which must be an owned name). Each test runs in
+# a throwaway schema (``test_phase1_<hex>``) dropped on teardown. Skipped unless
+# PHARMA_TWIN_LIVE_TESTS=1 and an explicit DATABRICKS_CONFIG_PROFILE are set.
+def app_backend_endpoint() -> str:
+    from iot_twin.core import resource_names
+    from iot_twin.core.config import assert_owned_name
+
+    endpoint = os.getenv("APP_BACKEND_LAKEBASE_ENDPOINT", "").strip() or (
+        f"projects/{resource_names.app_backend_project()}/branches/production/endpoints/primary"
+    )
+    return assert_owned_name(endpoint, what="app-backend test endpoint")
 
 
 @pytest_asyncio.fixture()
 async def app_backend_conn():
-    """Yield an asyncpg connection to iot-app-backend in a throwaway schema."""
+    """Yield an asyncpg connection to the owned app-backend project in a throwaway schema."""
+    profile = require_live_tests()
     try:
         import asyncpg
         from databricks.sdk import WorkspaceClient
     except Exception as exc:  # pragma: no cover - deps missing
         pytest.skip(f"integration deps unavailable: {exc}")
 
-    profile = os.getenv("DATABRICKS_CONFIG_PROFILE", "example-us-east")
+    endpoint_name = app_backend_endpoint()
     try:
         w = WorkspaceClient(profile=profile)
-        endpoint = w.postgres.get_endpoint(name=APP_BACKEND_ENDPOINT)
+        endpoint = w.postgres.get_endpoint(name=endpoint_name)
         host = endpoint.status.hosts.host
         user = w.current_user.me().user_name
-        cred = w.postgres.generate_database_credential(endpoint=APP_BACKEND_ENDPOINT)
+        cred = w.postgres.generate_database_credential(endpoint=endpoint_name)
         conn = await asyncpg.connect(
             host=host,
             database="databricks_postgres",
@@ -214,7 +285,7 @@ async def app_backend_conn():
             ssl="require",
         )
     except Exception as exc:  # pragma: no cover - offline / no creds
-        pytest.skip(f"iot-app-backend not reachable: {exc}")
+        pytest.skip(f"app-backend {endpoint_name} not reachable: {exc}")
 
     schema = f"test_phase1_{uuid.uuid4().hex[:8]}"
     await conn.execute(f'CREATE SCHEMA "{schema}"')
@@ -226,6 +297,23 @@ async def app_backend_conn():
             await conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
         finally:
             await conn.close()
+
+
+@pytest.fixture(autouse=True)
+def _route_admin_by_default(request, monkeypatch):
+    """Route tests run as an app admin unless marked ``non_admin``.
+
+    Workspace-writing routes are gated by ``routes._admin.require_admin``. Only
+    that module's reference is replaced, so tests of ``app_permissions.is_admin``
+    itself are unaffected. Tests of the gate use ``@pytest.mark.non_admin``.
+    """
+    from types import SimpleNamespace
+
+    from iot_twin.routes import _admin
+
+    admin = "non_admin" not in request.keywords
+    monkeypatch.setattr(_admin, "app_permissions", SimpleNamespace(is_admin=lambda _r: admin))
+    yield
 
 
 @pytest.fixture(autouse=True)

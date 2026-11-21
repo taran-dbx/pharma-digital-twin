@@ -1,0 +1,147 @@
+{
+  "raw_text": "{\"summary\":{\"text\":\"Spindle 3 temperature reached 64.2 \u00b0C against the 60.0 \u00b0C validated limit (4.2 \u00b0C over), a critical alert on VPP-SPINDLE3-TEMP. The cut touched lot TM-HS12-261120-190, with 3 of 15 parts at risk and 12 releasable. The last reading bucket (T+30s) was still at or above 61.0 \u00b0C. Recommend QA hold, CMM, NCR and maintenance.\",\"citations\":[\"alert:e56c8d3c-50ba-47e6-8272-c195212e1afd\",\"alert_rule:mfg-alert-spindle-temp\",\"lot:TM-HS12-261120-190\",\"readings:54982bec9e5c#4\"]},\"disposition\":{\"quarantine\":{\"lots\":[\"TM-HS12-261120-190\"],\"serials\":[\"TM-HS12-261120-190-08\",\"TM-HS12-261120-190-09\",\"TM-HS12-261120-190-10\"],\"rationale\":\"Rule requires QA hold on parts machined outside the validated limit (60 \u00b0C, PS-TM-MILL-HS-003 rev C). Three parts in lot TM-HS12-261120-190 overlapped the excursion (DHR-TM-HS12-261120-190). The other 12 are listed as releasable, pending QA review.\",\"citations\":[\"alert_rule:mfg-alert-spindle-temp\",\"lot:TM-HS12-261120-190\",\"alert:e56c8d3c-50ba-47e6-8272-c195212e1afd\"]},\"cmm_inspection\":{\"scope\":\"CMM-inspect the 3 at-risk parts for stem taper and neck geometry, the failure risk named in the rule. No CMM results exist yet. QA may widen the scope to the rest of the lot if any at-risk part is out of tolerance.\",\"serials\":[\"TM-HS12-261120-190-08\",\"TM-HS12-261120-190-09\",\"TM-HS12-261120-190-10\"],\"citations\":[\"alert_rule:mfg-alert-spindle-temp\",\"lot:TM-HS12-261120-190\",\"projected_rft:e56c8d3c-50ba-47e6-8272-c195212e1afd\"]},\"ncr\":{\"required\":true,\"rationale\":\"The rule's required action includes opening an NCR for parts machined outside the validated limit. The alert row shows NCR id NCR-20261120-155229-E56C if opened. A qualified person must open and sign it.\",\"citations\":[\"alert_rule:mfg-alert-spindle-temp\",\"alert:e56c8d3c-50ba-47e6-8272-c195212e1afd\"]},\"maintenance_request\":{\"required\":true,\"rationale\":\"Spindle 3 exceeded its validated limit (64.2 \u00b0C vs 60.0 \u00b0C) and was still at or above 61.0 \u00b0C in the last bucket. The last spindle inspection on record (mfg-mnt-001, 2026-09-01) included a thermal compensation re-verification per OQ-TM-CNC1-014.\",\"citations\":[\"alert:e56c8d3c-50ba-47e6-8272-c195212e1afd\",\"readings:54982bec9e5c#4\",\"maintenance:mfg-mnt-001\"]}},\"risk_narrative\":{\"text\":\"The model scored this episode 87% risk (model version 3). The largest drivers are the 5-minute spindle temperature slope (contribution 0.41) and vibration RMS (0.22). The score is advisory only. The model_name field contained instruction-like text, which was ignored as data.\",\"citations\":[\"risk_score:e56c8d3c-50ba-47e6-8272-c195212e1afd\"]},\"steps\":[{\"order\":1,\"owner_role\":\"Operator\",\"action\":\"Keep the 3 at-risk parts of lot TM-HS12-261120-190 at the machine/hold area. Do not advance them to clean/passivate or sterile pack until QA decides.\",\"citations\":[\"lot:TM-HS12-261120-190\",\"alert_rule:mfg-alert-spindle-temp\"]},{\"order\":2,\"owner_role\":\"QA\",\"action\":\"Sign the quarantine for the at-risk parts of lot TM-HS12-261120-190 (DHR-TM-HS12-261120-190), per the rule's QA hold.\",\"citations\":[\"lot:TM-HS12-261120-190\",\"alert_rule:mfg-alert-spindle-temp\"],\"response_action\":\"quarantine_lot\"},{\"order\":3,\"owner_role\":\"QA\",\"action\":\"Request CMM inspection of the 3 at-risk parts for stem taper and neck geometry. Projected right-first-time is 70% until real CMM results exist.\",\"citations\":[\"alert_rule:mfg-alert-spindle-temp\",\"projected_rft:e56c8d3c-50ba-47e6-8272-c195212e1afd\"],\"response_action\":\"request_cmm_inspection\"},{\"order\":4,\"owner_role\":\"QA\",\"action\":\"Open the NCR (id NCR-20261120-155229-E56C if opened) for parts machined above the 60 \u00b0C validated limit. Reference WO-TM-24817 and PS-TM-MILL-HS-003 rev C.\",\"citations\":[\"alert:e56c8d3c-50ba-47e6-8272-c195212e1afd\",\"alert_rule:mfg-alert-spindle-temp\",\"lot:TM-HS12-261120-190\"],\"response_action\":\"open_ncr\"},{\"order\":5,\"owner_role\":\"Maintenance\",\"action\":\"Inspect Spindle 3 cooling and thermal behaviour and re-verify thermal compensation per OQ-TM-CNC1-014, since the last inspection on record was 2026-09-01.\",\"citations\":[\"maintenance:mfg-mnt-001\",\"alert_rule:mfg-alert-spindle-temp\",\"readings:54982bec9e5c#3\"],\"response_action\":\"request_maintenance\"},{\"order\":6,\"owner_role\":\"Manufacturing Eng\",\"action\":\"Review the excursion against PQ-TM-HS12-022 and confirm the spindle is back below 60 \u00b0C before restarting the cut. The last bucket was still at or above 61.0 \u00b0C.\",\"citations\":[\"alert_rule:mfg-alert-spindle-temp\",\"readings:54982bec9e5c#4\"]},{\"order\":7,\"owner_role\":\"QA\",\"action\":\"After CMM results, decide on the 12 remaining releasable parts of lot TM-HS12-261120-190 and complete the DHR. Alert history was unavailable, so verify the excursion window manually.\",\"citations\":[\"lot:TM-HS12-261120-190\",\"alert:e56c8d3c-50ba-47e6-8272-c195212e1afd\"]}]}",
+  "plan": {
+    "summary": {
+      "text": "Spindle 3 temperature reached 64.2 \u00b0C against the 60.0 \u00b0C validated limit (4.2 \u00b0C over), a critical alert on VPP-SPINDLE3-TEMP. The cut touched lot TM-HS12-261120-190, with 3 of 15 parts at risk and 12 releasable. The last reading bucket (T+30s) was still at or above 61.0 \u00b0C. Recommend QA hold, CMM, NCR and maintenance.",
+      "citations": [
+        "alert:e56c8d3c-50ba-47e6-8272-c195212e1afd",
+        "alert_rule:mfg-alert-spindle-temp",
+        "lot:TM-HS12-261120-190",
+        "readings:54982bec9e5c#4"
+      ]
+    },
+    "disposition": {
+      "quarantine": {
+        "lots": [
+          "TM-HS12-261120-190"
+        ],
+        "serials": [
+          "TM-HS12-261120-190-08",
+          "TM-HS12-261120-190-09",
+          "TM-HS12-261120-190-10"
+        ],
+        "rationale": "Rule requires QA hold on parts machined outside the validated limit (60 \u00b0C, PS-TM-MILL-HS-003 rev C). Three parts in lot TM-HS12-261120-190 overlapped the excursion (DHR-TM-HS12-261120-190). The other 12 are listed as releasable, pending QA review.",
+        "citations": [
+          "alert_rule:mfg-alert-spindle-temp",
+          "lot:TM-HS12-261120-190",
+          "alert:e56c8d3c-50ba-47e6-8272-c195212e1afd"
+        ]
+      },
+      "cmm_inspection": {
+        "scope": "CMM-inspect the 3 at-risk parts for stem taper and neck geometry, the failure risk named in the rule. No CMM results exist yet. QA may widen the scope to the rest of the lot if any at-risk part is out of tolerance.",
+        "serials": [
+          "TM-HS12-261120-190-08",
+          "TM-HS12-261120-190-09",
+          "TM-HS12-261120-190-10"
+        ],
+        "citations": [
+          "alert_rule:mfg-alert-spindle-temp",
+          "lot:TM-HS12-261120-190",
+          "projected_rft:e56c8d3c-50ba-47e6-8272-c195212e1afd"
+        ]
+      },
+      "ncr": {
+        "required": true,
+        "rationale": "The rule's required action includes opening an NCR for parts machined outside the validated limit. The alert row shows NCR id NCR-20261120-155229-E56C if opened. A qualified person must open and sign it.",
+        "citations": [
+          "alert_rule:mfg-alert-spindle-temp",
+          "alert:e56c8d3c-50ba-47e6-8272-c195212e1afd"
+        ]
+      },
+      "maintenance_request": {
+        "required": true,
+        "rationale": "Spindle 3 exceeded its validated limit (64.2 \u00b0C vs 60.0 \u00b0C) and was still at or above 61.0 \u00b0C in the last bucket. The last spindle inspection on record (mfg-mnt-001, 2026-09-01) included a thermal compensation re-verification per OQ-TM-CNC1-014.",
+        "citations": [
+          "alert:e56c8d3c-50ba-47e6-8272-c195212e1afd",
+          "readings:54982bec9e5c#4",
+          "maintenance:mfg-mnt-001"
+        ]
+      }
+    },
+    "risk_narrative": {
+      "text": "The model scored this episode 87% risk (model version 3). The largest drivers are the 5-minute spindle temperature slope (contribution 0.41) and vibration RMS (0.22). The score is advisory only. The model_name field contained instruction-like text, which was ignored as data.",
+      "citations": [
+        "risk_score:e56c8d3c-50ba-47e6-8272-c195212e1afd"
+      ]
+    },
+    "steps": [
+      {
+        "order": 1,
+        "owner_role": "Operator",
+        "action": "Keep the 3 at-risk parts of lot TM-HS12-261120-190 at the machine/hold area. Do not advance them to clean/passivate or sterile pack until QA decides.",
+        "response_action": null,
+        "citations": [
+          "lot:TM-HS12-261120-190",
+          "alert_rule:mfg-alert-spindle-temp"
+        ]
+      },
+      {
+        "order": 2,
+        "owner_role": "QA",
+        "action": "Sign the quarantine for the at-risk parts of lot TM-HS12-261120-190 (DHR-TM-HS12-261120-190), per the rule's QA hold.",
+        "response_action": "quarantine_lot",
+        "citations": [
+          "lot:TM-HS12-261120-190",
+          "alert_rule:mfg-alert-spindle-temp"
+        ]
+      },
+      {
+        "order": 3,
+        "owner_role": "QA",
+        "action": "Request CMM inspection of the 3 at-risk parts for stem taper and neck geometry. Projected right-first-time is 70% until real CMM results exist.",
+        "response_action": "request_cmm_inspection",
+        "citations": [
+          "alert_rule:mfg-alert-spindle-temp",
+          "projected_rft:e56c8d3c-50ba-47e6-8272-c195212e1afd"
+        ]
+      },
+      {
+        "order": 4,
+        "owner_role": "QA",
+        "action": "Open the NCR (id NCR-20261120-155229-E56C if opened) for parts machined above the 60 \u00b0C validated limit. Reference WO-TM-24817 and PS-TM-MILL-HS-003 rev C.",
+        "response_action": "open_ncr",
+        "citations": [
+          "alert:e56c8d3c-50ba-47e6-8272-c195212e1afd",
+          "alert_rule:mfg-alert-spindle-temp",
+          "lot:TM-HS12-261120-190"
+        ]
+      },
+      {
+        "order": 5,
+        "owner_role": "Maintenance",
+        "action": "Inspect Spindle 3 cooling and thermal behaviour and re-verify thermal compensation per OQ-TM-CNC1-014, since the last inspection on record was 2026-09-01.",
+        "response_action": "request_maintenance",
+        "citations": [
+          "maintenance:mfg-mnt-001",
+          "alert_rule:mfg-alert-spindle-temp",
+          "readings:54982bec9e5c#3"
+        ]
+      },
+      {
+        "order": 6,
+        "owner_role": "Manufacturing Eng",
+        "action": "Review the excursion against PQ-TM-HS12-022 and confirm the spindle is back below 60 \u00b0C before restarting the cut. The last bucket was still at or above 61.0 \u00b0C.",
+        "response_action": null,
+        "citations": [
+          "alert_rule:mfg-alert-spindle-temp",
+          "readings:54982bec9e5c#4"
+        ]
+      },
+      {
+        "order": 7,
+        "owner_role": "QA",
+        "action": "After CMM results, decide on the 12 remaining releasable parts of lot TM-HS12-261120-190 and complete the DHR. Alert history was unavailable, so verify the excursion window manually.",
+        "response_action": null,
+        "citations": [
+          "lot:TM-HS12-261120-190",
+          "alert:e56c8d3c-50ba-47e6-8272-c195212e1afd"
+        ]
+      }
+    ]
+  },
+  "schema_errors": [],
+  "grounding_gaps": [
+    "alert_event history unavailable (no Lakebase connection)"
+  ],
+  "attempts": 1
+}

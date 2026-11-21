@@ -13,14 +13,18 @@ from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
+from iot_twin.core.config import NotOwnedError, assert_owned_name
 from iot_twin.core.state import AppState, get_app_state
+from iot_twin.routes._admin import ADMIN_ONLY
+from iot_twin.routes._ownership import reject_foreign_project
 from iot_twin.services import cdf_reconciliation_service
 from iot_twin.services.industry.industry_templates import CURATED_INDUSTRIES
 from iot_twin.services.lakets import lakets_service
 from iot_twin.services.lakets.lakets_deploy_service import deploy_retention_job
+from iot_twin.services.ownership import assert_direct_lakebase
 from iot_twin.services.pipelines.pipeline_db import get_industry_lakebase, get_pipeline_lakebase
 
-logger = logging.getLogger("iot_digital_twin.routes.lakets")
+logger = logging.getLogger("pharma_twin.routes.lakets")
 
 router = APIRouter()
 _INDUSTRY_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -78,6 +82,8 @@ async def _open_lakebase_conn(lb: dict) -> Any:
         branch_id = lb.get("branch_id", "production")
         if not project_id:
             raise ValueError("project_id is required in autoscale mode")
+        # Single choke point for every LakeTS connection: owned projects only.
+        project_id = assert_owned_name(project_id, what="Lakebase project_id")
 
         w = WorkspaceClient()
         parent = f"projects/{project_id}/branches/{branch_id}"
@@ -98,6 +104,8 @@ async def _open_lakebase_conn(lb: dict) -> Any:
             command_timeout=_LAKEBASE_PROBE_TIMEOUT_SECONDS,
         )
 
+    # Direct mode: flag-gated, host must be an endpoint of an owned project.
+    assert_direct_lakebase(lb)
     return await asyncpg.connect(
         host=lb.get("host", ""),
         database=database,
@@ -134,7 +142,7 @@ async def _is_realtime_industry_deployment(
     return row is not None
 
 
-@router.post("/api/lakets/sync/check")
+@router.post("/api/lakets/sync/check", dependencies=ADMIN_ONLY)
 async def check_sync(request: Request):
     """Probe a Lakebase for Lakehouse Sync readiness.
 
@@ -150,6 +158,8 @@ async def check_sync(request: Request):
     lb = body.get("lakebase") or body.get("lb") or body
     try:
         conn = await _open_lakebase_conn(lb)
+    except NotOwnedError as exc:
+        return JSONResponse(status_code=403, content={"error": str(exc)})
     except Exception as exc:
         logger.warning("Sync check could not connect: %s", exc)
         return {
@@ -172,7 +182,7 @@ async def get_cdf_status(
     pipeline_id: str,
     industry: str | None = Query(
         None,
-        description="Industry id — resolves the deterministic iot-pipelines "
+        description="Industry id — resolves the deterministic <prefix>-pipelines "
         "branch directly (industry-first dashboards have no legacy pipelines row).",
     ),
     state: AppState = Depends(get_app_state),
@@ -229,7 +239,7 @@ async def get_cdf_status(
             )
 
     try:
-        # Industry-first pipelines resolve the deterministic iot-pipelines branch
+        # Industry-first pipelines resolve the deterministic <prefix>-pipelines branch
         # by industry (no legacy pipelines/sink_config row); legacy pipelines fall
         # back to the per-pipeline lookup. Hard-bound so a hung pool never
         # stalls the dashboard proxy.
@@ -417,7 +427,7 @@ async def get_lakets_dashboard(
         return _unavailable_dashboard("LakeTS dashboard unavailable")
 
 
-@router.post("/api/lakets/retention/deploy")
+@router.post("/api/lakets/retention/deploy", dependencies=ADMIN_ONLY)
 async def deploy_retention(request: Request):
     """Upload the retention notebook and create/update a daily Databricks Job."""
     try:
@@ -432,6 +442,8 @@ async def deploy_retention(request: Request):
             status_code=400,
             content={"error": "lakebase.project_id is required"},
         )
+    if rejected := reject_foreign_project(project_id):
+        return rejected
 
     try:
         return deploy_retention_job(

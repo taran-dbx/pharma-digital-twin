@@ -13,7 +13,8 @@ import {
 } from "./pipeline-health/health-checks";
 import { E2eTestPanel } from "./pipeline-health/e2e-test-panel";
 import type { ValidationFlow } from "@/hooks/use-validation-flow";
-import { BRAND, PHARMA_HEALTH, rollup } from "./pipeline-health/types";
+import { BRAND, pharmaHealth, rollup } from "./pipeline-health/types";
+import { prefixIdent, sharedSecretScope, topicName, useResourcePrefix } from "@/lib/resource-names";
 
 /** Static stub so the preview harness needs no live validate-flow. */
 const PREVIEW_FLOW: ValidationFlow = {
@@ -41,20 +42,23 @@ const PREVIEW_FLOW: ValidationFlow = {
   remove: async () => ({ ok: false, message: "" }),
 };
 
-const CHECKS: HealthCheck[] = [
-  { name: "uc_catalog_schemas", tier: "api", status: "pass", detail: "catalog iot_pharmaceutical + all schemas present" },
+function checks(prefix: string): HealthCheck[] {
+  const catalog = `${prefixIdent(prefix)}_pharmaceutical`;
+  return [
+  { name: "uc_catalog_schemas", tier: "api", status: "pass", detail: `catalog ${catalog} + all schemas present` },
   { name: "delta_tables", tier: "api", status: "pass", detail: "3 Delta table(s) present for microbatch, realtime, zerobus" },
   { name: "checkpoint_volume", tier: "api", status: "pass", detail: "stream_checkpoints volume present" },
-  { name: "metrics_table", tier: "api", status: "pass", detail: "iot_pharmaceutical.metrics.streaming_metrics: 12,458 rows (latest 2026-07-06 11:22:04)" },
+  { name: "metrics_table", tier: "api", status: "pass", detail: `${catalog}.metrics.streaming_metrics: 12,458 rows (latest 2026-07-06 11:22:04)` },
   { name: "lakebase_endpoints", tier: "api", status: "pass", detail: "branch pharmaceutical: primary/replica {primary: ACTIVE, replica: ACTIVE}" },
   { name: "chronotable", tier: "api", status: "pass", detail: "sensor_readings: ChronoTable OK, 96 forward partitions (to 2026-07-07 11:00), columns match SSOT" },
   { name: "cdf_sync", tier: "api", status: "fail", detail: "lakets_cdf._shadow_sensor_readings not STREAMING/advancing — enable managed Lakebase CDF sync" },
-  { name: "uc_grants", tier: "api", status: "pass", detail: "streaming SP iot-sss-industries granted on iot_pharmaceutical" },
-  { name: "secrets", tier: "api", status: "pass", detail: "scope iot-secrets: 2 secrets present" },
+  { name: "uc_grants", tier: "api", status: "pass", detail: `streaming SP ${prefix}-sss-industries granted on ${catalog}` },
+  { name: "secrets", tier: "api", status: "pass", detail: `scope ${sharedSecretScope(prefix)}: 2 secrets present` },
   { name: "jobs", tier: "api", status: "skip", detail: "no jobs deployed yet" },
   { name: "interactive_cluster", tier: "api", status: "pass", detail: "interactive cluster 0706-abc123 is RUNNING", cluster_state: "RUNNING" },
-  { name: "kafka_topics", tier: "e2e", status: "skip", detail: "topic existence needs MSK-IAM (cluster-only via dbutils.credentials); verified by the interactive e2e test for iot.pharmaceutical.realtime, iot.pharmaceutical.microbatch" },
-];
+  { name: "kafka_topics", tier: "e2e", status: "skip", detail: `topic existence needs MSK-IAM (cluster-only via dbutils.credentials); verified by the interactive e2e test for ${topicName(prefix, "pharmaceutical", "realtime")}, ${topicName(prefix, "pharmaceutical", "microbatch")}` },
+  ];
+}
 
 const SETUP: PipelineSetup = {
   id: "b3f1c2a4-1111-2222-3333-444455556666",
@@ -82,9 +86,11 @@ const E2E: E2eTestDescriptor = {
 };
 
 export function HealthPreviewPage() {
-  const apiChecks = CHECKS.filter((c) => c.tier === "api");
-  const e2eChecks = CHECKS.filter((c) => c.tier === "e2e");
-  const health = PHARMA_HEALTH;
+  const prefix = useResourcePrefix();
+  const allChecks = checks(prefix);
+  const apiChecks = allChecks.filter((c) => c.tier === "api");
+  const e2eChecks = allChecks.filter((c) => c.tier === "e2e");
+  const health = pharmaHealth(prefix);
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 pb-16">
@@ -101,7 +107,7 @@ export function HealthPreviewPage() {
             <span className="text-border">·</span>
             <span className="font-mono text-xs">{SETUP.id}</span>
             <span className="text-border">·</span>
-            <span className="font-mono text-xs">iot_pharmaceutical</span>
+            <span className="font-mono text-xs">{health.catalog}</span>
           </p>
         </div>
         <BuiltOnRow items={[BRAND.streaming, BRAND.zerobus, BRAND.lakebase, BRAND.unity]} />

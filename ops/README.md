@@ -145,3 +145,37 @@ Real-workspace runs are not auto-regenerated and are not stored next to the samp
 Deliberately kept, dated, redacted live-run snapshots live in
 [`notebooks/runs/`](notebooks/runs/README.md) (how they are produced and re-run is described
 there); always run with `sample=false redact=true`.
+
+### Current snapshot: the isolated `pharma-twin` deployment
+
+`notebooks/runs/manufacturing_realtime_2026-11-20.ipynb` (and its `.html` copy) is a live run
+against this fork's own deployment (app `pharma-twin-dev`, Lakebase projects
+`pharma-twin-backend` / `pharma-twin-pipelines`, schema `pharma_twin`), not the upstream app that
+runs in the same workspace. Run it with the projects passed **explicitly**, never discovered:
+
+```bash
+databricks jobs submit --no-wait -p <profile> --json '{
+  "run_name": "health-check",
+  "tasks": [{"task_key": "main",
+    "notebook_task": {"notebook_path": "<temp path>",
+      "base_parameters": {"industry": "manufacturing", "mode": "realtime", "lookback_hours": "2",
+        "sample": "false", "redact": "true", "setup_id": "<setup id>",
+        "app_backend_project": "pharma-twin-backend", "pipelines_project": "pharma-twin-pipelines",
+        "uc_catalog": "<catalog>", "uc_schema": "pharma_twin", "warehouse_id": "<warehouse id>"}},
+    "environment_key": "e"}],
+  "environments": [{"environment_key": "e", "spec": {"client": "4",
+    "dependencies": ["databricks-sdk>=0.133.0", "psycopg2-binary"]}}]}'
+```
+
+The committed run (~21:00 UTC) reports **Overall FAIL (28 PASS, 10 WARN, 9 FAIL, 1 SKIPPED)**.
+The FAILs have two causes: (1) Lakehouse Sync stopped at Delta version 1000 at 19:29 UTC, so the
+cold-tier and CDF checks fail and Lakebase no longer reconciles with Delta; (2) from 19:32 the
+consumer wrote fewer rows than the producer sent, so the freshness, silent-sensor and latency
+checks fail. `lakets_gap_fill` (229 of 570 buckets, 40.2 %) is not explained by either. The
+degradation continued after this run: the worst batch e2e P99 reached 579.4 s at 21:07 and 861.5 s
+at 21:49. An earlier run the same day at 16:25, before the stall, scored 40 PASS, 5 WARN, 2 FAIL,
+1 SKIPPED; its two FAILs came from one batch recorded while the producer ran at 2000 Hz. At 500 Hz
+the stream held e2e p50 7 ms and p99 median 13 ms (worst 29 ms) over 41 batches from 16:01 to
+19:27. The `metrics_batch_duration` FAIL threshold (60 s) also flags Real-Time Mode's normal 300 s
+trigger. The measurements are in [`docs/evidence/2026-11-20/`](../docs/evidence/README.md). The
+first attempt of a run on serverless can abort with the known psycopg2 SIGABRT; re-run it.

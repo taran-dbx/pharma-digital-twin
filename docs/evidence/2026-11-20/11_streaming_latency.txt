@@ -1,0 +1,85 @@
+# Streaming latency, measured from <catalog>.pharma_twin.manufacturing_metrics (mode = realtime)
+# captured 2026-11-20T16:19:05Z. Each row is one Spark Real-Time Mode batch (5-minute trigger); e2e_p50 / e2e_p99 are
+# Spark's own per-batch percentiles of source-available -> sink latency over every record of that batch.
+
+## WINDOW B (headline): batches completed 2026-11-20 16:01:00 to 16:16:37 UTC, producer 500 Hz, 2 workers
+$ SQL: SELECT batch_id, timestamp, num_input_rows, e2e_p50, e2e_p99, queuing_p99, processing_p99 FROM <catalog>.pharma_twin.manufacturing_metrics WHERE mode='realtime' AND timestamp BETWEEN '2026-11-20T16:01:00Z' AND '2026-11-20T16:16:37.300Z' ORDER BY timestamp
+   {'batch_id': '0', 'e2e_p50': '7.0', 'e2e_p99': '18.0', 'num_input_rows': '96710', 'processing_p99': '1.0', 'queuing_p99': '18.0', 'timestamp': '2026-11-20T16:06:35.757Z'}
+   {'batch_id': '1', 'e2e_p50': '7.0', 'e2e_p99': '29.0', 'num_input_rows': '128678', 'processing_p99': '1.0', 'queuing_p99': '28.0', 'timestamp': '2026-11-20T16:11:36.047Z'}
+   {'batch_id': '2', 'e2e_p50': '7.0', 'e2e_p99': '15.0', 'num_input_rows': '146869', 'processing_p99': '1.0', 'queuing_p99': '14.0', 'timestamp': '2026-11-20T16:16:37.224Z'}
+$ SQL: SELECT count(*) AS batches, sum(num_input_rows) AS records, percentile(e2e_p50, 0.5) AS p50_ms_median_of_batches, max(e2e_p50) AS p50_ms_worst_batch, percentile(e2e_p99, 0.5) AS p99_ms_median_of_batches, max(e2e_p99) AS p99_ms_worst_batch FROM <catalog>.pharma_twin.manufacturing_metrics WHERE mode='realtime' AND timestamp BETWEEN '2026-11-20T16:01:00Z' AND '2026-11-20T16:16:37.300Z'
+   {'batches': '3', 'p50_ms_median_of_batches': '7.0', 'p50_ms_worst_batch': '7.0', 'p99_ms_median_of_batches': '18.0', 'p99_ms_worst_batch': '29.0', 'records': '372257'}
+## RESULT (window B): P50 = 7 ms in every batch; P99 = 15-29 ms per batch, worst-batch P99 29 ms (the window P99 is
+## bounded above by the worst batch P99). Records: 372,257 over 3 batches.
+
+## WINDOW A (tail, reported honestly): batches completed 2026-11-20 15:05 to 15:40 UTC, producer 2000 Hz
+$ SQL: SELECT batch_id, timestamp, num_input_rows, e2e_p50, e2e_p99, queuing_p99 FROM <catalog>.pharma_twin.manufacturing_metrics WHERE mode='realtime' AND timestamp BETWEEN '2026-11-20T15:05:00Z' AND '2026-11-20T15:40:00Z' ORDER BY timestamp
+   {'batch_id': '0', 'e2e_p50': '7.0', 'e2e_p99': '23.0', 'num_input_rows': '484196', 'queuing_p99': '23.0', 'timestamp': '2026-11-20T15:15:08.881Z'}
+   {'batch_id': '1', 'e2e_p50': '17900.0', 'e2e_p99': '317150.0', 'num_input_rows': '1114067', 'queuing_p99': '317319.0', 'timestamp': '2026-11-20T15:38:32.908Z'}
+## RESULT (window A): the first batch kept up (P50 7 ms / P99 23 ms); once the consumer fell behind the 1795 rows/s
+## producer the next batch measured P50 17.9 s and P99 317.2 s, almost all queuing (queuing_p99 317.3 s) - see 05a.
+## The often-quoted '16 ms' is NOT reused here: the measured value at a sustainable rate is P50 7 ms, P99 <= 29 ms.
+
+## GET /api/latency/streaming?industry=manufacturing&mode=realtime&pipeline_id=<deployment-id>&minutes=30
+{
+    "table": "<catalog>.pharma_twin.manufacturing_metrics",
+    "mode": "realtime",
+    "scope": {
+        "industry": "manufacturing",
+        "mode": "realtime"
+    },
+    "has_data": true,
+    "last_batch_id": 2,
+    "last_timestamp": "2026-11-20T16:16:37.224Z",
+    "num_input_rows": 146869,
+    "input_rps": 487.9,
+    "processed_rps": 488.1,
+    "trigger_ms": 300875.0,
+    "e2e_p50": 7.0,
+    "e2e_p99": 15.0,
+    "processing_p50": 0.0,
+    "processing_p99": 1.0,
+    "queuing_p50": 7.0,
+    "queuing_p99": 14.0,
+    "rows_per_sec": 488.1,
+    "processing_latency_p50_ms": 0.0,
+    "processing_latency_p99_ms": 1.0,
+    "spark_e2e_latency_p99_ms": 15.0,
+    "throughput_basis": "spark_processed_rows_per_second",
+    "e2e_basis": "spark_source_available_to_trigger_complete",
+    "series": [
+        {
+            "batch_id": 0,
+            "timestamp": "2026-11-20T16:06:35.757Z",
+            "e2e_p50": 7.0,
+            "e2e_p99": 18.0,
+            "processing_p50": 0.0,
+            "processing_p99": 1.0,
+            "input_rps": 0.0,
+            "processed_rps": 313.4,
+            "trigger_ms": 308536.0
+        },
+        {
+            "batch_id": 1,
+            "timestamp": "2026-11-20T16:11:36.047Z",
+            "e2e_p50": 7.0,
+            "e2e_p99": 29.0,
+            "processing_p50": 0.0,
+            "processing_p99": 1.0,
+            "input_rps": 416.9,
+            "processed_rps": 427.5,
+            "trigger_ms": 300992.0
+        },
+        {
+            "batch_id": 2,
+            "timestamp": "2026-11-20T16:16:37.224Z",
+            "e2e_p50": 7.0,
+            "e2e_p99": 15.0,
+            "processing_p50": 0.0,
+            "processing_p99": 1.0,
+            "input_rps": 487.9,
+            "processed_rps": 488.1,
+            "trigger_ms": 300875.0
+        }
+    ]
+}

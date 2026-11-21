@@ -7,6 +7,7 @@
 import type { ReactNode } from "react";
 import { Server, Boxes, Table2, Target, Cloud, Database } from "lucide-react";
 import type { PipelineMode } from "@/lib/industries-api";
+import { useResourcePrefix } from "@/lib/resource-names";
 import { BrandMark, KvRow } from "./components";
 import {
   BRAND,
@@ -50,7 +51,8 @@ interface StepPreviewProps {
 
 export function StepPreview({ industry, partitions, enabledModes }: StepPreviewProps) {
   const workers = computeWorkers(partitions);
-  const topicBase = `iot.${industry.id}`;
+  const resourcePrefix = useResourcePrefix();
+  const topicBase = `${resourcePrefix}.${industry.id}`;
   const kafkaModes = enabledModes.filter(
     (mode): mode is "realtime" | "microbatch" =>
       mode === "realtime" || mode === "microbatch",

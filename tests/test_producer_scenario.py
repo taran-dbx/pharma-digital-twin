@@ -1,4 +1,4 @@
-"""Behavioural tests for the producer's signal calibration and Spindle 3 heat event.
+"""Behavioural tests for the producer's signal calibration, Spindle 3 excursion and lot tags.
 
 The Python fragment is rendered from ``client/src/lib/manufacturing-scenario.ts``
 with esbuild + node, then executed against the vendored simulator wheel.
@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from iot_twin.domain import lot_context
 from iot_twin.domain.catalog import list_alert_rules
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -130,7 +131,11 @@ class TestProducerSignal:
         normal = at(10)
         assert normal["value"] == 45.0
         assert normal["fault_active"] is False
-        assert normal["metadata"] == {"scenario_id": s["id"], "phase": "normal"}
+        assert normal["metadata"] == {
+            **lot_context.lot_context_at(cycle_start + 10),
+            "scenario_id": s["id"],
+            "phase": "normal",
+        }
 
         overheat_start = s["normalSeconds"] + s["rampSeconds"]
         overheat = at(overheat_start + 1)
@@ -144,15 +149,37 @@ class TestProducerSignal:
 
         assert at(overheat_start + 1, value=74.0)["value"] == 75.0
 
-    def test_other_sensors_are_untouched_c7323_regression(self) -> None:
-        """[C7323][regression] Only Spindle 3 temperature carries the heat event."""
+    def test_other_sensors_keep_their_values_c7323_regression(self) -> None:
+        """[C7323][regression] Only Spindle 3 temperature carries the thermal excursion."""
         ns, s = _namespace("manufacturing")
         payload = {
             "sensor_name": "cnc_1_vibration",
             "value": 2.0,
             "timestamp": float(s["normalSeconds"] + 40),
         }
-        assert ns["_apply_scenario"](dict(payload)) == payload
+        out = ns["_apply_scenario"](dict(payload))
+        assert out["value"] == 2.0
+        assert "fault_active" not in out
+        assert "phase" not in out["metadata"]
+
+    def test_mill_readings_carry_the_python_lot_clock_c7814_smoke(self) -> None:
+        """[C7814][smoke] The producer stamps the same lot/part/UDI/DHR as lot_context.py."""
+        ns, s = _namespace("manufacturing")
+        assert s["cycleSeconds"] == lot_context.LOT_CYCLE_S
+        for ts in (1_800_000_000.0, 1_800_000_245.5, 1_800_000_299.9, 1_799_999_999.0):
+            for name in ("cnc_1_spindle_temp", "cnc_1_spindle_power"):
+                out = ns["_apply_scenario"](
+                    {"sensor_name": name, "value": 45.0, "timestamp": ts, "metadata": {}}
+                )
+                expected = lot_context.lot_context_at(ts)
+                assert {k: out["metadata"][k] for k in expected} == expected
+
+    def test_pack_and_utility_readings_carry_no_lot_c7814_defect(self) -> None:
+        """[C7814][defect] Lot tags stay on the mill; pack line and utilities are untouched."""
+        ns, _ = _namespace("manufacturing")
+        for name in ("assy_line_1_speed", "compressor_1_pressure", "hvac_zone_1_temp"):
+            payload = {"sensor_name": name, "value": 1.0, "timestamp": 1_800_000_010.0}
+            assert ns["_apply_scenario"](dict(payload)) == payload
 
     def test_non_manufacturing_has_no_scenario_c7324_regression(self) -> None:
         """[C7324][regression] Other industries get noise calibration only."""

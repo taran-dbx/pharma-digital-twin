@@ -1,7 +1,7 @@
 """Integration tests for the app-backend repositories (Phase 1, Task 1.3).
 
 Exercises CRUD on ``pipeline_setup_repo`` / ``deployment_repo`` /
-``resource_ledger`` against the live ``iot-app-backend`` project (throwaway
+``resource_ledger`` against the live ``pharma-twin-backend`` project (throwaway
 schema per test).  JSONB fields must round-trip as Python dicts/lists and the
 ledger must return resources in ascending (list) and descending (teardown)
 ``teardown_order``.
@@ -152,7 +152,7 @@ async def test_record_and_list_resources(schema_ready) -> None:
         db,
         setup_id=setup["id"],
         resource_type="uc_catalog",
-        identifier="iot_pharmaceutical",
+        identifier="pharma_twin_pharmaceutical",
         teardown_order=10,
     )
     await resource_ledger.record_resource(
@@ -160,7 +160,7 @@ async def test_record_and_list_resources(schema_ready) -> None:
         setup_id=setup["id"],
         deployment_id=dep["id"],
         resource_type="kafka_topic",
-        identifier="iot.pharmaceutical.realtime",
+        identifier="pharma-twin.pharmaceutical.realtime",
         parent_ref="example",
         teardown_order=50,
         metadata={"partitions": 3},
@@ -169,7 +169,7 @@ async def test_record_and_list_resources(schema_ready) -> None:
         db,
         setup_id=setup["id"],
         resource_type="uc_schema",
-        identifier="iot_pharmaceutical.realtime",
+        identifier="pharma_twin_pharmaceutical.realtime",
         teardown_order=20,
     )
 

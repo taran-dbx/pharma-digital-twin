@@ -1,5 +1,5 @@
 import { clockOf } from "@/components/cell/cell-kpis";
-import { RESPONSE_STEPS, SPINDLE_RULE_ID } from "@/lib/manufacturing-story";
+import { LEGACY_DECISION_LABEL, RESPONSE_STEPS, SPINDLE_RULE_ID } from "@/lib/manufacturing-story";
 import type { AlertEpisode, AlertHistoryResponse, ProductionState } from "@/lib/types";
 import { formatNumber, toEpochSeconds } from "@/lib/utils";
 
@@ -10,9 +10,13 @@ const LIST_LIMIT = 6;
 const RULE_LABEL: Record<string, string> = {
   [SPINDLE_RULE_ID]: "Spindle 3 temp",
   "mfg-alert-vibration": "Spindle vibration",
+  "mfg-alert-press": "Passivation pressure",
 };
 
-const DECISION_LABEL = Object.fromEntries(RESPONSE_STEPS.map((s) => [s.action, s.done])) as Record<string, string>;
+const DECISION_LABEL = {
+  ...LEGACY_DECISION_LABEL,
+  ...Object.fromEntries(RESPONSE_STEPS.map((s) => [s.action, s.done])),
+} as Record<string, string>;
 
 interface Span {
   from: number;
@@ -78,11 +82,11 @@ export function AlertTimeline({
     <section className="panel cellops-timeline" aria-label="Alert history" data-testid="alert-timeline">
       <header className="cellops-timeline__head">
         <div>
-          <span className="cellops-eyebrow">Alert history</span>
+          <span className="cellops-eyebrow">Excursion history · audit trail</span>
           <h3>Last 60 minutes</h3>
         </div>
         <span className="cellops-timeline__count">
-          {episodes.length} episode{episodes.length === 1 ? "" : "s"} · {stops.length} stop{stops.length === 1 ? "" : "s"}
+          {episodes.length} excursion{episodes.length === 1 ? "" : "s"} · {stops.length} stop{stops.length === 1 ? "" : "s"}
         </span>
       </header>
 
@@ -112,7 +116,7 @@ export function AlertTimeline({
                           style={{
                             left: `${Math.min(100, Math.max(0, ((toEpochSeconds(d.created_at) - span.from) / Math.max(1, span.to - span.from)) * 100))}%`,
                           }}
-                          title={`${DECISION_LABEL[d.action] ?? d.action} · ${clockOf(d.created_at)}`}
+                          title={`${DECISION_LABEL[d.action] ?? d.action} · signed ${clockOf(d.created_at)}${d.reason ? ` · ${d.reason}` : ""}`}
                         />
                       ))}
                     </span>
@@ -171,7 +175,9 @@ export function AlertTimeline({
                 </div>
                 <div className="cellops-timeline__decisions">
                   {e.decisions.map((d) => (
-                    <span key={d.action}>{DECISION_LABEL[d.action] ?? d.action}</span>
+                    <span key={d.action} title={d.signature_meaning ? `signed as ${d.signature_meaning}` : undefined}>
+                      {DECISION_LABEL[d.action] ?? d.action}
+                    </span>
                   ))}
                 </div>
                 <span className={`cellops-timeline__status is-${e.status}`}>{e.status}</span>

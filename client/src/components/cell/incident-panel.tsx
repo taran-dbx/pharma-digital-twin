@@ -1,23 +1,35 @@
+import { useState } from "react";
 import { Check, Sparkles } from "lucide-react";
 
+import { ActionPlanCard } from "@/components/cell/action-plan-card";
 import { clockOf } from "@/components/cell/cell-kpis";
+import { DecisionSignoffForm } from "@/components/cell/decision-signoff";
+import { RiskBadge } from "@/components/cell/risk-badge";
 import type { MachiningCellModel } from "@/components/cell/use-cell-model";
 import { heatEventText } from "@/components/dashboard/cell-station-card";
 import {
   RESPONSE_STEPS,
   SPINDLE_RULE_ID,
   STATION_INFO,
+  STOPPING_ACTION,
   decisionLabel,
   formatCountdown,
   isActiveAlert,
 } from "@/lib/manufacturing-story";
-import type { AlertEpisode, AlertRecord, AlertResponseAction, ProductionState } from "@/lib/types";
+import type { SignoffPrefill } from "@/lib/action-plan";
+import type {
+  AlertEpisode,
+  AlertRecord,
+  AlertResponseAction,
+  DecisionSignoff,
+  ProductionState,
+} from "@/lib/types";
 import { formatNumber, toEpochSeconds } from "@/lib/utils";
 
 type IncidentState = "alert" | "stopped" | "restarting" | "clear";
 
 const STATE_LABEL: Record<IncidentState, string> = {
-  alert: "Action required",
+  alert: "QA action required",
   stopped: "Cell stopped",
   restarting: "Restarting",
   clear: "All clear",
@@ -87,6 +99,7 @@ export function IncidentPanel({
   controllable,
   onRecorded,
   onExplain,
+  mode,
 }: {
   model: MachiningCellModel;
   episodes: AlertEpisode[];
@@ -94,6 +107,8 @@ export function IncidentPanel({
   controllable: boolean;
   onRecorded: (action: AlertResponseAction) => void;
   onExplain: (alert: AlertRecord) => void;
+  /** Pipeline mode, so the AI plan reads the readings window from the right table. */
+  mode?: string;
 }) {
   const { episode, production, limit, spindle, now } = model;
   const { alert, decisions, pending, record, acknowledge } = episode;
@@ -108,8 +123,17 @@ export function IncidentPanel({
           : "clear";
   const recorded = RESPONSE_STEPS.filter((step) => decisions[step.action]);
   const showResponse = active || recorded.length > 0;
-  const submit = async (action: AlertResponseAction) => {
-    if (await record(action)) onRecorded(action);
+  const [signing, setSigning] = useState<AlertResponseAction | null>(null);
+  const [prefill, setPrefill] = useState<SignoffPrefill | undefined>(undefined);
+  const sign = (action: AlertResponseAction | null, from?: SignoffPrefill) => {
+    setSigning(action);
+    setPrefill(from);
+  };
+  const submit = async (action: AlertResponseAction, signoff: DecisionSignoff) => {
+    if (await record(action, signoff)) {
+      sign(null);
+      onRecorded(action);
+    }
   };
 
   const opened = alert?.opened_at ? toEpochSeconds(alert.opened_at) : undefined;
@@ -147,10 +171,12 @@ export function IncidentPanel({
         <span className={`cellops-chip is-${state}`}>{STATE_LABEL[state]}</span>
       </header>
 
+      {model.risk && <RiskBadge risk={model.risk} />}
+
       {active ? (
         <div className="cellops-incident__alert">
           <div className="cellops-incident__title">
-            <b>Spindle 3 over limit</b>
+            <b>Spindle 3 outside its validated limit</b>
             {alert.fault_code && <code>{alert.fault_code}</code>}
           </div>
           <div className="cellops-incident__readout tnum">
@@ -162,7 +188,7 @@ export function IncidentPanel({
             <span>
               <b>{limit ? formatNumber(limit.threshold, 0) : "—"}</b>
               <small>°C</small>
-              <em>limit</em>
+              <em>validated limit</em>
             </span>
             <span className={over !== undefined && over > 0 ? "is-over" : ""}>
               <b>{over === undefined ? "—" : `${over > 0 ? "+" : ""}${formatNumber(over, 1)}`}</b>
@@ -176,28 +202,37 @@ export function IncidentPanel({
           </div>
           {limit?.action && (
             <p className="cellops-incident__action" data-testid="incident-action">
-              <span>Rule action</span>
+              <span>Required action</span>
               <b>{limit.action}</b>
+            </p>
+          )}
+          {model.quality.disposition && model.quality.disposition.partsAtRisk.length > 0 && (
+            <p className="cellops-incident__action" data-testid="parts-at-risk">
+              <span>Parts at risk</span>
+              <b>
+                Quarantine {model.quality.disposition.partsAtRisk.map((p) => p.serial).join(", ")}; release the other{" "}
+                {model.quality.disposition.partsReleased} after CMM review
+              </b>
             </p>
           )}
         </div>
       ) : (
         <div className="cellops-incident__clear">
-          <b>{state === "clear" ? "No open alerts on the cell" : "Spindle 3 alert cleared"}</b>
+          <b>{state === "clear" ? "Cell in its validated state" : "Spindle 3 back inside its validated limit"}</b>
           <span>
             Spindle 3 {value === undefined ? "—" : `${formatNumber(value, 1)} °C`} · limit{" "}
-            {limit ? `${formatNumber(limit.threshold, 0)} °C` : "—"} · prepared heat event{" "}
+            {limit ? `${formatNumber(limit.threshold, 0)} °C` : "—"} · prepared thermal excursion{" "}
             {heatEventText(model.heatEvent)}
           </span>
           {lastEpisode && (
             <span data-testid="last-incident">
-              Last incident {clockOf(lastEpisode.episode_opened_at)} · peak{" "}
+              Last excursion {clockOf(lastEpisode.episode_opened_at)} · peak{" "}
               {lastEpisode.peak_value === null ? "—" : `${formatNumber(lastEpisode.peak_value, 1)} °C`}
               {lastEpisode.cleared_at
                 ? ` · ${durationText(toEpochSeconds(lastEpisode.cleared_at) - toEpochSeconds(lastEpisode.episode_opened_at))}`
                 : ""}
               {lastEpisode.decisions.length > 0
-                ? ` · ${lastEpisode.decisions.length} decision${lastEpisode.decisions.length === 1 ? "" : "s"}`
+                ? ` · ${lastEpisode.decisions.length} signed decision${lastEpisode.decisions.length === 1 ? "" : "s"}`
                 : ""}
             </span>
           )}
@@ -205,7 +240,7 @@ export function IncidentPanel({
       )}
 
       {!active && model.watch.length > 0 && (
-        <ul className="cellops-watch" aria-label="Alert rules on the cell" data-testid="rule-watch">
+        <ul className="cellops-watch" aria-label="Validated process parameters on the cell" data-testid="rule-watch">
           {model.watch.map((w) => {
             const ratio =
               w.value === undefined || w.value === 0
@@ -251,7 +286,8 @@ export function IncidentPanel({
           </div>
           <ul>
             <li>CNC-1 and the pack line send no readings while stopped</li>
-            <li>Shop utilities keep streaming to Lakebase</li>
+            <li>No further stems are cut outside the validated state</li>
+            <li>CMM lab and utilities keep streaming to Lakebase</li>
           </ul>
           <button
             type="button"
@@ -279,44 +315,69 @@ export function IncidentPanel({
       )}
 
       {showResponse && (
-        <ol className="cellops-actions" aria-label="Response">
+        <ol className="cellops-actions" aria-label="Quality response">
           {RESPONSE_STEPS.map((step) => {
             const done = decisions[step.action];
             if (!active && !done) return null;
-            const stopsCell = step.action === "send_to_inspect";
+            const stopsCell = step.action === STOPPING_ACTION;
+            const open = signing === step.action && !done;
             return (
               <li key={step.action} className={`${done ? "is-done" : ""}${stopsCell ? " is-primary" : ""}`}>
                 <span className="cell-response__station">{STATION_INFO[step.station].code}</span>
                 <div className="cellops-actions__body">
-                  <b>{done ? decisionLabel(step, model.batchHeld) : step.title}</b>
+                  <b>{done ? decisionLabel(step, model.batchHeld, done) : step.title}</b>
                   {done ? (
                     <span data-testid={`decision-${step.action}`}>
-                      Recorded {clockOf(done.created_at)} by {who(done.recorded_by)}
+                      Signed {clockOf(done.created_at)} by {who(done.recorded_by)}
+                      {done.signature_meaning ? ` (${done.signature_meaning})` : ""}
+                      {done.reason ? ` · ${done.reason}` : ""}
+                      {step.action === "open_ncr" && done.reference.ncr_id ? ` · ${done.reference.ncr_id}` : ""}
+                      {step.action === "quarantine_lot" && done.reference.parts_at_risk
+                        ? ` · ${done.reference.parts_at_risk.length} parts quarantined`
+                        : ""}
                       {step.action === "request_maintenance" && done.reference.last_service
                         ? ` · last service: ${done.reference.last_service.notes}`
                         : ""}
-                      {step.action === "hold_batch" && !model.batchHeld && production.state?.changed_at
-                        ? ` · released on resume ${clockOf(production.state.changed_at)}`
-                        : ""}
                     </span>
                   ) : (
-                    <span>{controllable || !stopsCell ? step.detail : "Records the inspection; this mode has no cell stop."}</span>
+                    <span>{controllable || !stopsCell ? step.detail : "Records the CMM request; this mode has no cell stop."}</span>
+                  )}
+                  {open && (
+                    <DecisionSignoffForm
+                      key={prefill?.planId ?? "manual"}
+                      step={step}
+                      busy={pending === step.action}
+                      primary={stopsCell}
+                      prefill={prefill}
+                      onSign={(signoff) => void submit(step.action, signoff)}
+                      onCancel={() => sign(null)}
+                    />
                   )}
                 </div>
-                {!done && (
+                {!done && !open && (
                   <button
                     type="button"
                     className={`btn sm${stopsCell ? " primary" : ""}`}
                     disabled={pending !== null}
-                    onClick={() => void submit(step.action)}
+                    onClick={() => sign(step.action)}
                   >
-                    {pending === step.action ? "Recording…" : step.cta}
+                    {step.cta}
                   </button>
                 )}
               </li>
             );
           })}
         </ol>
+      )}
+
+      {alert && (
+        <ActionPlanCard
+          alertId={alert.id}
+          mode={mode}
+          decisions={decisions}
+          canSign={active}
+          onApply={sign}
+        />
       )}
 
       {(episode.error || production.error) && (
@@ -333,8 +394,9 @@ export function IncidentPanel({
           </button>
         )}
         <p>
-          Decisions and stops are saved in Lakebase. A stop silences CNC-1 and the pack line at the producer; the
-          streaming pipeline stays up, so a resume takes seconds.
+          Signed decisions (who, when, why, meaning) and stops are saved in Lakebase as a Part 11-style audit trail.
+          A stop silences CNC-1 and the pack line at the producer; the streaming pipeline stays up, so a resume takes
+          seconds. Lot release stays a QA decision outside this demo.
         </p>
       </footer>
     </section>

@@ -153,7 +153,36 @@ available, in the `alert` and `alert_event` tables. Each lifecycle change (`aler
 `alert_updated`, `alert_acknowledged`, `alert_cleared`) is pushed to browsers over the
 `/api/events` SSE stream (`services/alerts/alert_sse.py`). `alert_history.py` rebuilds
 per-episode history from `alert_event`, and `alert_responses.py` records operator decisions
-against an episode. The REST surface is `routes/alerts.py`. A background loop
+against an episode. The REST surface is `routes/alerts.py`.
+
+For the Medical Devices industry (internal id `manufacturing`) alerts carry lot context in
+`metadata`: `lot_id`, `part_serial`, `work_order`, `part_number`, `udi_di` and `dhr_ref`, taken
+from the triggering `cnc_1_*` reading, plus the validated-parameter references of the rule
+(OQ/PQ protocol and process spec). Decisions are stored in the `alert_response` table, one row per
+action and episode (`UNIQUE (alert_id, episode_opened_at, action)`), insert-only:
+
+| Action | Station | Effect |
+|---|---|---|
+| `quarantine_lot` | PACK | QA hold on the lot; the reference lists the at-risk part serials |
+| `open_ncr` | CMM (inspect) | records a nonconformance report against the at-risk parts |
+| `request_cmm_inspection` | CMM (inspect) | also stops the mill and the pack line (production control, below) |
+| `request_maintenance` | MILL | maintenance request for Spindle 3 with its last catalog service |
+
+The legacy `hold_batch` and `send_to_inspect` values stay accepted for older clients and stored
+rows. Each row also keeps Part 11-style audit fields: `recorded_by` (actor), `created_at`,
+`reason`, `comment`, `signature_meaning` (`authored`, `reviewed`, `approved` or `responsible`) and
+`signed_at`. `ensure_alert_response_table` migrates existing databases idempotently: it recreates
+the `action` CHECK constraint inside a `DO` block only when it lacks the new values, adds the
+audit columns only when they are missing, and turns a cascading `alert_id` foreign key into
+`ON DELETE RESTRICT`, so a table owned by another role does not hit the "must be owner" error.
+With the app backend configured, a decision is persisted or refused with `503`; it is never kept
+only in memory (details in [domain-medtech.md](domain-medtech.md#data-model-notes)).
+
+API change: `POST /api/alerts/{id}/responses` now takes `reason` (required, ≤ 280 chars),
+`signature_meaning` (`authored`, `reviewed`, `approved`, `responsible`) and an optional `comment`
+(≤ 1000 chars); a missing or invalid field is `422`. For backward compatibility a legacy action
+(`hold_batch`, `send_to_inspect`) posted without any signing field is accepted and recorded with
+`signature_meaning = "legacy-unsigned"`. See [domain-medtech.md](domain-medtech.md) for the glossary. A background loop
 (`alert_snapshot_sync.py`, default every 60 s, `ALERT_SNAPSHOT_SYNC_INTERVAL_S`) copies the
 current alerts to the `intelligence_alert_snapshot` table in Unity Catalog.
 
@@ -169,12 +198,23 @@ allowlist on the Genie space, not prompt text: `allowed_uc_tables()` returns onl
 intelligence reference tables, never industry telemetry, and `space_table_allowlist_status`
 compares the space against that set.
 
+## AI action plan
+
+`routes/genai.py` and `services/genai/` generate an advisory action plan for one alert
+episode. The plan is grounded in cited Lakebase, DBSQL and catalog rows and comes from the
+Foundation Model endpoint in `GENAI_ENDPOINT`, injected from the `genai-endpoint` app
+resource with `CAN_QUERY`. Every attempt is logged to the Lakebase
+`genai_action_plan_audit` table and mirrored to `intelligence_genai_audit` for Genie. The
+plan never changes alerts. A person applies it through the signed response workflow. See
+[genai-action-plan.md](genai-action-plan.md).
+
 ## Intelligence catalog
 
 `services/intelligence_catalog_service.py` provisions and syncs shared Delta reference tables
 in `{UC_CATALOG}.{UC_SCHEMA}`: `intelligence_assets`, `intelligence_sensor_bindings`,
-`intelligence_maintenance_records`, `intelligence_alert_rules` and `intelligence_alert_snapshot`
-(a read-only snapshot of alerts). Admins inspect and trigger a full sync through
+`intelligence_maintenance_records`, `intelligence_alert_rules`, `intelligence_alert_snapshot`
+(a read-only snapshot of alerts) and `intelligence_genai_audit` (a read-only mirror of the AI
+action-plan audit, synced by `services/genai/audit_sync.py`). Admins inspect and trigger a full sync through
 `GET /api/admin/intelligence/status` and `POST /api/admin/intelligence/sync`
 (`routes/intelligence.py`).
 
@@ -182,8 +222,8 @@ in `{UC_CATALOG}.{UC_SCHEMA}`: `intelligence_assets`, `intelligence_sensor_bindi
 
 `services/production_control.py` stops and resumes a production cell. It writes a small control
 file next to the industry's deployed notebooks; the Kafka producer polls it about once a second
-and stops or resumes the cell machines' sensors (today `manufacturing`: `cnc_1`,
-`assy_line_1`). The streaming job itself is never paused, so Lakebase, SSE and the alert
+and stops or resumes the cell machines' sensors (today `manufacturing`: the `cnc_1` mill and the
+`assy_line_1` sterile pack line; a `request_cmm_inspection` decision triggers the stop). The streaming job itself is never paused, so Lakebase, SSE and the alert
 engine see the cell go quiet. The app records the new state only after the control file is
 written. REST: `GET/POST /api/industries/{industry}/production` and
 `GET /api/industries/{industry}/production/events` (`routes/production.py`).

@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { FileCode2 } from "lucide-react";
 
 import type { PipelineMode } from "@/lib/industries-api";
+import { useResourcePrefix } from "@/lib/resource-names";
 import { cn } from "@/lib/utils";
 import { MODE_LABELS } from "./types";
 
@@ -20,14 +21,14 @@ interface NotebookArtifact {
 const NOTEBOOKS: Record<PipelineMode, NotebookArtifact> = {
   realtime: {
     tab: "Real-time consumer",
-    filename: "iot_pharmaceutical_realtime_consumer.py",
+    filename: "pharmaceutical_realtime_consumer.py",
     runtime: "Spark job cluster",
     source: `# Databricks notebook source
 # Generated from the SSOT field-map — do not edit by hand.
 from pyspark.sql import functions as F
 
 INDUSTRY = "pharmaceutical"
-TOPIC = f"iot.{INDUSTRY}.realtime"
+TOPIC = f"__RESOURCE_PREFIX__.{INDUSTRY}.realtime"
 BOOTSTRAP = dbutils.widgets.get("bootstrap_servers")
 
 raw = (spark.readStream.format("kafka")
@@ -43,14 +44,14 @@ raw = (spark.readStream.format("kafka")
   },
   microbatch: {
     tab: "Micro-batch consumer",
-    filename: "iot_pharmaceutical_microbatch_consumer.py",
+    filename: "pharmaceutical_microbatch_consumer.py",
     runtime: "Spark job cluster",
     source: `# Databricks notebook source
 # Generated from the SSOT field-map — do not edit by hand.
 from pyspark.sql import functions as F
 
 INDUSTRY = "pharmaceutical"
-TOPIC = f"iot.{INDUSTRY}.microbatch"
+TOPIC = f"__RESOURCE_PREFIX__.{INDUSTRY}.microbatch"
 BOOTSTRAP = dbutils.widgets.get("bootstrap_servers")
 
 records = read_kafka_sensor_records(TOPIC, BOOTSTRAP)
@@ -60,7 +61,7 @@ records = read_kafka_sensor_records(TOPIC, BOOTSTRAP)
   },
   zerobus: {
     tab: "Zerobus producer",
-    filename: "iot_pharmaceutical_zerobus_producer.py",
+    filename: "pharmaceutical_zerobus_producer.py",
     runtime: "Serverless Python · no cluster",
     source: `# Databricks notebook source
 # Serverless Zerobus producer generated from the SSOT field-map.
@@ -98,7 +99,9 @@ export function StepNotebook({ enabledModes }: { enabledModes: PipelineMode[] })
     }
   }, [activeMode, enabledModes]);
 
-  const artifact = NOTEBOOKS[activeMode];
+  const resourcePrefix = useResourcePrefix();
+  const base = NOTEBOOKS[activeMode];
+  const artifact = { ...base, source: base.source.split("__RESOURCE_PREFIX__").join(resourcePrefix) };
 
   return (
     <div className="space-y-4">

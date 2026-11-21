@@ -128,7 +128,7 @@ class TestRequireIdentity:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """[C7601][defect] Databricks Apps runtime without identity returns 401."""
-        monkeypatch.setenv("DATABRICKS_APP_NAME", "iot-digital-twin")
+        monkeypatch.setenv("DATABRICKS_APP_NAME", "pharma-twin")
         monkeypatch.delenv("IOT_ALLOW_ANONYMOUS_IDENTITY", raising=False)
         with pytest.raises(HTTPException) as exc:
             await require_identity(_request_with_token(None))
@@ -139,7 +139,7 @@ class TestRequireIdentity:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """[C7601][smoke] Explicit local bypass remains available."""
-        monkeypatch.setenv("DATABRICKS_APP_NAME", "iot-digital-twin")
+        monkeypatch.setenv("DATABRICKS_APP_NAME", "pharma-twin")
         monkeypatch.setenv("IOT_ALLOW_ANONYMOUS_IDENTITY", "1")
         result = await require_identity(_request_with_token(None))
         assert result == "anonymous"
@@ -149,7 +149,7 @@ class TestRequireIdentity:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """[C7601][regression] Forwarded identity is accepted in Apps runtime."""
-        monkeypatch.setenv("DATABRICKS_APP_NAME", "iot-digital-twin")
+        monkeypatch.setenv("DATABRICKS_APP_NAME", "pharma-twin")
         monkeypatch.delenv("IOT_ALLOW_ANONYMOUS_IDENTITY", raising=False)
         token = _make_jwt({"sub": "ops@example.com"})
         result = await require_identity(_request_with_token(token))

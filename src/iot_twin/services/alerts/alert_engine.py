@@ -9,14 +9,32 @@ import logging
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from iot_twin.domain.catalog import (
     AlertRule,
     list_alert_rules,
+    rule_metadata,
     sensor_by_name,
     to_record_industry,
+)
+from iot_twin.domain.lot_context import (
+    LOT_METADATA_KEYS,
+    carries_lot_context,
+    lot_context_at,
+    lot_fields,
+)
+from iot_twin.ml.risk_contract import (
+    ALERT_KIND_PREDICTED,
+    DEFAULT_HYSTERESIS,
+    DEFAULT_THRESHOLD,
+    MODEL_RULE_ID,
+    RISK_METADATA_KEYS,
+    RISK_SENSOR_IDS,
+    alert_kind_for,
+    risk_alert_rule,
+    risk_score_of,
 )
 from iot_twin.services.alerts.alert_sse import (
     EVENT_ACKNOWLEDGED,
@@ -27,9 +45,13 @@ from iot_twin.services.alerts.alert_sse import (
     enqueue_alert_events,
 )
 
-logger = logging.getLogger("iot_digital_twin.services.alert_engine")
+logger = logging.getLogger("pharma_twin.services.alert_engine")
 
 ACTIVE_STATUSES = ("open", "acknowledged")
+EXCURSION_STARTED_KEY = "excursion_started_at"
+# A first-violation stamp further back than duration_s + this is not trusted
+# (mirrors DETECT_LOOKBACK_S in client/src/lib/manufacturing-quality.ts).
+DETECT_LOOKBACK_S = 120.0
 
 _DB_EVENT_TYPES = {
     EVENT_OPENED: "opened",
@@ -98,6 +120,8 @@ class AlertRecord:
             "cleared_at": self.cleared_at.isoformat() if self.cleared_at else None,
             "metadata": dict(self.metadata),
             "version": int(self.version or 0),
+            "alert_kind": alert_kind_for(self.rule_id, self.metadata),
+            "risk_score": risk_score_of(self.rule_id, self.metadata),
         }
 
 
@@ -191,6 +215,63 @@ def _index_readings(
     return index
 
 
+def _reading_metadata(reading: Mapping[str, Any] | None) -> dict[str, Any]:
+    raw = reading.get("metadata") if reading is not None else None
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw or "{}")
+        except json.JSONDecodeError:
+            return {}
+    return dict(raw) if isinstance(raw, Mapping) else {}
+
+
+def open_metadata(
+    rule: AlertRule,
+    reading: Mapping[str, Any] | None,
+    industry: str | None,
+    at: datetime,
+) -> dict[str, Any]:
+    """Validation refs from the rule plus the lot the triggering reading belongs to.
+
+    Mill readings carry lot context from the producer; when they don't (older
+    producers, replayed rows) the lot is derived from the cell's lot clock.
+    """
+    metadata: dict[str, Any] = rule_metadata(rule)
+    if _catalog_industry(industry) != "manufacturing":
+        return metadata
+    name = str((reading or {}).get("sensor_name") or rule.sensor_id.rsplit("-sns-", 1)[-1])
+    if not carries_lot_context(name):
+        return metadata
+    lot = lot_fields(_reading_metadata(reading)) or lot_context_at(at)
+    return {**metadata, **lot}
+
+
+def _episode_update(live: Mapping[str, Any]) -> dict[str, Any]:
+    """Live metadata for an update: the episode keeps the lot it opened on."""
+    return {key: value for key, value in live.items() if key not in LOT_METADATA_KEYS}
+
+
+def _risk_metadata(
+    raw: Mapping[str, Any], score: float, threshold: float, hysteresis: float
+) -> dict[str, Any]:
+    """The documented model-alert metadata (docs/ml-risk-model.md)."""
+    top = raw.get("top_features")
+    values: dict[str, Any] = {
+        "alert_kind": ALERT_KIND_PREDICTED,
+        "risk_score": round(score, 4),
+        "risk_threshold": float(threshold),
+        "risk_clear_threshold": round(float(threshold) - float(hysteresis), 4),
+        "model_name": raw.get("model_name"),
+        "model_version": None if raw.get("model_version") is None else str(raw["model_version"]),
+        "top_features": [dict(item) for item in top if isinstance(item, Mapping)]
+        if isinstance(top, list | tuple)
+        else [],
+        "horizon_s": _to_float(raw.get("horizon_s")),
+        "scored_at": raw.get("scored_at"),
+    }
+    return {key: values[key] for key in RISK_METADATA_KEYS}
+
+
 def _configured_sensor_ids(rule: AlertRule) -> list[str]:
     ids = [rule.sensor_id, *list(rule.correlate_sensor_ids)]
     return [str(item) for item in ids if item]
@@ -274,6 +355,52 @@ def _as_datetime(value: Any) -> datetime | None:
     return None
 
 
+def reading_time(reading: Mapping[str, Any] | None) -> datetime | None:
+    """Device time of a reading (``timestamp`` epoch s/ms or ``event_time``), if any."""
+    if not reading:
+        return None
+    for key in ("timestamp", "event_time"):
+        raw = reading.get(key)
+        if raw is None or raw == "":
+            continue
+        if isinstance(raw, int | float) and not isinstance(raw, bool):
+            seconds = float(raw)
+            if seconds > 1e14:  # epoch microseconds (Zerobus)
+                seconds /= 1_000_000
+            elif seconds > 1e11:  # epoch milliseconds
+                seconds /= 1000
+            try:
+                return datetime.fromtimestamp(seconds, UTC)
+            except (OverflowError, OSError, ValueError):
+                return None
+        parsed = _as_datetime(raw)
+        if parsed is not None:
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    return None
+
+
+def excursion_started_at(
+    first_reading_at: datetime | None,
+    first_seen_at: datetime,
+    opened_at: datetime,
+    duration_s: float,
+) -> datetime:
+    """When the excursion began, for ``metadata.excursion_started_at``.
+
+    Prefers the first violating reading's own device time; else the engine's
+    first-violation clock, never later than ``opened_at - duration_s`` (a lost
+    pending state would otherwise stamp the opening instant). Device times
+    outside ``[opened - duration - lookback, opened]`` are not trusted.
+    """
+    fallback = min(first_seen_at, opened_at - timedelta(seconds=duration_s))
+    if first_reading_at is None:
+        return fallback
+    earliest = opened_at - timedelta(seconds=duration_s + DETECT_LOOKBACK_S)
+    if earliest <= first_reading_at <= opened_at:
+        return first_reading_at
+    return fallback
+
+
 def _row_to_alert(row: Any) -> AlertRecord:
     data = dict(row)
     sensor_ids = data.get("sensor_ids") or []
@@ -316,6 +443,8 @@ class AlertEngine:
         self._by_fingerprint: dict[str, AlertRecord] = {}
         self._by_id: dict[str, AlertRecord] = {}
         self._pending: dict[str, datetime] = {}
+        # Device time of the first violating reading of a pending excursion.
+        self._pending_reading: dict[str, datetime] = {}
         self._lock = asyncio.Lock()
 
     def get_alert_sync(self, alert_id: str) -> AlertRecord | None:
@@ -484,6 +613,29 @@ class AlertEngine:
                     transitions.append(transition)
             return transitions
 
+    async def ingest_model_scores(
+        self,
+        scores: Sequence[Mapping[str, Any]] | None,
+        *,
+        db: Any | None = None,
+    ) -> list[AlertTransition]:
+        """Turn thermal-risk scores into ``medtech-model-spindle-risk`` alerts.
+
+        Same state machine as a threshold rule: one fingerprint per rule ×
+        Spindle 3 × pipeline, open at ``risk >= threshold``, clear only once the
+        risk falls to ``threshold - hysteresis``. Repeated scores update the
+        open alert instead of opening new ones.
+        """
+        async with self._lock:
+            transitions: list[AlertTransition] = []
+            for raw in list(scores or [])[:200]:
+                if not isinstance(raw, Mapping):
+                    continue
+                transition = await self._ingest_score(raw, db=db)
+                if transition is not None:
+                    transitions.append(transition)
+            return transitions
+
     async def acknowledge(
         self,
         alert_id: str,
@@ -527,12 +679,18 @@ class AlertEngine:
         force_open: bool = False,
         forced_value: float | None = None,
         forced_sensor_ids: list[str] | None = None,
+        live_metadata: Mapping[str, Any] | None = None,
+        sensor_ids_override: list[str] | None = None,
+        refresh_in_band: bool = False,
     ) -> AlertTransition | None:
         violated, value, sensor_ids = _rule_state(rule, index)
         if force_open:
             violated = True
             value = forced_value if forced_value is not None else value
             sensor_ids = forced_sensor_ids or sensor_ids or [rule.sensor_id]
+        if sensor_ids_override:
+            sensor_ids = list(sensor_ids_override)
+        live = dict(live_metadata or {})
         fp = fingerprint_for(rule.rule_id, _configured_sensor_ids(rule), pipeline_id)
         existing = await self._lookup_fingerprint(fp, db)
         now = self._now_dt()
@@ -542,9 +700,22 @@ class AlertEngine:
             if existing is None or existing.status == "cleared":
                 started = self._pending.get(fp, now)
                 self._pending[fp] = started
+                first_reading = self._pending_reading.get(fp)
+                if first_reading is None:
+                    first_reading = reading_time(index.get(rule.sensor_id))
+                    if first_reading is not None:
+                        self._pending_reading[fp] = first_reading
                 if (now - started).total_seconds() < duration:
                     return None
                 self._pending.pop(fp, None)
+                self._pending_reading.pop(fp, None)
+                onset = excursion_started_at(first_reading, started, now, duration).isoformat()
+                # The row keeps the open episode's onset; the opened event keeps a
+                # copy so earlier episodes still have theirs after a reopen. A
+                # predicted alert has no excursion yet, so it never records one.
+                predicted = rule.rule_id == MODEL_RULE_ID
+                onset_fields = {} if predicted else {EXCURSION_STARTED_KEY: onset}
+                extra = {**extra, **onset_fields}
                 alert = AlertRecord(
                     id=str(uuid.uuid4()),
                     fingerprint=fp,
@@ -560,6 +731,12 @@ class AlertEngine:
                     threshold=float(rule.threshold),
                     opened_at=now,
                     updated_at=now,
+                    metadata={
+                        **open_metadata(rule, index.get(rule.sensor_id), industry, now),
+                        # First over-limit reading seen; excursion windows start here.
+                        **onset_fields,
+                        **live,
+                    },
                 )
                 if existing is not None:
                     alert = replace(alert, id=existing.id)
@@ -579,6 +756,7 @@ class AlertEngine:
                     updated_at=now,
                     threshold=float(rule.threshold),
                     sensor_ids=list(sensor_ids or existing.sensor_ids),
+                    metadata={**existing.metadata, **_episode_update(live)},
                 )
                 self._store(alert)
                 transition = AlertTransition(event_type=EVENT_UPDATED, alert=alert, extra=extra)
@@ -592,9 +770,24 @@ class AlertEngine:
         # for this sensor; only an in-limit reading restarts the duration timer.
         if value is not None:
             self._pending.pop(fp, None)
+            self._pending_reading.pop(fp, None)
         if existing is None or existing.status == "cleared":
             return None
         recovered, clear_value = _any_required_recovered(rule, index)
+        if clear_value is not None and not recovered and refresh_in_band:
+            # Inside the clear band: still open, but show the current score.
+            if existing.value == clear_value:
+                return None
+            alert = replace(
+                existing,
+                value=clear_value,
+                updated_at=now,
+                metadata={**existing.metadata, **_episode_update(live)},
+            )
+            self._store(alert)
+            transition = AlertTransition(event_type=EVENT_UPDATED, alert=alert, extra=extra)
+            applied = await self._persist_transition(transition, db)
+            return transition if applied else None
         if not recovered or clear_value is None:
             return None
         alert = replace(
@@ -603,6 +796,7 @@ class AlertEngine:
             value=clear_value,
             updated_at=now,
             cleared_at=now,
+            metadata={**existing.metadata, **_episode_update(live)},
         )
         self._store(alert)
         transition = AlertTransition(event_type=EVENT_CLEARED, alert=alert, extra=extra)
@@ -662,6 +856,37 @@ class AlertEngine:
             forced_sensor_ids=[sensor_id],
         )
 
+    async def _ingest_score(
+        self, raw: Mapping[str, Any], *, db: Any | None
+    ) -> AlertTransition | None:
+        score = _to_float(raw.get("risk_score"))
+        if score is None:
+            return None
+        threshold = _to_float(raw.get("threshold"))
+        hysteresis = _to_float(raw.get("hysteresis"))
+        rule = risk_alert_rule(
+            threshold=DEFAULT_THRESHOLD if threshold is None else threshold,
+            hysteresis=DEFAULT_HYSTERESIS if hysteresis is None else hysteresis,
+            duration_s=_to_float(raw.get("duration_s")) or 0.0,
+        )
+        value = round(score, 2)
+        metadata = {
+            **_risk_metadata(raw, score, rule.threshold, rule.hysteresis),
+            **lot_fields(raw.get("lot") if isinstance(raw.get("lot"), Mapping) else None),
+        }
+        pipeline_id = raw.get("pipeline_id")
+        return await self._evaluate_rule(
+            rule,
+            {rule.sensor_id: {"sensor_id": rule.sensor_id, "value": value}},
+            industry=_catalog_industry(str(raw.get("industry") or "manufacturing")),
+            pipeline_id=str(pipeline_id) if pipeline_id is not None else None,
+            db=db,
+            extra={"alert_kind": metadata["alert_kind"], "risk_score": metadata["risk_score"]},
+            live_metadata=metadata,
+            sensor_ids_override=list(RISK_SENSOR_IDS),
+            refresh_in_band=True,
+        )
+
     async def _persist_transition(self, transition: AlertTransition, db: Any | None) -> bool:
         if db is None:
             return True
@@ -690,6 +915,20 @@ class AlertEngine:
                         opened_at = CASE
                             WHEN alert.status = 'cleared' THEN EXCLUDED.opened_at
                             ELSE alert.opened_at
+                        END,
+                        -- Per-episode: a reopen takes the new episode's lot context,
+                        -- excursion start and fault code; updates keep the open one's.
+                        -- The model alert (MODEL_RULE_ID) also refreshes its score
+                        -- fields (risk_score, model_version, top_features) on update.
+                        metadata = CASE
+                            WHEN alert.status = 'cleared' THEN EXCLUDED.metadata
+                            WHEN alert.rule_id = 'medtech-model-spindle-risk'
+                                THEN COALESCE(alert.metadata, '{}'::jsonb) || EXCLUDED.metadata
+                            ELSE alert.metadata
+                        END,
+                        fault_code = CASE
+                            WHEN alert.status = 'cleared' THEN EXCLUDED.fault_code
+                            ELSE alert.fault_code
                         END,
                         status = EXCLUDED.status,
                         severity = EXCLUDED.severity,
@@ -823,4 +1062,20 @@ async def evaluate_and_emit(
         syncer = getattr(state, "alert_snapshot_synchronizer", None)
         if syncer is not None:
             syncer.mark_dirty()
+    _observe_for_risk_model(state, readings, resolved_industry, pipeline_id)
     return transitions
+
+
+def _observe_for_risk_model(
+    state: Any,
+    readings: Sequence[Mapping[str, Any]],
+    industry: str | None,
+    pipeline_id: str | None,
+) -> None:
+    """Feed the thermal-risk scorer; scoring runs in the background."""
+    from iot_twin.services.ml.risk_scorer import observe_and_score
+
+    try:
+        observe_and_score(state, readings, industry=industry, pipeline_id=pipeline_id)
+    except Exception:
+        logger.exception("risk scorer observe failed")

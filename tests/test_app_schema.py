@@ -1,6 +1,6 @@
-"""Integration tests for the iot-app-backend data-model DDL (Phase 1, Task 1.2).
+"""Integration tests for the pharma-twin-backend data-model DDL (Phase 1, Task 1.2).
 
-Runs against the live ``iot-app-backend`` Lakebase project inside a throwaway
+Runs against the live ``pharma-twin-backend`` Lakebase project inside a throwaway
 schema (see ``app_backend_conn`` in conftest).  Asserts the three tables plus
 their FK (ON DELETE CASCADE) / UNIQUE constraints exist after the idempotent
 ``ensure_*`` creators run, and that a setup delete cascades to deployments and
@@ -153,7 +153,7 @@ async def test_delete_setup_cascades_to_children(app_backend_conn) -> None:
         setup_id,
         dep_id,
         "kafka_topic",
-        "iot.pharmaceutical.realtime",
+        "pharma-twin.pharmaceutical.realtime",
         json.dumps({"partitions": 3}),
     )
 

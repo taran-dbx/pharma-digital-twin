@@ -14,7 +14,7 @@ import pytest
 from iot_twin.services.industry import industry_catalog_service as ics
 
 CATALOG = "example_eu_catalog"
-SCHEMA = "rtm_lakets_zb"
+SCHEMA = "pharma_twin"
 
 
 @pytest.fixture(autouse=True)
@@ -50,8 +50,8 @@ def _make_ws(*, ext_loc=True, has_warehouse=True):
 # ---------------------------------------------------------------------------
 class TestNames:
     def test_catalog_name_sanitizes(self) -> None:
-        assert ics.catalog_name("Pharmaceutical") == "iot_pharmaceutical"
-        assert ics.catalog_name("Oil & Gas") == "iot_oil_gas"
+        assert ics.catalog_name("Pharmaceutical") == "pharma_twin_pharmaceutical"
+        assert ics.catalog_name("Oil & Gas") == "pharma_twin_oil_gas"
 
     def test_industry_table_builds_prefixed_fqn(self) -> None:
         assert ics.industry_table("pharmaceutical", "zerobus") == (

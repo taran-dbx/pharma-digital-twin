@@ -130,7 +130,7 @@ test.describe("[Windsor] Per-pipeline Genie on the manufacturing cell", () => {
     await expect(bar).toHaveAttribute("data-chart-kind", "bar");
     await expect(bar.getByTestId("genie-result-bar")).toBeVisible();
     await expect(table).toHaveAttribute("data-chart-kind", "table");
-    await expect(table.getByTestId("genie-result-table")).toContainText("M-SPINDLE-HOT");
+    await expect(table.getByTestId("genie-result-table")).toContainText("VPP-SPINDLE3-TEMP");
     await expect(table.getByTestId("genie-result-view-chart")).toHaveCount(0);
   });
 

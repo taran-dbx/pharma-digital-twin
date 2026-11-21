@@ -33,7 +33,7 @@ def _example_overrides() -> dict[str, str]:
 
 def _env_entries() -> list[dict[str, Any]]:
     data = yaml.safe_load((ROOT / "resources" / "app.yml").read_text(encoding="utf-8"))
-    return data["resources"]["apps"]["iot_twin"]["config"]["env"]
+    return data["resources"]["apps"]["pharma_twin"]["config"]["env"]
 
 
 def _resolve(raw: str, values: dict[str, str]) -> str:
@@ -88,3 +88,116 @@ def test_deployment_doc_lists_exactly_the_required_variables() -> None:
     assert documented == required, (
         f"missing from docs: {required - documented}; stale in docs: {documented - required}"
     )
+
+
+def test_resource_prefix_ident_is_tied_to_resource_prefix() -> None:
+    """``resource_prefix_ident`` must be the underscore form of ``resource_prefix``.
+
+    DABs has no string replace, so the pair is declared twice. A mismatch would give
+    ``uc_schema`` a name outside the prefix namespace, which the app rejects at startup.
+    """
+    from iot_twin.core.config import validate_resource_prefix
+
+    variables = _bundle_variables()
+    prefix = validate_resource_prefix(str(variables["resource_prefix"]["default"]))
+    assert variables["resource_prefix_ident"]["default"] == prefix.replace("-", "_")
+    overrides = _example_overrides()
+    if "resource_prefix" in overrides or "resource_prefix_ident" in overrides:
+        assert overrides.get("resource_prefix_ident") == str(
+            overrides.get("resource_prefix", prefix)
+        ).replace("-", "_"), "override resource_prefix and resource_prefix_ident together"
+
+
+def test_derived_uc_schema_passes_the_app_ownership_check(monkeypatch) -> None:
+    from iot_twin.core.config import is_owned_name
+
+    variables = _bundle_variables()
+    monkeypatch.setenv("RESOURCE_PREFIX", str(variables["resource_prefix"]["default"]))
+    assert variables["uc_schema"]["default"] == "${var.resource_prefix_ident}"
+    assert is_owned_name(str(variables["resource_prefix_ident"]["default"]))
+
+
+def _targets() -> dict[str, Any]:
+    data = yaml.safe_load((ROOT / "databricks.yml").read_text(encoding="utf-8"))
+    return data["targets"]
+
+
+ENDPOINT_REF = "${resources.model_serving_endpoints.spindle_risk.name}"
+
+
+def test_dev_target_does_not_prefix_resource_names() -> None:
+    """Dev mode decorates names ("[dev <user>] " / "dev_<user>_"), so nothing may
+    hardcode the endpoint name: the app's serving resource and the training job's
+    --endpoint-name both follow the bundle endpoint resource, whatever its name."""
+    assert _targets()["dev"].get("mode") == "development"
+    app = yaml.safe_load((ROOT / "resources" / "app.yml").read_text(encoding="utf-8"))
+    serving = [
+        r
+        for r in app["resources"]["apps"]["pharma_twin"]["resources"]
+        if "serving_endpoint" in r and r["name"] == "risk-endpoint"
+    ]
+    assert [r["serving_endpoint"]["name"] for r in serving] == [ENDPOINT_REF]
+    env = {e["name"]: e for e in app["resources"]["apps"]["pharma_twin"]["config"]["env"]}
+    assert env["RISK_ENDPOINT_NAME"].get("value_from") == serving[0]["name"]
+    risk = yaml.safe_load((ROOT / "resources" / "risk_model.yml").read_text(encoding="utf-8"))
+    params = risk["resources"]["jobs"]["risk_model_train"]["tasks"][0]["spark_python_task"][
+        "parameters"
+    ]
+    assert params[params.index("--endpoint-name") + 1] == ENDPOINT_REF
+    entity = risk["resources"]["model_serving_endpoints"]["spindle_risk"]["config"][
+        "served_entities"
+    ][0]
+    # The dev-prefixed endpoint serves the same registered version as any other target.
+    assert entity["entity_version"] == "${var.risk_model_version}"
+
+
+def test_risk_resources_resolve_to_owned_pharma_twin_names() -> None:
+    defaults = {name: str(spec.get("default", "")) for name, spec in _bundle_variables().items()}
+    risk = yaml.safe_load((ROOT / "resources" / "risk_model.yml").read_text(encoding="utf-8"))
+    job = _resolve(risk["resources"]["jobs"]["risk_model_train"]["name"], defaults)
+    endpoint = _resolve(
+        risk["resources"]["model_serving_endpoints"]["spindle_risk"]["name"], defaults
+    )
+    assert job == "pharma-twin-risk-model-train"
+    assert endpoint == "pharma-twin-spindle-risk"
+    for target in _targets().values():
+        overrides = {k: str(v) for k, v in (target.get("variables") or {}).items()}
+        for name in ("risk_job_name", "risk_endpoint_name"):
+            assert overrides.get(name, defaults[name]).startswith("pharma-twin")
+    app = yaml.safe_load((ROOT / "resources" / "app.yml").read_text(encoding="utf-8"))
+    serving = [
+        r["serving_endpoint"]["name"]
+        for r in app["resources"]["apps"]["pharma_twin"]["resources"]
+        if "serving_endpoint" in r and r["name"] == "risk-endpoint"
+    ]
+    # The app queries the bundle's endpoint resource, i.e. pharma-twin-spindle-risk.
+    assert serving == ["${resources.model_serving_endpoints.spindle_risk.name}"]
+
+
+def test_genai_endpoint_is_a_can_query_resource_injected_as_env() -> None:
+    data = yaml.safe_load((ROOT / "resources" / "app.yml").read_text(encoding="utf-8"))
+    app = data["resources"]["apps"]["pharma_twin"]
+    resource = next(r for r in app["resources"] if r["name"] == "genai-endpoint")
+    assert resource["serving_endpoint"] == {
+        "name": "${var.genai_endpoint}",
+        "permission": "CAN_QUERY",
+    }
+    env = {e["name"]: e for e in app["config"]["env"]}
+    assert env["GENAI_ENDPOINT"] == {"name": "GENAI_ENDPOINT", "value_from": "genai-endpoint"}
+    assert _bundle_variables()["genai_endpoint"]["default"] == "databricks-claude-sonnet-5-5"
+
+
+def test_pseudonym_key_is_a_read_secret_resource_injected_as_env() -> None:
+    data = yaml.safe_load((ROOT / "resources" / "app.yml").read_text(encoding="utf-8"))
+    app = data["resources"]["apps"]["pharma_twin"]
+    resource = next(r for r in app["resources"] if r["name"] == "genai-pseudonym-salt")
+    assert resource["secret"] == {
+        "scope": "${var.secret_scope}",
+        "key": "${var.genai_pseudonym_salt_key}",
+        "permission": "READ",
+    }
+    env = {e["name"]: e for e in app["config"]["env"]}
+    assert env["GENAI_PSEUDONYM_SALT"]["value_from"] == "genai-pseudonym-salt"
+    variables = _bundle_variables()
+    assert variables["secret_scope"]["default"] == "pharma-twin-secrets"
+    assert variables["genai_pseudonym_salt_key"]["default"] == "genai-pseudonym-salt"

@@ -1,7 +1,7 @@
 """Admin pipeline management API (spec §2.3–2.9, plan Task 2.4 + Phase 6 backend).
 
 Exposes the app-backend data model (``pipeline_setup`` / ``pipeline_deployment``
-/ ``provisioned_resource`` in the ``iot-app-backend`` project) and the
+/ ``provisioned_resource`` in the ``<prefix>-backend`` project) and the
 provisioning + teardown engine over admin-gated HTTP endpoints:
 
     POST   /api/admin/industries/{industry}/setup      create/update a setup (one per industry)
@@ -16,7 +16,7 @@ the app uses) and require the additive app-backend DB pool
 outage degrades gracefully instead of 500-ing.
 
 Additive only: this router never touches ``PGHOST`` / ``LAKEBASE_ENDPOINT`` / the
-legacy ``iot-lakets-demo`` connection or the ``pipelines`` / ``user_settings`` /
+legacy ``<prefix>-lakets-demo`` connection or the ``pipelines`` / ``user_settings`` /
 ``source_bindings`` wiring.
 
 TODO (Phase 4 — separate task): the validation-flow routes
@@ -62,7 +62,7 @@ from iot_twin.services.pipelines import (
 )
 from iot_twin.services.validation import validation_state_machine
 
-logger = logging.getLogger("iot_digital_twin.routes.industries_admin")
+logger = logging.getLogger("pharma_twin.routes.industries_admin")
 
 router = APIRouter()
 

@@ -41,6 +41,7 @@ from typing import Any
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.core import Config
 
+from iot_twin.core.config import is_owned_name, owned_env
 from iot_twin.core.lakebase import LakebaseConnectionManager
 from iot_twin.core.state import AppState
 from iot_twin.core.workspace_config import get_pipelines_project
@@ -51,7 +52,7 @@ from iot_twin.services.pipelines.pipeline_project_service import (
     endpoint_resource_name,
 )
 
-logger = logging.getLogger("iot_digital_twin.services.pipeline_db")
+logger = logging.getLogger("pharma_twin.services.pipeline_db")
 
 # Bound pool init so a hung Lakebase host cannot pin request workers.
 _LAKEBASE_CONNECT_TIMEOUT_SECONDS = float(os.getenv("LAKEBASE_CONNECT_TIMEOUT_SECONDS", "10"))
@@ -158,13 +159,21 @@ async def get_pipeline_lakebase(state: AppState, pipeline_id: str) -> PipelineLa
         if sc is None:
             return None
 
-        project_id = sc.get("lb_project_id") or os.getenv("LAKEBASE_PROJECT_ID", "")
+        project_id = sc.get("lb_project_id") or owned_env("LAKEBASE_PROJECT_ID")
         branch_id = sc.get("lb_branch_id") or "production"
         database = sc.get("lb_database") or os.getenv("PGDATABASE", "databricks_postgres")
         endpoint_name = f"projects/{project_id}/branches/{branch_id}/endpoints/primary"
 
         if not project_id:
             logger.warning("Pipeline %s: no lb_project_id in sink_config", pipeline_id)
+            return None
+        if not is_owned_name(project_id):
+            logger.error(
+                "Pipeline %s: stored lb_project_id %r is not owned by this deployment; "
+                "refusing to connect",
+                pipeline_id,
+                project_id,
+            )
             return None
 
         host = await _resolve_endpoint_host_bounded(endpoint_name)

@@ -33,7 +33,7 @@ import type { DeployedPipeline, Health, PipelineMode as CardMode } from "./pipel
 /** Per-industry display metadata (backend rows carry no icon/tagline). */
 const INDUSTRY_META: Record<string, { icon: LucideIcon; tagline: string }> = {
   pharmaceutical: { icon: FlaskConical, tagline: "Bioreactor · WFI · batch yield" },
-  manufacturing: { icon: Factory, tagline: "Assembly line · CNC · robotics" },
+  manufacturing: { icon: Factory, tagline: "Life Sciences · orthopaedic implants · 5-axis machining" },
   energy: { icon: Zap, tagline: "Turbines · grid load · substations" },
 };
 

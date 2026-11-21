@@ -34,7 +34,7 @@ class AppState:
     db_available: bool = False
     db_error: str | None = None
 
-    # App-backend metadata DB (additive; separate iot-app-backend project).
+    # App-backend metadata DB (additive; separate <prefix>-backend project).
     # Backs pipeline_setup / pipeline_deployment / provisioned_resource.
     app_backend_db: LakebaseConnectionManager | None = None
     app_backend_available: bool = False
@@ -50,7 +50,13 @@ class AppState:
     alert_engine: Any = None
     # Operator decisions per alert episode (services/alerts/alert_responses.py)
     alert_response_store: Any = None
+    # AI action-plan audit (services/genai/audit_store.py) and its UC mirror
+    genai_audit_store: Any = None
+    genai_audit_synchronizer: Any = None
+    genai_limiter: Any = None
     production_control: Any = None
+    # Spindle 3 thermal-risk scorer (services/ml/risk_scorer.py); False = disabled
+    risk_scorer: Any = None
 
     # Genie conversation ownership — process-local, fail-closed after restart
     genie_conversations: dict[str, dict[str, str]] = field(default_factory=dict)
@@ -64,6 +70,7 @@ class AppState:
     industry_runtime_refresh_tasks: set[asyncio.Task] = field(default_factory=set)
     alert_snapshot_synchronizer: Any = None
     alert_snapshot_sync_task: asyncio.Task | None = None
+    genai_audit_sync_task: asyncio.Task | None = None
 
     # Shutdown coordination
     shutdown_event: asyncio.Event = field(default_factory=asyncio.Event)

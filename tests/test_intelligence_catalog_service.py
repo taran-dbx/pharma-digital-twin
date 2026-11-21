@@ -9,7 +9,7 @@ import pytest
 from iot_twin.services import intelligence_catalog_service as ics
 
 CATALOG = "test_catalog"
-SCHEMA = "test_schema"
+SCHEMA = "pharma_twin_test"
 
 
 @pytest.fixture(autouse=True)
@@ -123,7 +123,10 @@ class TestProvision:
 
         joined = "\n".join(executed)
         assert "`example-catalog`" in joined
-        assert "INSERT OVERWRITE TABLE `example-catalog`.test_schema.intelligence_assets" in joined
+        assert (
+            "INSERT OVERWRITE TABLE `example-catalog`.pharma_twin_test.intelligence_assets"
+            in joined
+        )
 
     @pytest.mark.asyncio
     async def test_replace_batches_values_c7503_regression(self) -> None:

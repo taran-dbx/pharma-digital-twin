@@ -36,15 +36,17 @@ _EXPECTED_ENV_NAMES = (
     "INDUSTRIES",
     "ADMIN_GROUP",
     "GENIE_SPACE_ID",
+    "GENAI_ENDPOINT",
+    "GENAI_PSEUDONYM_SALT",
     "USAGE_TRACKING_ENABLED",
 )
 
 _MINIMAL_PROFILE = {
     "UC_CATALOG": "test-catalog",
-    "UC_SCHEMA": "test_schema",
+    "UC_SCHEMA": "pharma_twin_test",
     "PGHOST": "",
-    "LAKEBASE_PROJECT": "iot-app-backend",
-    "LAKEBASE_ENDPOINT": "projects/iot-app-backend/branches/production/endpoints/primary",
+    "LAKEBASE_PROJECT": "pharma-twin-backend",
+    "LAKEBASE_ENDPOINT": "projects/pharma-twin-backend/branches/production/endpoints/primary",
     "DATABRICKS_SQL_WAREHOUSE_ID": "warehouse-id",
     "ZEROBUS_SERVER_ENDPOINT": "123.zerobus.us-east-1.cloud.databricks.com",
     "ZEROBUS_CLIENT_ID": "",
@@ -56,7 +58,7 @@ _MINIMAL_PROFILE = {
     "PIPELINES_LAKEBASE_PROJECT": "",
     "MSK_BOOTSTRAP_SERVERS": "",
     "INDUSTRIES": "pharmaceutical",
-    "ADMIN_GROUP": "iot-admins",
+    "ADMIN_GROUP": "pharma-twin-admins",
 }
 
 
@@ -109,6 +111,8 @@ def test_render_includes_runtime_command_and_all_env_names(renderer) -> None:
     for env_name in _EXPECTED_ENV_NAMES:
         assert f"name: {env_name}" in rendered
     assert "valueFrom: genie-space" in rendered
+    assert "name: GENAI_ENDPOINT\n    valueFrom: genai-endpoint" in rendered
+    assert "name: GENAI_PSEUDONYM_SALT\n    valueFrom: genai-pseudonym-salt" in rendered
     assert "GENIE_SPACE_ID" in rendered
     assert "name: DATABRICKS_SQL_WAREHOUSE_ID\n    valueFrom: sql-warehouse" in rendered
     assert "warehouse-id" not in rendered
@@ -133,7 +137,7 @@ def test_eu_example_profile_values(renderer) -> None:
     assert profile["DATABRICKS_SQL_WAREHOUSE_ID"] == "0123456789abcdef"
     assert profile["ZEROBUS_CLIENT_ID"] == "00000000-0000-0000-0000-00000000000a"
     assert profile["UC_SERVICE_CREDENTIAL"] == "iot-rtm-sc"
-    assert profile["PIPELINES_LAKEBASE_PROJECT"] == "iot-pipelines"
+    assert profile["PIPELINES_LAKEBASE_PROJECT"] == "pharma-twin-pipelines"
     assert profile["MSK_BOOTSTRAP_SERVERS"] == (
         "boot-public-9dm.example.abc123.c1.kafka.eu-central-1.amazonaws.com:9198,"
         "boot-public-hak.example.abc123.c1.kafka.eu-central-1.amazonaws.com:9198,"
@@ -147,19 +151,19 @@ def test_us_example_profile_values(renderer) -> None:
     profile = renderer.load_profile("example-us-east", PROFILES_DIR, use_example=True)
 
     assert profile["UC_CATALOG"] == "example-catalog"
-    assert profile["UC_SCHEMA"] == "rtm_lakets_zb"
+    assert profile["UC_SCHEMA"] == "pharma_twin"
     assert profile["DATABRICKS_SQL_WAREHOUSE_ID"] == "0123456789abcdef"
     assert (
         profile["ZEROBUS_SERVER_ENDPOINT"]
         == "111111111111111.zerobus.us-east-1.cloud.databricks.com"
     )
     assert profile["UC_SERVICE_CREDENTIAL"] == "iot-rtm-sc"
-    assert profile["PIPELINES_LAKEBASE_PROJECT"] == "iot-pipelines-example"
+    assert profile["PIPELINES_LAKEBASE_PROJECT"] == "pharma-twin-pipelines-example"
     assert profile["PGHOST"] == "example-lakebase.database.us-east-1.cloud.databricks.com"
-    assert profile["LAKEBASE_PROJECT"] == "iot-app-backend-example"
+    assert profile["LAKEBASE_PROJECT"] == "pharma-twin-backend-example"
     assert (
         profile["LAKEBASE_ENDPOINT"]
-        == "projects/iot-app-backend-example/branches/production/endpoints/primary"
+        == "projects/pharma-twin-backend-example/branches/production/endpoints/primary"
     )
     assert profile["ZEROBUS_CLIENT_ID"] == "00000000-0000-0000-0000-00000000000b"
     assert profile["ZEROBUS_SECRET_SCOPE"] == ""
@@ -177,7 +181,7 @@ def test_us_example_render_uses_blank_zerobus_secret_env(renderer) -> None:
 
     assert 'name: ZEROBUS_SECRET_SCOPE\n    value: ""' in rendered
     assert 'name: ZEROBUS_SECRET_KEY\n    value: ""' in rendered
-    assert "iot-secrets" not in rendered
+    assert "pharma-twin-secrets" not in rendered
 
 
 def test_eu_example_render_uses_blank_zerobus_secret_env(renderer) -> None:
@@ -186,7 +190,7 @@ def test_eu_example_render_uses_blank_zerobus_secret_env(renderer) -> None:
 
     assert 'name: ZEROBUS_SECRET_SCOPE\n    value: ""' in rendered
     assert 'name: ZEROBUS_SECRET_KEY\n    value: ""' in rendered
-    assert "iot-secrets" not in rendered
+    assert "pharma-twin-secrets" not in rendered
 
 
 def test_committed_app_yaml_matches_example_profile(renderer) -> None:
@@ -306,7 +310,9 @@ def test_real_profile_lookup_ignores_example_templates(renderer, tmp_path: Path)
     (tmp_path / "only.profile.example").write_text(json.dumps(_MINIMAL_PROFILE), encoding="utf-8")
     with pytest.raises(renderer.ProfileError, match="profile.example"):
         renderer.load_profile("only", tmp_path)
-    assert renderer.load_profile("only", tmp_path, use_example=True)["UC_SCHEMA"] == "test_schema"
+    assert (
+        renderer.load_profile("only", tmp_path, use_example=True)["UC_SCHEMA"] == "pharma_twin_test"
+    )
 
 
 def _bundle_env_names() -> set[str]:
@@ -339,7 +345,11 @@ def test_bundle_env_matches_app_yaml() -> None:
         "UC_STORAGE_BASE",
         "UC_EXTERNAL_LOCATION",
     }
-    assert bundle - {"ADMIN_EMAILS"} == app_yaml - {"ADMIN_EMAILS"} - empty_only, (
+    # The thermal-risk scorer is wired only through the bundle: RISK_ENDPOINT_NAME
+    # comes from the bundle's serving-endpoint resource, which app.yaml deployments
+    # do not declare. Without it the scorer is off (docs/ml-risk-model.md).
+    bundle_only = {"RISK_ENDPOINT_NAME", "RISK_MODEL_NAME", "RISK_ALERT_THRESHOLD"}
+    assert bundle - {"ADMIN_EMAILS"} - bundle_only == app_yaml - {"ADMIN_EMAILS"} - empty_only, (
         f"drift: only in bundle={bundle - app_yaml}, only in app.yaml={app_yaml - bundle}"
     )
 

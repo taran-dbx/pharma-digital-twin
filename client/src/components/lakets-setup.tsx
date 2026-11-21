@@ -300,7 +300,7 @@ export function LaketsSetup({
           {createNewProject ? (
             <LabeledInput
               label="New Project Name"
-              placeholder="iot-twin-lakebase"
+              placeholder="pharma-twin-lakebase"
               value={newProjectName}
               onChange={setNewProjectName}
               error={projectNameError}

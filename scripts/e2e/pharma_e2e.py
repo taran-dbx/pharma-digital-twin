@@ -34,19 +34,86 @@ sys.path.insert(0, str(ROOT))
 
 from scripts._profile import require_profile  # noqa: E402
 
+from iot_twin.core import resource_names  # noqa: E402
+from iot_twin.core.config import (  # noqa: E402
+    assert_owned_name,
+    get_resource_prefix,
+    get_uc_service_credential,
+)
+
 require_profile()  # --profile <name> or $DATABRICKS_CONFIG_PROFILE; no default workspace
 
-STATE_FILE = Path(os.getenv("E2E_STATE_FILE", "/tmp/pharma_e2e_state.json"))
+# Prefix-scoped so it never collides with the upstream script's /tmp state file.
+STATE_FILE = Path(os.getenv("E2E_STATE_FILE") or f"/tmp/{get_resource_prefix()}_e2e_state.json")
 
 INDUSTRY = "pharmaceutical"
-# UC service credential *name* (an identifier, not a secret).
-UC_SC_NAME = "iot-rtm-sc"
+# Every name below derives from RESOURCE_PREFIX so this script can never touch
+# the upstream deployment's catalog, branch or jobs.
+CATALOG = resource_names.catalog_name(INDUSTRY)
+PIPELINES_PROJECT = os.getenv("PIPELINES_LAKEBASE_PROJECT") or resource_names.pipelines_project()
+BRANCH = f"projects/{PIPELINES_PROJECT}/branches/{INDUSTRY}"
+JOB_NAMES = tuple(resource_names.pipeline_name(INDUSTRY, m) for m in ("microbatch", "realtime"))
+# UC service credential *name* (an identifier, not a secret); shared, overridable.
+UC_SC_NAME = get_uc_service_credential()
 WAREHOUSE_ID = os.getenv("E2E_WAREHOUSE_ID", "0123456789abcdef")  # lakets-demo-wh (RUNNING)
 BOOTSTRAP_PUBLIC = (
     "b-2-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198,"
     "b-3-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198,"
     "b-1-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198"
 )
+
+# Fail before ANY stage runs if an env override points outside this deployment.
+for _name, _what in (
+    (PIPELINES_PROJECT, "PIPELINES_LAKEBASE_PROJECT"),
+    (BRANCH, "pipelines branch"),
+    (CATALOG, "catalog"),
+    *((jn, "job name") for jn in JOB_NAMES),
+):
+    assert_owned_name(_name, what=_what)
+
+
+def _owned_backend() -> tuple[str, str]:
+    """Return (endpoint, host) of the OWNED app-backend project.
+
+    The host is resolved from the owned endpoint, never trusted from PGHOST /
+    APP_BACKEND_PGHOST: a host name does not reveal its project, so a stray
+    PGHOST could otherwise point this script at the upstream database.
+    """
+    from databricks.sdk import WorkspaceClient
+
+    from iot_twin.services.db import app_backend_db as abd
+
+    endpoint = abd.APP_BACKEND_ENDPOINT or (
+        f"projects/{abd.APP_BACKEND_PROJECT}/branches/production/endpoints/primary"
+    )
+    assert_owned_name(endpoint, what="app-backend endpoint")
+    host = WorkspaceClient().postgres.get_endpoint(name=endpoint).status.hosts.host
+    if abd.APP_BACKEND_HOST and host != abd.APP_BACKEND_HOST:
+        raise SystemExit(
+            f"PGHOST/APP_BACKEND_PGHOST {abd.APP_BACKEND_HOST!r} is not the host of the owned "
+            f"endpoint {endpoint!r} ({host!r}); refusing to connect"
+        )
+    return endpoint, host
+
+
+async def _assert_owned_setup(db, setup: dict | None, setup_id: str) -> dict:
+    """Refuse to delete anything unless the setup row is this script's own.
+
+    The row must exist, match the state-file id and industry, and every ledger
+    row naming a Lakebase path, UC catalog/schema/table/volume, secret scope,
+    Kafka topic or service principal must be owned
+    (:func:`iot_twin.services.ownership.assert_owned_ledger_row`).
+    """
+    from iot_twin.core.workspace_config import get_uc_catalog
+    from iot_twin.services import resource_ledger
+    from iot_twin.services.ownership import assert_owned_ledger
+
+    if not setup or str(setup.get("id")) != str(setup_id) or setup.get("industry") != INDUSTRY:
+        raise SystemExit(f"setup {setup_id!r} is missing or not this script's {INDUSTRY} setup")
+    assert_owned_ledger(
+        await resource_ledger.list_resources(db, setup_id), shared_catalog=get_uc_catalog()
+    )
+    return setup
 
 
 def _load_state() -> dict:
@@ -66,9 +133,17 @@ def _pp(label, obj):
 
 async def _db():
     from iot_twin.models import app_schema
-    from iot_twin.services.db.app_backend_db import build_app_backend_manager
 
-    db = build_app_backend_manager()
+    # Not build_app_backend_manager(): its env-sourced host is not trusted here.
+    from iot_twin.services.db.app_backend_db import (
+        APP_BACKEND_DATABASE,
+        AppBackendConnectionManager,
+    )
+
+    endpoint, host = _owned_backend()
+    db = AppBackendConnectionManager(
+        pg_host=host, pg_database=APP_BACKEND_DATABASE, endpoint_name=endpoint
+    )
     await db.initialize()
     await app_schema.ensure_app_schema(db)
     return db
@@ -84,6 +159,7 @@ async def stage_setup():
     try:
         existing = await pipeline_setup_repo.get_setup_by_industry(db, INDUSTRY)
         if existing:
+            await _assert_owned_setup(db, existing, str(existing["id"]))
             print(f"setup already exists: {existing['id']}")
             st = _load_state()
             st["setup_id"] = str(existing["id"])
@@ -164,31 +240,29 @@ async def stage_verify_provision():
 
     # Catalog + schemas + volume + metrics table via DBSQL.
     try:
-        cat = await execute_dbsql("SHOW SCHEMAS IN iot_pharmaceutical", WAREHOUSE_ID)
+        cat = await execute_dbsql(f"SHOW SCHEMAS IN {CATALOG}", WAREHOUSE_ID)
         out["schemas"] = [r for r in cat["data"]]
     except Exception as e:
         out["schemas_error"] = str(e)[:300]
     try:
-        vol = await execute_dbsql("SHOW VOLUMES IN iot_pharmaceutical.checkpoints", WAREHOUSE_ID)
+        vol = await execute_dbsql(f"SHOW VOLUMES IN {CATALOG}.checkpoints", WAREHOUSE_ID)
         out["volumes"] = vol["data"]
     except Exception as e:
         out["volumes_error"] = str(e)[:300]
     try:
-        m = await execute_dbsql(
-            "DESCRIBE TABLE iot_pharmaceutical.metrics.streaming_metrics", WAREHOUSE_ID
-        )
+        m = await execute_dbsql(f"DESCRIBE TABLE {CATALOG}.metrics.streaming_metrics", WAREHOUSE_ID)
         out["metrics_cols"] = m["row_count"]
     except Exception as e:
         out["metrics_error"] = str(e)[:300]
     try:
-        g = await execute_dbsql("SHOW GRANTS ON CATALOG iot_pharmaceutical", WAREHOUSE_ID)
+        g = await execute_dbsql(f"SHOW GRANTS ON CATALOG {CATALOG}", WAREHOUSE_ID)
         out["catalog_grants"] = g["data"]
     except Exception as e:
         out["grants_error"] = str(e)[:300]
 
     # Lakebase branch + chronotable + partitions.
     try:
-        w.postgres.get_branch(name="projects/iot-pipelines/branches/pharmaceutical")
+        w.postgres.get_branch(name=BRANCH)
         out["branch"] = "exists"
     except Exception as e:
         out["branch_error"] = str(e)[:200]
@@ -415,7 +489,7 @@ REGION = "us-east-1"
 BOOTSTRAP = {BOOTSTRAP_PUBLIC!r}
 TOPIC = {topic!r}
 
-_sess = dbutils.credentials.getServiceCredentialsProvider("iot-rtm-sc")
+_sess = dbutils.credentials.getServiceCredentialsProvider({UC_SC_NAME!r})
 class _TP(AbstractTokenProvider):
     def token(self):
         try:
@@ -479,7 +553,7 @@ raw = (spark.readStream.format("kafka")
        .option("kafka.bootstrap.servers", BOOTSTRAP)
        .option("subscribe", TOPIC)
        .option("startingOffsets", "latest")
-       .option("databricks.serviceCredential", "iot-rtm-sc")
+       .option("databricks.serviceCredential", {UC_SC_NAME!r})
        .load())
 
 parsed = (raw.select(F.from_json(F.col("value").cast("string"), schema).alias("d"))
@@ -518,7 +592,7 @@ async def stage_deploy_mb():
     db = await _db()
     try:
         catalog = cat.catalog_name(INDUSTRY)
-        topic = "iot.pharmaceutical.microbatch"
+        topic = resource_names.topic_name(INDUSTRY, "microbatch")
         delta = f"{catalog}.microbatch.sensor_data_deploy"
         checkpoint = f"/Volumes/{catalog}/checkpoints/stream_checkpoints/deploy/microbatch"
 
@@ -587,6 +661,9 @@ async def stage_teardown():
     setup_id = st["setup_id"]
     db = await _db()
     try:
+        setup = await _assert_owned_setup(
+            db, await pipeline_setup_repo.get_setup(db, setup_id), setup_id
+        )
         before = await resource_ledger.list_resources(db, setup_id)
         _pp(
             "LEDGER before teardown (type -> count)",
@@ -598,7 +675,6 @@ async def stage_teardown():
 
         # Exact wiring copied from routes/industries_admin.delete_pipeline
         # (FIXED path — per-type deleters registry, not job-only):
-        setup = await pipeline_setup_repo.get_setup(db, setup_id)
         deleters = None
         try:
             from iot_twin.services import resource_deleters
@@ -655,20 +731,20 @@ async def stage_cleanup_cloud():
 
     # 1. Drop UC catalog CASCADE (removes schemas/tables/volume + external table).
     try:
-        await execute_dbsql("DROP CATALOG IF EXISTS iot_pharmaceutical CASCADE", WAREHOUSE_ID)
+        await execute_dbsql(f"DROP CATALOG IF EXISTS {CATALOG} CASCADE", WAREHOUSE_ID)
         out["catalog_drop"] = "ok"
     except Exception as e:
         out["catalog_drop_error"] = str(e)[:300]
 
     # 2. Delete Lakebase replica endpoint then the branch.
-    for name in ("projects/iot-pipelines/branches/pharmaceutical/endpoints/replica",):
+    for name in (f"{BRANCH}/endpoints/replica",):
         try:
             w.postgres.delete_endpoint(name=name)
             out[f"delete_{name.split('/')[-1]}"] = "ok"
         except Exception as e:
             out[f"delete_{name.split('/')[-1]}_error"] = str(e)[:200]
     try:
-        w.postgres.delete_branch(name="projects/iot-pipelines/branches/pharmaceutical")
+        w.postgres.delete_branch(name=BRANCH)
         out["delete_branch"] = "ok"
     except Exception as e:
         out["delete_branch_error"] = str(e)[:200]
@@ -694,24 +770,30 @@ async def stage_verify_gone():
         await db.close()
 
     try:
-        w.catalogs.get("iot_pharmaceutical")
+        w.catalogs.get(CATALOG)
         out["catalog"] = "STILL EXISTS"
     except Exception:
         out["catalog"] = "gone"
     try:
-        w.postgres.get_branch(name="projects/iot-pipelines/branches/pharmaceutical")
+        w.postgres.get_branch(name=BRANCH)
         out["branch"] = "STILL EXISTS"
     except Exception:
         out["branch"] = "gone"
     # Jobs
-    for jn in ("iot-pharmaceutical-microbatch", "iot-pharmaceutical-realtime"):
+    for jn in JOB_NAMES:
         jobs = [j.job_id for j in w.jobs.list(name=jn)]
         out[f"job:{jn}"] = jobs or "gone"
     # LakeTS ops jobs (named by branch)
     lakets_jobs = [
         j.settings.name
         for j in w.jobs.list()
-        if j.settings and j.settings.name and "pharmaceutical" in j.settings.name.lower()
+        if j.settings
+        and j.settings.name
+        and "pharmaceutical" in j.settings.name.lower()
+        and (
+            j.settings.name.startswith(f"{get_resource_prefix()}-")
+            or PIPELINES_PROJECT in j.settings.name
+        )
     ]
     out["any_pharma_jobs"] = lakets_jobs or "none"
     _pp("VERIFY nothing remains", out)

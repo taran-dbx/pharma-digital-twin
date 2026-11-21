@@ -1,0 +1,40 @@
+# Post-redeploy check, captured 2026-11-20T22:21:04Z
+# Code: deploy/integration 64bd902 (merge of feat/risk-model @7a90b0a: serialised scoring rounds, 30 s retry for an
+# unknown model identity, Python 3.14 breaker fix). App deployment SUCCEEDED, created 2026-11-20T22:10:04Z.
+
+## databricks apps get pharma-twin-dev (active deployment)
+{
+ "name": "pharma-twin-dev",
+ "deployment_state": "SUCCEEDED",
+ "deployment_created": "2026-11-20T22:10:04Z",
+ "compute": "ACTIVE"
+}
+## GET /api/health
+{
+ "status": "ok",
+ "db_available": true,
+ "db_error": null,
+ "industries": "manufacturing,pharmaceutical"
+}
+## dev serving endpoint (databricks serving-endpoints get)
+{
+ "name": "dev_<owner>_pharma-twin-spindle-risk",
+ "state": {
+  "config_update": "NOT_UPDATING",
+  "ready": "READY"
+ },
+ "served": [
+  [
+   "<catalog>.pharma_twin.spindle_thermal_risk",
+   "4"
+  ]
+ ]
+}
+## First predicted-alert events after the redeploy (control-plane Lakebase alert_event, rule medtech-model-spindle-risk)
+# opened 22:19:55.924 score 0.62 model_version 4 scored_at 22:18:54.70
+# updated 22:20:00.581 score 0.63 model_version 4 | 22:20:10.671 0.67 | 22:20:15.838 0.65 | 22:20:26.005 0.47 (all model_version 4)
+## GET /api/alerts?industry=manufacturing (predicted alert as the app reports it)
+(the predicted alert had cleared by the time of this call; see the events above)
+
+## Result: PASS. Health ok; the predicted alert is scored by the endpoint serving UC model version 4 and carries
+## model_version 4, not 'unknown'.

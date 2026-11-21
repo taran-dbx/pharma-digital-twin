@@ -8,6 +8,7 @@
  * source of truth for node lists.
  */
 import type { Industry, PipelineMode } from "@/lib/industries-api";
+import { topicName } from "@/lib/resource-names";
 
 const BRAND = {
   sss: "/brand/data-streaming-icon-full-color.svg",
@@ -33,7 +34,7 @@ export const MODE_LABEL: Record<PipelineMode, string> = {
 };
 
 // Ported from archNodes() in the design reference.
-export function archNodes(industry: Industry, mode: PipelineMode): ArchNode[] {
+export function archNodes(industry: Industry, mode: PipelineMode, resourcePrefix: string): ArchNode[] {
   const nodes: ArchNode[] = [{ t: "IoT Simulator", s: `${industry.name} sensors`, ic: "sim" }];
 
   if (mode === "zerobus") {
@@ -43,7 +44,7 @@ export function archNodes(industry: Industry, mode: PipelineMode): ArchNode[] {
     return nodes;
   }
 
-  nodes.push({ t: "Apache Kafka", s: `iot.${industry.id}.${mode}`, ic: "kafka" });
+  nodes.push({ t: "Apache Kafka", s: topicName(resourcePrefix, industry.id, mode), ic: "kafka" });
   if (mode === "realtime") {
     nodes.push({ t: "Spark SSS", s: "real-time", ic: "sss" });
     nodes.push({ t: "Lakebase · LakeTS", s: "hot · time-series", ic: "lakebase", sink: true });

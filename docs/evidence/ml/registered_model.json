@@ -1,0 +1,27 @@
+{
+  "champion_version": {
+    "aliases": [
+      {
+        "alias_name": "champion",
+        "id": "596162ba-2329-4607-bd92-3f6e36203788",
+        "version_num": 4
+      }
+    ],
+    "created_at": 1795192712195,
+    "run_id": "db985118d81e43ffacc8b5c833324c89",
+    "source": "models:/m-aa8ab13237bb45a0adea408d0fdc7dbd",
+    "status": "READY",
+    "version": 4
+  },
+  "registered_model": {
+    "aliases": [
+      {
+        "alias_name": "champion",
+        "id": "596162ba-2329-4607-bd92-3f6e36203788",
+        "version_num": 4
+      }
+    ],
+    "created_at": 1795187128573,
+    "full_name": "<catalog>.pharma_twin.spindle_thermal_risk"
+  }
+}

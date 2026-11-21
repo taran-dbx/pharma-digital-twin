@@ -10,15 +10,20 @@ import {
   YAxis,
 } from "recharts";
 
+import { RiskBadge } from "@/components/cell/risk-badge";
 import type { SensorHistoryPoint } from "@/contexts/sensor-context";
 import type { IndustryMaintenanceEvent } from "@/lib/industries-api";
+import type { LotDisposition } from "@/lib/manufacturing-lot";
+import type { SpindleRisk } from "@/lib/manufacturing-risk";
 import type { SpindleHeatState } from "@/lib/manufacturing-scenario";
 import {
   HEALTH_LABEL,
   REFERENCE_CONTEXT,
   RESPONSE_STEPS,
   STATION_INFO,
+  cmmRequest,
   decisionLabel,
+  lotHold,
   formatCountdown,
   formatDeviceTime,
   healthTone,
@@ -62,8 +67,12 @@ export interface CellStationCardProps {
   pack: { speed: LiveSignal; current: LiveSignal; health: HealthState };
   tiles: Record<CellStationId, SensorTile[]>;
   decisions: CellDecisions;
-  /** A hold is in force; false once a resume has released it. */
+  /** The PACK gate is down for a QA hold; false once a resume lifts it. */
   batchHeld: boolean;
+  /** Parts cut while Spindle 3 was outside its validated limit, by lot. */
+  disposition?: LotDisposition | null;
+  /** Thermal-risk model output (predicted alert), shown on the mill card. */
+  risk?: SpindleRisk | null;
 }
 
 function Field({ label, children, testId }: { label: string; children: React.ReactNode; testId?: string }) {
@@ -135,7 +144,7 @@ function SensorTiles({ tiles }: { tiles: SensorTile[] }) {
             <small> {tile.unit}</small>
           </b>
           <Sparkline points={tile.history} over={tile.overLimit} />
-          <em>{tile.limitText ?? "No approved limit"}</em>
+          <em>{tile.limitText ?? "No validated limit"}</em>
         </div>
       ))}
     </div>
@@ -282,9 +291,10 @@ function DecisionNotes({
     <div className="cell-card__decisions" data-testid="station-decisions">
       {recorded.map((step) => (
         <div key={step.action}>
-          <b>{decisionLabel(step, batchHeld)}</b>
+          <b>{decisionLabel(step, batchHeld, decisions[step.action])}</b>
           <span>
-            recorded {formatDeviceTime(Date.parse(decisions[step.action]!.created_at) / 1000).slice(0, 8)}
+            signed {formatDeviceTime(Date.parse(decisions[step.action]!.created_at) / 1000).slice(0, 8)}
+            {decisions[step.action]!.signature_meaning ? ` · ${decisions[step.action]!.signature_meaning}` : ""}
           </span>
         </div>
       ))}
@@ -301,12 +311,13 @@ function SpindleCard({
   tiles,
   decisions,
   batchHeld,
+  risk,
 }: CellStationCardProps) {
   const tone = healthTone(spindle.health);
   return (
     <>
       <div className="cell-card__main">
-        <CardHead station="mill" health={spindle.health} asset={`${STATION_INFO.mill.asset} · Detroit Plant`} />
+        <CardHead station="mill" health={spindle.health} asset={`${STATION_INFO.mill.asset} · ${REFERENCE_CONTEXT.site}`} />
         <div className={`cell-card__thermal tone-${tone}`}>
           <div className="cell-card__now" data-testid="spindle-temperature">
             <span className="tnum">{spindle.value === undefined ? "—" : formatNumber(spindle.value, 1)}</span>
@@ -316,11 +327,12 @@ function SpindleCard({
           <div className="cell-card__limit" data-testid="operating-limit">
             <span className="tnum">{limit ? formatNumber(limit.threshold, 0) : "—"}</span>
             <small>°C</small>
-            <em>Approved operating limit</em>
+            <em>Validated limit (OQ / PQ)</em>
           </div>
         </div>
         <ThermalScale value={spindle.value} limit={limit} />
         <SpindleTrend history={spindle.history} limit={limit} />
+        {risk && <RiskBadge risk={risk} compact />}
         <SensorTiles tiles={tiles.mill.filter((t) => t.name !== "cnc_1_spindle_temp")} />
       </div>
 
@@ -334,7 +346,7 @@ function SpindleCard({
               <span className="cell-card__action">{limit.action}</span>
             </Field>
           )}
-          <Field label="Prepared heat event" testId="heat-event">
+          <Field label="Prepared thermal excursion" testId="heat-event">
             {heatEventText(heatEvent)}
           </Field>
         </div>
@@ -342,7 +354,7 @@ function SpindleCard({
         <div className="cell-card__context" aria-label={REFERENCE_CONTEXT.label}>
           <span className="cell-card__context-label">{REFERENCE_CONTEXT.label}</span>
           <Field label="Work order">{REFERENCE_CONTEXT.workOrder}</Field>
-          <Field label="Batch">{REFERENCE_CONTEXT.batch}</Field>
+          <Field label="Part">{REFERENCE_CONTEXT.part}</Field>
           <Field label="Upstream">{REFERENCE_CONTEXT.upstream}</Field>
           <Field label="Downstream">{REFERENCE_CONTEXT.downstream}</Field>
           <Field label="Last service">
@@ -354,21 +366,42 @@ function SpindleCard({
   );
 }
 
-function InspectCard({ decisions, batchHeld }: CellStationCardProps) {
-  const requested = decisions.send_to_inspect;
+function PartsList({ disposition, testId }: { disposition: LotDisposition; testId: string }) {
+  return (
+    <ul className="cell-card__parts" data-testid={testId}>
+      {disposition.partsAtRisk.map((part) => (
+        <li key={part.serial} className="tnum">
+          {part.serial}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function InspectCard({ decisions, batchHeld, tiles, disposition }: CellStationCardProps) {
+  const requested = cmmRequest(decisions);
+  const lab = tiles.inspect;
   return (
     <>
       <div className="cell-card__main">
-        <CardHead station="inspect" health="no-feed" asset={STATION_INFO.inspect.asset} />
+        <CardHead
+          station="inspect"
+          health={lab.some((t) => t.value !== undefined) ? "normal" : "waiting"}
+          asset={STATION_INFO.inspect.asset}
+        />
+        <SensorTiles tiles={lab} />
         <p className="cell-card__note">
-          No inspection sensor is streamed in this demo. Pass and fail results come from the QA system once it is
-          connected.
+          CMM results are not streamed in this demo; the measured dimensions and the pass / fail disposition come
+          from the CMM report once the QMS is connected.
         </p>
         {requested?.reference.parts_since && (
           <p className="cell-card__note">
             Parts machined since {formatDeviceTime(Date.parse(requested.reference.parts_since) / 1000).slice(0, 8)} are
-            queued for vision QA.
+            queued for CMM against the drawing (stem taper, neck geometry).
           </p>
+        )}
+        {disposition && disposition.partsAtRisk.length > 0 && (
+          <PartsList disposition={disposition} testId="parts-to-measure" />
         )}
         <DecisionNotes station="inspect" decisions={decisions} batchHeld={batchHeld} />
       </div>
@@ -376,19 +409,34 @@ function InspectCard({ decisions, batchHeld }: CellStationCardProps) {
         <div className="cell-card__context">
           <span className="cell-card__context-label">{REFERENCE_CONTEXT.label}</span>
           <Field label="Upstream">MILL · Spindle 3</Field>
-          <Field label="Downstream">PACK · pack line</Field>
+          <Field label="Downstream">CLEAN / PASSIVATE · STERILE PACK</Field>
+          {decisions.open_ncr?.reference.ncr_id && (
+            <Field label="NCR" testId="ncr-id">
+              {decisions.open_ncr.reference.ncr_id} · {decisions.open_ncr.reference.disposition ?? "open"}
+            </Field>
+          )}
         </div>
       </div>
     </>
   );
 }
 
-function PackCard({ pack, tiles, decisions, batchHeld }: CellStationCardProps) {
+function PackCard({ pack, tiles, decisions, batchHeld, disposition }: CellStationCardProps) {
+  const hold = lotHold(decisions);
   return (
     <>
       <div className="cell-card__main">
         <CardHead station="pack" health={pack.health} asset={STATION_INFO.pack.asset} />
         <SensorTiles tiles={tiles.pack} />
+        {hold && disposition && (
+          <div className="cell-card__note" data-testid="qa-hold">
+            <b>
+              QA hold · quarantine {disposition.partsAtRisk.length} part{disposition.partsAtRisk.length === 1 ? "" : "s"},
+              release the other {disposition.partsReleased} after CMM review
+            </b>
+            <PartsList disposition={disposition} testId="parts-quarantined" />
+          </div>
+        )}
         <DecisionNotes station="pack" decisions={decisions} batchHeld={batchHeld} />
       </div>
       <div className="cell-card__side">
@@ -397,8 +445,10 @@ function PackCard({ pack, tiles, decisions, batchHeld }: CellStationCardProps) {
         </div>
         <div className="cell-card__context">
           <span className="cell-card__context-label">{REFERENCE_CONTEXT.label}</span>
-          <Field label="Upstream">INSPECT · vision QA</Field>
-          <Field label="Batch">{REFERENCE_CONTEXT.batch}</Field>
+          <Field label="Upstream">CMM · in-process inspection</Field>
+          <Field label="Part">{REFERENCE_CONTEXT.part}</Field>
+          <Field label="UDI-DI">{REFERENCE_CONTEXT.udiDi}</Field>
+          {disposition && <Field label="DHR">{disposition.dhrRefs.join(", ") || "—"}</Field>}
         </div>
       </div>
     </>

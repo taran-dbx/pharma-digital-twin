@@ -6,11 +6,14 @@ import os
 
 from fastapi import APIRouter, Depends
 
+from iot_twin.core.config import get_resource_prefix
 from iot_twin.core.state import AppState, get_app_state
 from iot_twin.core.workspace_config import (
+    get_lakebase_endpoint,
     get_pipelines_project,
     get_secret_scope,
     get_service_credential,
+    get_uc_schema,
 )
 
 router = APIRouter()
@@ -40,7 +43,7 @@ async def app_defaults():
     # Parse the app's Lakebase endpoint so the wizard can pre-populate new
     # pipelines with the same project (ops can override per pipeline).
     # Format: "projects/<project_id>/branches/<branch_id>/endpoints/<endpoint_id>"
-    lakebase_endpoint = os.getenv("LAKEBASE_ENDPOINT", "")
+    lakebase_endpoint = get_lakebase_endpoint()
     lakebase_project_id = ""
     lakebase_branch_id = ""
     parts = lakebase_endpoint.split("/")
@@ -77,7 +80,9 @@ async def app_defaults():
         # One-schema layout (Task 3/4): pre-existing catalog + single schema for
         # all industry-prefixed managed tables (e.g. {industry}_zerobus, {industry}_metrics).
         "uc_catalog": os.getenv("UC_CATALOG", ""),
-        "uc_schema": os.getenv("UC_SCHEMA", ""),
+        "uc_schema": get_uc_schema(),
+        # RESOURCE_PREFIX: the client builds topic / consumer-group / job names from it.
+        "resource_prefix": get_resource_prefix(),
     }
 
 

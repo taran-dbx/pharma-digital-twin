@@ -29,7 +29,7 @@ from tests._fakes import fake_credential
 # ---------------------------------------------------------------------------
 
 # Secret scope *name* used by the setup payload (not a secret).
-SCOPE_NAME = "iot-secrets"
+SCOPE_NAME = "pharma-twin-secrets"
 
 
 def _make_state() -> MagicMock:
@@ -69,7 +69,7 @@ def _base_params(**overrides) -> dict:
     params = {
         "pipeline_id": "pipe-1",
         "create_new_project": False,
-        "lb_project_id": "iot-demo",
+        "lb_project_id": "pharma-twin-demo",
         "lb_branch_id": "production",
         "lb_database": "databricks_postgres",
         "table_name": "sensor_readings",
@@ -141,7 +141,7 @@ class TestStepOrdering:
         assert names.index("ensure_streaming_sp") < names.index("provision_lakebase_role")
         assert names.index("provision_lakebase_role") < names.index("provision_lakebase_table")
         assert names.index("provision_lakebase_table") < names.index("deploy_lakets_ops_jobs")
-        assert result["lb_project_id"] == "iot-demo"
+        assert result["lb_project_id"] == "pharma-twin-demo"
         assert result["client_id"] == "sp-123"
 
     @pytest.mark.asyncio
@@ -409,7 +409,7 @@ class TestSetupRoute:
                 {
                     "pipeline_id": "pipe-1",
                     "create_new_project": True,
-                    "lb_project_id": "iot-demo",
+                    "lb_project_id": "pharma-twin-demo",
                     "rollups": [{"name": "r", "bucket": "1 minute", "aggregates": ["avg(v)"]}],
                     "tiering": {"hot": "1 hour", "drop": "7 days"},
                 }
@@ -424,7 +424,7 @@ class TestSetupRoute:
 
     @pytest.mark.asyncio
     async def test_missing_pipeline_id_is_400(self) -> None:
-        status, payload = await _post({"lb_project_id": "iot-demo"})
+        status, payload = await _post({"lb_project_id": "pharma-twin-demo"})
         assert status == 400
         assert "pipeline_id" in payload["error"]
 
@@ -439,7 +439,7 @@ class TestSetupRoute:
         status, payload = await _post(
             {
                 "pipeline_id": "pipe-1",
-                "lb_project_id": "iot-demo",
+                "lb_project_id": "pharma-twin-demo",
                 "rollups": [{"bucket": "1 minute"}],  # missing name
             }
         )
@@ -451,7 +451,7 @@ class TestSetupRoute:
         status, payload = await _post(
             {
                 "pipeline_id": "pipe-1",
-                "lb_project_id": "iot-demo",
+                "lb_project_id": "pharma-twin-demo",
                 "tiering": {"hot": "1 hour"},  # missing drop
             }
         )

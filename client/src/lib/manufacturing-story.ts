@@ -1,24 +1,34 @@
 /**
- * Operator-facing model for the manufacturing machining cell
- * (MILL → INSPECT → PACK). Spindle 3 is the simulator's `cnc_1` spindle; every
- * live value comes from SSE readings and the catalog alert rule. Reference
- * context (work order, batch) is a labelled fixture until an MES is connected.
+ * Operator-facing model for Trinity Medical's orthopaedic-implant cell
+ * (MILL → CMM INSPECT → CLEAN / PASSIVATE → STERILE PACK; the twin draws the
+ * last two as one PACK station). Spindle 3 is the simulator's `cnc_1` spindle
+ * machining Ti-6Al-4V hip stems; every live value comes from SSE readings and
+ * the catalog's validated-limit rule. Reference context (work order, lot, UDI)
+ * is a labelled fixture until an MES is connected.
  */
 import type { IndustryAlertRule, IndustryMaintenanceEvent } from "@/lib/industries-api";
-import type { AlertRecord, AlertResponseAction, AlertResponseRecord } from "@/lib/types";
+import { LOT_REFERENCE } from "@/lib/manufacturing-lot";
+import type {
+  AlertRecord,
+  AlertResponseAction,
+  AlertResponseRecord,
+  SignatureMeaning,
+} from "@/lib/types";
 
 export const SPINDLE_SENSOR = "cnc_1_spindle_temp";
 export const SPINDLE_RULE_ID = "mfg-alert-spindle-temp";
 export const PACK_LINE_SENSOR = "assy_line_1_speed";
+/** CMM-1 metrology lab ambient; dimensional results depend on a stable lab. */
+export const CMM_LAB_SENSOR = "hvac_zone_1_temp";
 
 export type CellStationId = "mill" | "inspect" | "pack";
 
 export const CELL_STATIONS: readonly CellStationId[] = ["mill", "inspect", "pack"];
 
 export const STATION_INFO: Record<CellStationId, { code: string; name: string; asset: string }> = {
-  mill: { code: "MILL", name: "Spindle 3", asset: "CNC-1 mill" },
-  inspect: { code: "INSPECT", name: "Vision QA", asset: "Inspection gate" },
-  pack: { code: "PACK", name: "Pack line", asset: "Assembly line 1" },
+  mill: { code: "MILL", name: "Spindle 3", asset: "CNC-1 5-axis mill" },
+  inspect: { code: "CMM", name: "CMM inspection", asset: "CMM-1 metrology lab" },
+  pack: { code: "PACK", name: "Clean, passivate & sterile pack", asset: "Sterile pack line" },
 };
 
 export type HealthState = "normal" | "watch" | "alert" | "waiting" | "no-feed" | "stopped";
@@ -26,7 +36,7 @@ export type HealthState = "normal" | "watch" | "alert" | "waiting" | "no-feed" |
 export const HEALTH_LABEL: Record<HealthState, string> = {
   normal: "Normal",
   watch: "Approaching limit",
-  alert: "Over limit",
+  alert: "Over validated limit",
   waiting: "Waiting for data",
   "no-feed": "No sensor feed",
   stopped: "Stopped",
@@ -96,8 +106,8 @@ export const CELL_SENSORS: readonly CellSensor[] = [
   { name: "cnc_1_coolant_temp", label: "Coolant temperature", unit: "°C", group: "mill", decimals: 1 },
   { name: PACK_LINE_SENSOR, label: "Line speed", unit: "m/min", group: "pack", decimals: 1 },
   { name: "assy_line_1_motor_current", label: "Drive current", unit: "A", group: "pack", decimals: 1 },
-  { name: "compressor_1_pressure", label: "Shop air", unit: "PSI", group: "utilities", decimals: 0 },
-  { name: "hvac_zone_1_temp", label: "Cell ambient", unit: "°C", group: "utilities", decimals: 1 },
+  { name: CMM_LAB_SENSOR, label: "CMM lab ambient", unit: "°C", group: "inspect", decimals: 1 },
+  { name: "compressor_1_pressure", label: "Clean dry air", unit: "PSI", group: "utilities", decimals: 0 },
 ];
 
 export function sensorOverLimit(value: number | undefined, rule: IndustryAlertRule | undefined): boolean {
@@ -110,44 +120,103 @@ export interface ResponseStep {
   station: CellStationId;
   title: string;
   detail: string;
-  /** Button label: says exactly what is recorded. */
+  /** Button label: says exactly what is signed. */
   cta: string;
   done: string;
+  /** What the e-signature means for this decision (21 CFR 11.50-style). */
+  meaning: SignatureMeaning;
+  /** Preset reasons offered in the sign-off form; the first is the default. */
+  reasons: readonly string[];
 }
 
-/** Recorded operator decisions; sending parts to inspection also stops the cell. */
+const EXCURSION_REASON = "Spindle 3 outside its validated limit (OQ-TM-CNC1-014)";
+
+/**
+ * Signed quality decisions on a Spindle 3 excursion, in the order a QA lead
+ * works them. Requesting CMM inspection also stops the cell.
+ */
 export const RESPONSE_STEPS: readonly ResponseStep[] = [
   {
-    action: "hold_batch",
+    action: "quarantine_lot",
     station: "pack",
-    title: "Hold the batch at PACK",
-    detail: "Parts at PACK stay unshipped until QA releases them.",
-    cta: "Hold batch",
-    done: "Batch on hold",
+    title: "Put the lot on QA hold",
+    detail: "Quarantines the parts cut during the excursion at PACK; the rest of the lot is released after CMM review.",
+    cta: "Sign QA hold",
+    done: "Lot on QA hold",
+    meaning: "responsible",
+    reasons: [EXCURSION_REASON, "Suspect dimensional nonconformance on stems cut during the excursion"],
   },
   {
-    action: "send_to_inspect",
+    action: "request_cmm_inspection",
     station: "inspect",
-    title: "Stop the cell and inspect",
-    detail: "Stops CNC-1 and the pack line; parts machined since the alert opened go to vision QA.",
-    cta: "Stop & inspect",
-    done: "Inspection requested",
+    title: "Stop the mill and send parts to CMM",
+    detail: "Stops CNC-1 and the pack line; the parts at risk are measured on CMM-1 against the drawing.",
+    cta: "Sign & stop for CMM",
+    done: "CMM inspection requested",
+    meaning: "responsible",
+    reasons: [EXCURSION_REASON, "Verify stem taper and neck geometry before disposition"],
+  },
+  {
+    action: "open_ncr",
+    station: "inspect",
+    title: "Open a nonconformance report",
+    detail: "Raises an NCR citing the validated limit (OQ / PQ) and the lot's DHR; disposition goes to MRB.",
+    cta: "Sign NCR",
+    done: "NCR opened",
+    meaning: "authored",
+    reasons: [EXCURSION_REASON, "Process parameter excursion during production (21 CFR 820 / ISO 13485 §8.3)"],
   },
   {
     action: "request_maintenance",
     station: "mill",
-    title: "Request spindle maintenance",
-    detail: "Raises a request for Spindle 3 with its last service attached.",
-    cta: "Request maintenance",
+    title: "Request Spindle 3 maintenance",
+    detail: "Raises a work request with the last service and its thermal-compensation check attached.",
+    cta: "Sign request",
     done: "Maintenance requested",
+    meaning: "authored",
+    reasons: ["Recurring Spindle 3 thermal drift", EXCURSION_REASON],
   },
 ];
 
+/** The decision that stops the cell (the legacy `send_to_inspect` did too). */
+export const STOPPING_ACTION: AlertResponseAction = "request_cmm_inspection";
+
+/** Labels for decisions recorded by the CNC-era cell, shown in history only. */
+export const LEGACY_DECISION_LABEL: Partial<Record<AlertResponseAction, string>> = {
+  hold_batch: "Batch held (legacy)",
+  send_to_inspect: "Sent to inspection (legacy)",
+};
+
+export const SIGNATURE_MEANING_LABEL: Record<SignatureMeaning, string> = {
+  authored: "Author",
+  reviewed: "Reviewer",
+  approved: "Approver",
+  responsible: "Responsible",
+};
+
 export type CellDecisions = Partial<Record<AlertResponseAction, AlertResponseRecord>>;
 
-/** What a recorded decision means now: a resume after the hold releases the batch. */
-export function decisionLabel(step: ResponseStep, batchHeld: boolean): string {
-  return step.action === "hold_batch" && !batchHeld ? "Batch released" : step.done;
+/** The QA hold on this episode (or the legacy batch hold). */
+export function lotHold(decisions: CellDecisions): AlertResponseRecord | undefined {
+  return decisions.quarantine_lot ?? decisions.hold_batch;
+}
+
+/** The CMM request on this episode (or the legacy send-to-inspect). */
+export function cmmRequest(decisions: CellDecisions): AlertResponseRecord | undefined {
+  return decisions.request_cmm_inspection ?? decisions.send_to_inspect;
+}
+
+/**
+ * What a recorded decision means now. Resuming the cell lifts the PACK gate,
+ * but a QA hold is a quality record: the quarantined parts stay on hold until
+ * QA dispositions them.
+ */
+export function decisionLabel(step: ResponseStep, flowHeld: boolean, record?: AlertResponseRecord): string {
+  if (step.action !== "quarantine_lot" || flowHeld) return step.done;
+  const parts = record?.reference.parts_at_risk?.length;
+  return parts === undefined
+    ? "QA hold active · line resumed"
+    : `QA hold active on ${parts} part${parts === 1 ? "" : "s"} · line resumed`;
 }
 
 export function decisionsFor(alert: AlertRecord | null, records: AlertResponseRecord[] | undefined): CellDecisions {
@@ -197,11 +266,13 @@ export function healthTone(state: HealthState): "ok" | "warn" | "crit" | "idle" 
 
 /** Shown verbatim with the "Reference · MES not connected" label. */
 export const REFERENCE_CONTEXT = {
-  label: "Reference · MES not connected",
-  workOrder: "WO-1042",
-  batch: "Batch 7 · housing, 6061 aluminium",
-  upstream: "Bar stock load",
-  downstream: "INSPECT · vision QA",
+  label: LOT_REFERENCE.label,
+  site: "Trinity Medical · Warsaw, IN",
+  workOrder: LOT_REFERENCE.workOrder,
+  part: `${LOT_REFERENCE.partNumber} · ${LOT_REFERENCE.partDescription}`,
+  udiDi: LOT_REFERENCE.udiDi,
+  upstream: "Ti-6Al-4V bar stock · mill cert on file",
+  downstream: "CMM · in-process dimensional inspection",
 } as const;
 
 export function lastSpindleService(history: IndustryMaintenanceEvent[]): IndustryMaintenanceEvent | null {

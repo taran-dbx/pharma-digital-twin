@@ -17,7 +17,7 @@ from iot_twin.services import zerobus_validation as zbv
 from tests._fakes import fake_credential
 
 # Secret scope / key *names* passed to the snippet builder (identifiers, not secrets).
-CUSTOM_SCOPE_NAME = "custom-scope"
+CUSTOM_SCOPE_NAME = "pharma-twin-custom-scope"
 CUSTOM_KEY_NAME = "custom-secret-key"
 
 
@@ -27,8 +27,8 @@ CUSTOM_KEY_NAME = "custom-secret-key"
 def _snippet(**overrides) -> str:
     kwargs = dict(
         industry="pharmaceutical",
-        catalog="iot_pharmaceutical",
-        table_fqn="iot_pharmaceutical.zerobus.iot_sensor_data",
+        catalog="pharma_twin_pharmaceutical",
+        table_fqn="pharma_twin_pharmaceutical.zerobus.iot_sensor_data",
         workspace_url="https://example-us-east.cloud.databricks.com",
         server_endpoint="111111111111111.zerobus.us-east-1.cloud.databricks.com",
         num_records=25,
@@ -110,16 +110,16 @@ def test_snippet_embeds_table_and_endpoint_and_num_records():
 
 
 def test_snippet_uses_secret_scope_and_keys(monkeypatch):
-    monkeypatch.setenv("ZEROBUS_SECRET_SCOPE", "iot-secrets")
+    monkeypatch.setenv("ZEROBUS_SECRET_SCOPE", "pharma-twin-secrets")
     code = _snippet()
-    assert "'iot-secrets'" in code
+    assert "'pharma-twin-secrets'" in code
     assert "'zerobus-client-id'" in code
     assert "'zerobus-client-secret'" in code
     code2 = _snippet()
     code2 = zbv.zerobus_produce_snippet(
         industry="pharmaceutical",
-        catalog="iot_pharmaceutical",
-        table_fqn="iot_pharmaceutical.zerobus.iot_sensor_data",
+        catalog="pharma_twin_pharmaceutical",
+        table_fqn="pharma_twin_pharmaceutical.zerobus.iot_sensor_data",
         workspace_url="https://example-us-east.cloud.databricks.com",
         server_endpoint="111111111111111.zerobus.us-east-1.cloud.databricks.com",
         secret_scope=CUSTOM_SCOPE_NAME,
@@ -259,7 +259,7 @@ def test_auth_probe_token_exchange_success():
         ok, detail = zbv.auth_probe(
             "https://x.cloud.databricks.com",
             "123.zerobus.us-east-1.cloud.databricks.com",
-            "iot_pharmaceutical.zerobus.iot_sensor_data",
+            "pharma_twin_pharmaceutical.zerobus.iot_sensor_data",
             client_id="cid",
             client_secret=fake_credential("sp"),
         )
@@ -268,7 +268,7 @@ def test_auth_probe_token_exchange_success():
     kwargs = mock_post.call_args.kwargs
     assert kwargs["auth"] == ("cid", fake_credential("sp"))
     assert "authorization_details" in kwargs["data"]
-    assert "iot_pharmaceutical" in kwargs["data"]["authorization_details"]
+    assert "pharma_twin_pharmaceutical" in kwargs["data"]["authorization_details"]
 
 
 def test_auth_probe_token_exchange_missing_grants_fails_clearly():
@@ -288,7 +288,7 @@ def test_auth_probe_token_exchange_missing_grants_fails_clearly():
         ok, detail = zbv.auth_probe(
             "https://x.cloud.databricks.com",
             "123.zerobus.us-east-1.cloud.databricks.com",
-            "iot_pharmaceutical.zerobus.iot_sensor_data",
+            "pharma_twin_pharmaceutical.zerobus.iot_sensor_data",
             client_id="cid",
             client_secret=fake_credential("sp"),
         )

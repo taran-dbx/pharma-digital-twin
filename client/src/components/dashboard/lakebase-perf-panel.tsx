@@ -35,7 +35,7 @@ interface LakebasePerfPanelProps {
   refreshSec: number;
   /**
    * Industry id — when set, resolves the deterministic industry-first
-   * Lakebase branch (``iot-pipelines``) instead of the legacy per-pipeline
+   * Lakebase branch (``<prefix>-pipelines``) instead of the legacy per-pipeline
    * ``sink_config`` lookup. Optional for backward compat with the legacy
    * per-pipeline dashboard.
    */

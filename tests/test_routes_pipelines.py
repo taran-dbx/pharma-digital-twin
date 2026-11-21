@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from iot_twin.core.state import AppState
+from tests._fakes import own_jobs_and_clusters, owned_job_settings
 
 
 def _build_app_with_state(state: AppState) -> FastAPI:
@@ -220,6 +221,7 @@ def _make_ws_mock(
     me.user_name = sp_client_id
     ws.current_user.me = MagicMock(return_value=me)
     ws.jobs = MagicMock()
+    ws.jobs.get.return_value = owned_job_settings()
     runs = []
     for rid in active_run_ids or []:
         r = MagicMock()
@@ -256,9 +258,7 @@ class TestHealLakebase:
             patch("iot_twin.routes.pipelines.provision_lakebase_role", provision_mock),
             patch("iot_twin.routes.pipelines.install_lakets_if_missing", lakets_mock),
             patch("iot_twin.routes.pipelines.grant_app_can_use", grant_mock),
-            patch(
-                "iot_twin.routes.pipelines._app_name", MagicMock(return_value="iot-digital-twin")
-            ),
+            patch("iot_twin.routes.pipelines._app_name", MagicMock(return_value="pharma-twin")),
             patch("iot_twin.routes.pipelines.deploy_lakets_ops_jobs", ops_jobs_mock),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -282,7 +282,7 @@ class TestHealLakebase:
         grant_mock.assert_called_once()
         g_args = grant_mock.call_args
         assert g_args.args[0] is ws or g_args.kwargs.get("w") is ws
-        assert "iot-digital-twin" in g_args.args or "iot-digital-twin" in g_args.kwargs.values()
+        assert "pharma-twin" in g_args.args or "pharma-twin" in g_args.kwargs.values()
         assert "sp-uuid-123" in g_args.args or "sp-uuid-123" in g_args.kwargs.values()
 
         # LakeTS ops jobs deployed for the pipeline's project/branch/database
@@ -383,9 +383,7 @@ class TestHealLakebase:
             patch("iot_twin.routes.pipelines.provision_lakebase_role", provision_mock),
             patch("iot_twin.routes.pipelines.install_lakets_if_missing", lakets_mock),
             patch("iot_twin.routes.pipelines.grant_app_can_use", MagicMock()),
-            patch(
-                "iot_twin.routes.pipelines._app_name", MagicMock(return_value="iot-digital-twin")
-            ),
+            patch("iot_twin.routes.pipelines._app_name", MagicMock(return_value="pharma-twin")),
             patch("iot_twin.routes.pipelines.deploy_lakets_ops_jobs", MagicMock(return_value=[])),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -449,6 +447,7 @@ def _make_delete_ws_mock() -> MagicMock:
     ws.jobs = MagicMock()
     ws.jobs.delete = MagicMock(return_value=None)
     ws.clusters = MagicMock()
+    own_jobs_and_clusters(ws)
     ws.clusters.permanent_delete = MagicMock(return_value=None)
     ws.schemas = MagicMock()
     ws.schemas.delete = MagicMock(return_value=None)

@@ -19,11 +19,13 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from iot_twin.core.workspace_config import get_uc_catalog
 from iot_twin.services import resource_ledger
 from iot_twin.services.db.app_repo_common import DBExecutor
+from iot_twin.services.ownership import assert_owned_ledger
 from iot_twin.services.pipelines import pipeline_setup_repo
 
-logger = logging.getLogger("iot_digital_twin.services.teardown")
+logger = logging.getLogger("pharma_twin.services.teardown")
 
 # A deleter takes the ledger row (dict) and performs the real delete.
 Deleter = Callable[[dict], Awaitable[Any]]
@@ -48,7 +50,7 @@ class SkipResource(Exception):
 def _is_shared(res: dict) -> bool:
     """Return True when the ledger row is flagged shared (never torn down here).
 
-    The shared SP, secret scope, and ``iot-pipelines`` Lakebase project are
+    The shared SP, secret scope, and ``<prefix>-pipelines`` Lakebase project are
     recorded per-setup with ``metadata.shared`` so a per-industry teardown never
     deletes the resource other industries still depend on.
     """
@@ -91,7 +93,7 @@ async def teardown_setup(
     the failed rows survive for inspection/retry, and the failures are surfaced.
 
     Args:
-        db: async DB executor bound to ``iot-app-backend``.
+        db: async DB executor bound to ``<prefix>-backend``.
         setup_id: the ``pipeline_setup`` id to tear down.
         deleters: optional registry mapping ``resource_type`` → async deleter.
             Falls back to :data:`DEFAULT_DELETERS`.
@@ -103,6 +105,9 @@ async def teardown_setup(
     steps: list[dict] = []
 
     resources = await resource_ledger.resources_in_teardown_order(db, setup_id)
+    # Refuse the whole teardown (before any deleter runs) if a ledger row names
+    # a resource outside this deployment's prefix namespace. Raises NotOwnedError.
+    assert_owned_ledger(resources, shared_catalog=get_uc_catalog())
     for res in resources:
         rtype = res.get("resource_type")
         identifier = res.get("identifier")

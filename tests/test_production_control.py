@@ -29,8 +29,11 @@ SPINDLE = {
     "sensor_name": "cnc_1_spindle_temp",
     "industry": "manufacturing",
 }
-APP_DIR = "/Workspace/Users/app-sp/.iot-digital-twin"
+APP_DIR = "/Workspace/Users/app-sp/.pharma-twin"
 CONTROL_FILE = f"{APP_DIR}/production_control/manufacturing.json"
+
+# Part 11-style signing fields every decision carries.
+SIGNED = {"reason": "Spindle 3 excursion", "signature_meaning": "responsible"}
 
 
 class Clock:
@@ -247,12 +250,14 @@ class TestProductionControl:
         alert_id = (await _spindle_reading(state, 66.3))[0].alert.id
         _drain(queue)
 
-        held = await client.post(f"/api/alerts/{alert_id}/responses", json={"action": "hold_batch"})
+        held = await client.post(
+            f"/api/alerts/{alert_id}/responses", json={"action": "hold_batch", **SIGNED}
+        )
         assert "production" not in held.json()
         assert workspace.uploads == 0
 
         inspect = await client.post(
-            f"/api/alerts/{alert_id}/responses", json={"action": "send_to_inspect"}
+            f"/api/alerts/{alert_id}/responses", json={"action": "send_to_inspect", **SIGNED}
         )
         production = inspect.json()["production"]
         assert (production["state"], production["reason"], production["alert_id"]) == (
@@ -275,8 +280,8 @@ async def test_lakebase_path_writes_beside_every_deployment_c7436_regression() -
     workspace = FakeWorkspace()
     db = FakeLakebase(
         [
-            "/Workspace/Users/app-sp/.iot-digital-twin/manufacturing_realtime_consumer_1",
-            "/Workspace/Users/ops/.iot-digital-twin/manufacturing_microbatch_consumer_2",
+            "/Workspace/Users/app-sp/.pharma-twin/manufacturing_realtime_consumer_1",
+            "/Workspace/Users/ops/.pharma-twin/manufacturing_microbatch_consumer_2",
         ]
     )
     control = ProductionControl(workspace_factory=lambda: workspace, now_fn=clock)
@@ -288,7 +293,7 @@ async def test_lakebase_path_writes_beside_every_deployment_c7436_regression() -
     assert changed is True
     assert sorted(workspace.files) == [
         CONTROL_FILE,
-        "/Workspace/Users/ops/.iot-digital-twin/production_control/manufacturing.json",
+        "/Workspace/Users/ops/.pharma-twin/production_control/manufacturing.json",
     ]
     assert (await control.current("manufacturing", db=db))["changed_by"] == "op@example.com"
     history = await control.history("manufacturing", clock.instant - timedelta(minutes=1), db=db)
@@ -301,7 +306,9 @@ async def test_alert_history_groups_an_episode_c7438_smoke(cell) -> None:
     """[C7438][smoke] History lists the heat episode with its stop, ahead of the alert-by-id route."""
     client, state, _workspace, _queue, clock = cell
     alert_id = (await _spindle_reading(state, 66.3))[0].alert.id
-    await client.post(f"/api/alerts/{alert_id}/responses", json={"action": "send_to_inspect"})
+    await client.post(
+        f"/api/alerts/{alert_id}/responses", json={"action": "send_to_inspect", **SIGNED}
+    )
     clock.instant += timedelta(seconds=20)
     await _spindle_reading(state, 71.4)
 
@@ -363,6 +370,8 @@ class FakeHistoryDb:
                     "action": "send_to_inspect",
                     "recorded_by": "op@example.com",
                     "created_at": self.opened + timedelta(seconds=15),
+                    "reason": "Spindle 3 excursion",
+                    "signature_meaning": "responsible",
                 }
             ]
         raise AssertionError(sql)
@@ -380,6 +389,8 @@ async def test_lakebase_history_splits_reopened_alert_into_episodes_c7439_regres
     assert latest["decisions"] == []
     assert first["peak_value"] == 71.4
     assert [d["station"] for d in first["decisions"]] == ["INSPECT"]
+    assert first["decisions"][0]["reason"] == "Spindle 3 excursion"
+    assert first["decisions"][0]["signature_meaning"] == "responsible"
     assert first["acknowledged_by"] == "op@example.com"
 
 

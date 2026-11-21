@@ -24,11 +24,11 @@ from iot_twin.services import health_checks as hc
 from iot_twin.services.validation import validation_state_machine as sm
 from iot_twin.services.validation import validation_steps as vs
 from iot_twin.services.validation.validation_service import StepContext, StepResult
-from tests._fakes import fake_credential
+from tests._fakes import fake_credential, owned_cluster_info
 
 UC_CATALOG = "test_catalog"
-UC_SCHEMA = "test_schema"
-PIPELINES_LAKEBASE_PROJECT = "test_pipelines"
+UC_SCHEMA = "pharma_twin_test"
+PIPELINES_LAKEBASE_PROJECT = "pharma-twin-test-pipelines"
 
 # UC service credential *name* (an identifier, not a secret) and a probe status.
 UC_SC_NAME = "iot-rtm-sc"
@@ -92,7 +92,9 @@ def test_resolve_lakebase_write_conn_uses_configured_project(monkeypatch):
 
     connection = vs._resolve_lakebase_write_conn(ctx, "pharmaceutical")
 
-    assert requested_names == ["projects/test_pipelines/branches/pharmaceutical/endpoints/primary"]
+    assert requested_names == [
+        "projects/pharma-twin-test-pipelines/branches/pharmaceutical/endpoints/primary"
+    ]
     assert connection == ("pg.example.com", "app-client-id", fake_credential("pg"))
 
 
@@ -585,7 +587,7 @@ async def test_zerobus_produce_test_driver_side_no_cluster(monkeypatch):
     """
     # Pin UC env so industry_table() resolves without raising RuntimeError.
     monkeypatch.setenv("UC_CATALOG", "iot_test_catalog")
-    monkeypatch.setenv("UC_SCHEMA", "rtm_test_schema")
+    monkeypatch.setenv("UC_SCHEMA", "pharma_twin_rtm_test")
     monkeypatch.setenv("DATABRICKS_HOST", "https://x.databricks.com")
     monkeypatch.setenv("ZEROBUS_SERVER_ENDPOINT", "x.zerobus.us-east-1.cloud.databricks.com")
 
@@ -708,6 +710,9 @@ class _RecordingClusters:
 
     def delete(self, cluster_id=None):
         self.deleted = cluster_id
+
+    def get(self, cluster_id=None):
+        return owned_cluster_info()
 
 
 class _ProvisionWs:

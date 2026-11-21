@@ -994,7 +994,7 @@ export interface IndustryConsumerConfig {
   industry: string;
   /** Only the two Spark modes generate a consumer (zerobus is producer-only). */
   mode: "realtime" | "microbatch";
-  /** Kafka topic — `iot.<industry>.<mode>` (dot notation, §1.14). */
+  /** Kafka topic — `<prefix>.<industry>.<mode>` (dot notation, §1.14). */
   topic: string;
   /** Public `:9198` bootstrap list (private `:9098` is unreachable, §1.7). */
   bootstrapServers: string;
@@ -1004,7 +1004,7 @@ export interface IndustryConsumerConfig {
   checkpointLocation: string;
 
   // --- real-time (Lakebase LakeTS ChronoTable) target ---
-  /** `iot-pipelines` per-industry branch project id. */
+  /** `<prefix>-pipelines` per-industry branch project id. */
   lakebaseProjectId?: string;
   /** Never-expiring per-industry branch (default `production`). */
   lakebaseBranch?: string;
@@ -1014,7 +1014,7 @@ export interface IndustryConsumerConfig {
   pgTable?: string;
 
   // --- micro-batch (UC Delta) target ---
-  /** Fully-qualified Delta table `iot_<industry>.microbatch.<table>`. */
+  /** Fully-qualified Delta table `<catalog>.<schema>.<industry>_microbatch`. */
   deltaTable?: string;
 
   // --- streaming metrics (both Spark modes, always on §1.11) ---
@@ -1045,7 +1045,7 @@ export interface IndustryConsumerConfig {
    * cache key — which tells `sss_ingest` to broadcast-only (no duplicate insert). */
   pipelineId?: string;
   /** Workspace secret scope holding `zerobus-client-id`/`zerobus-client-secret`
-   * used to mint the OAuth token for the app POST (default `iot-secrets`). */
+   * used to mint the OAuth token for the app POST (default `<prefix>-secrets`). */
   secretScope?: string;
 }
 

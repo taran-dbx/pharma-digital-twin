@@ -1,6 +1,6 @@
 """LakeTS setup on an industry's Lakebase branch (spec §1.9–1.10, plan 2.3).
 
-Given a never-expiring branch on the shared ``iot-pipelines`` project (created by
+Given a never-expiring branch on the shared ``<prefix>-pipelines`` project (created by
 ``pipeline_project_service.provision_industry_branch``), this module:
 
 1. installs ``lakets.sql`` on the branch's ``databricks_postgres`` DB,
@@ -33,7 +33,7 @@ from iot_twin.services import cdf_reconciliation_service
 from iot_twin.services.lakets import lakets_deploy_service, lakets_service
 from iot_twin.services.resource_ledger import record_resource
 
-logger = logging.getLogger("iot_digital_twin.services.industry_setup")
+logger = logging.getLogger("pharma_twin.services.industry_setup")
 
 # --- Constants -------------------------------------------------------------
 SENSOR_TABLE = "sensor_readings"

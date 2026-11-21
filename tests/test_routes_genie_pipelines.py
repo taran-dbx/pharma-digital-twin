@@ -92,7 +92,7 @@ def _genie_client(mode: str = "realtime") -> MagicMock:
 @pytest_asyncio.fixture()
 async def api(monkeypatch: pytest.MonkeyPatch) -> AsyncGenerator[AsyncClient, None]:
     monkeypatch.setenv("UC_CATALOG", "cat")
-    monkeypatch.setenv("UC_SCHEMA", "sch")
+    monkeypatch.setenv("UC_SCHEMA", "pharma_twin_sch")
     for name in (
         "DATABRICKS_SQL_WAREHOUSE_ID",
         "GENIE_ALLOWLIST_CONFIRMED",

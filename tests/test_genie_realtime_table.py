@@ -17,13 +17,13 @@ from iot_twin.services import genie_service as gs
 from iot_twin.services.cdf_reconciliation_service import delta_table_fqn
 from iot_twin.services.genie import genie_space_service as gss
 
-SHADOW = "cat.sch.lb__shadow_manufacturing_sensor_readings_history"
+SHADOW = "cat.pharma_twin_sch.lb__shadow_manufacturing_sensor_readings_history"
 
 
 @pytest.fixture(autouse=True)
 def _env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("UC_CATALOG", "cat")
-    monkeypatch.setenv("UC_SCHEMA", "sch")
+    monkeypatch.setenv("UC_SCHEMA", "pharma_twin_sch")
 
 
 def _space(mode: str) -> dict:
@@ -37,14 +37,18 @@ class TestTelemetryTableMapping:
 
     @pytest.mark.parametrize("mode", ["microbatch", "zerobus"])
     def test_other_modes_use_mode_table(self, mode: str) -> None:
-        assert gss.telemetry_table("manufacturing", mode) == f"cat.sch.manufacturing_{mode}"
+        assert (
+            gss.telemetry_table("manufacturing", mode)
+            == f"cat.pharma_twin_sch.manufacturing_{mode}"
+        )
 
     def test_realtime_expected_tables(self) -> None:
         tables = gss.expected_tables("manufacturing", "realtime")
         assert SHADOW in tables
-        assert "cat.sch.manufacturing_realtime" not in tables
-        assert "cat.sch.manufacturing_metrics" in tables
-        assert len(tables) == 7
+        assert "cat.pharma_twin_sch.manufacturing_realtime" not in tables
+        assert "cat.pharma_twin_sch.manufacturing_metrics" in tables
+        assert "cat.pharma_twin_sch.intelligence_genai_audit" in tables
+        assert len(tables) == 8
 
     def test_realtime_space_and_allowlist_agree(self) -> None:
         raw = gss.build_serialized_space("manufacturing", "realtime")
@@ -74,7 +78,8 @@ class TestRealtimeContent:
     def test_mode_tables_have_no_cdc_column_configs(self) -> None:
         tables = {t["identifier"]: t for t in _space("zerobus")["data_sources"]["tables"]}
         names = {
-            c["column_name"] for c in tables["cat.sch.manufacturing_zerobus"]["column_configs"]
+            c["column_name"]
+            for c in tables["cat.pharma_twin_sch.manufacturing_zerobus"]["column_configs"]
         }
         assert not any(n.startswith("_pg_") for n in names)
 

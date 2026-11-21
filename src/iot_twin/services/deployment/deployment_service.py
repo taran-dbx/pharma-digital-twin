@@ -30,7 +30,7 @@ refuses to create any job until every required validation step for the mode is
 ``gate_override=True``).
 
 Additive only — this module does not touch ``app.yaml`` / ``core/lakebase.py`` /
-``iot-lakets-demo``.
+``<prefix>-lakets-demo``.
 """
 
 from __future__ import annotations
@@ -47,7 +47,9 @@ from typing import Any
 
 from databricks.sdk.service.jobs import Continuous, JobSettings, PauseStatus
 
-from iot_twin.core.workspace_config import APP_SP_OAUTH_SECRET_KEY
+from iot_twin.core import resource_names
+from iot_twin.core.config import NotOwnedError
+from iot_twin.core.workspace_config import APP_SP_OAUTH_SECRET_KEY, get_uc_schema
 from iot_twin.services import cdf_reconciliation_service, uc_secrets
 from iot_twin.services.databricks_sdk import detect_cloud
 from iot_twin.services.db.app_repo_common import DBExecutor
@@ -65,11 +67,12 @@ from iot_twin.services.deployment.deployment_gate import (  # noqa: F401  (re-ex
     gate_status,
     outstanding_steps,
 )
+from iot_twin.services.ownership import assert_owned_job, job_lookup_missing
 from iot_twin.services.pipelines import pipeline_setup_repo
 from iot_twin.services.production_control import PRODUCTION_CONTROL_PLACEHOLDER, control_file_path
 from iot_twin.services.resource_ledger import record_resource
 
-logger = logging.getLogger("iot_digital_twin.services.deployment")
+logger = logging.getLogger("pharma_twin.services.deployment")
 
 
 class RuntimeOAuthCredentialError(RuntimeError):
@@ -125,8 +128,6 @@ MICROBATCH_PROCESSING_TIME = "10 seconds"
 # (branch=20, replica=30 in pipeline_project_service), so jobs sit above them.
 TEARDOWN_ORDER_JOB = 40
 
-_WS_SUBDIR = ".iot-digital-twin"
-
 
 # --- Worker sizing (M1) ------------------------------------------------------
 def compute_workers(partition_count: int | None, cores_per_worker: int = CORES_PER_WORKER) -> int:
@@ -172,7 +173,7 @@ async def sync_runtime_oauth_secret(w: Any | None = None) -> dict:
         "DATABRICKS_CLIENT_ID": os.getenv("DATABRICKS_CLIENT_ID", ""),
         "DATABRICKS_CLIENT_SECRET": os.getenv("DATABRICKS_CLIENT_SECRET", ""),
         "UC_CATALOG": os.getenv("UC_CATALOG", ""),
-        "UC_SCHEMA": os.getenv("UC_SCHEMA", ""),
+        "UC_SCHEMA": get_uc_schema(),
     }
     missing = [name for name, value in values.items() if not value]
     if missing:
@@ -201,7 +202,7 @@ def _current_user(w: Any) -> str:
 
 def _notebook_path(username: str, industry: str, mode: str, kind: str) -> str:
     ts = int(time.time())
-    return f"/Workspace/Users/{username}/{_WS_SUBDIR}/{industry}_{mode}_{kind}_{ts}"
+    return f"{resource_names.user_workspace_dir(username)}/{industry}_{mode}_{kind}_{ts}"
 
 
 def _normalize_consumer_credentials(source: str) -> str:
@@ -219,7 +220,7 @@ def _normalize_consumer_credentials(source: str) -> str:
     runtime_config = {
         "DATABRICKS_CLIENT_ID": os.getenv("DATABRICKS_CLIENT_ID", ""),
         "UC_CATALOG": os.getenv("UC_CATALOG", ""),
-        "UC_SCHEMA": os.getenv("UC_SCHEMA", ""),
+        "UC_SCHEMA": get_uc_schema(),
     }
     required = (
         runtime_config
@@ -404,7 +405,12 @@ def build_spark_tasks(
     single_user_name: str,
     cloud: str | None = None,
 ) -> list:
-    """Build the producer + consumer tasks for a Spark (realtime/microbatch) job."""
+    """Build the producer + consumer tasks for a Spark (realtime/microbatch) job.
+
+    The job is Continuous, so the tasks carry no retry policy: the Jobs API rejects one
+    (``retryPolicy is not allowed in continuous job``) and the continuous trigger already
+    restarts a failed run.
+    """
     from databricks.sdk.service.jobs import NotebookTask, Task
 
     realtime = mode == "realtime"
@@ -421,9 +427,6 @@ def build_spark_tasks(
             ),
             notebook_task=NotebookTask(notebook_path=consumer_notebook_path),
             libraries=build_cluster_libraries(CLASSIC_CONSUMER_LIBRARIES),
-            max_retries=3,
-            min_retry_interval_millis=30_000,
-            retry_on_timeout=True,
         )
     ]
     if producer_notebook_path:
@@ -440,9 +443,6 @@ def build_spark_tasks(
                     base_parameters=dict(PRODUCER_RUN_PARAMETERS),
                 ),
                 libraries=build_cluster_libraries(PRODUCER_LIBRARIES),
-                max_retries=3,
-                min_retry_interval_millis=30_000,
-                retry_on_timeout=True,
             )
         )
     return tasks
@@ -470,7 +470,7 @@ def build_zerobus_task(
 
 def job_display_name(industry: str, mode: str) -> str:
     """Canonical per-mode job name (spec §2.6)."""
-    return f"iot-{industry}-{mode}"
+    return resource_names.pipeline_name(industry, mode)
 
 
 # --- Job create/reset (idempotent by name) -----------------------------------
@@ -491,7 +491,7 @@ def _job_url(w: Any, job_id: Any) -> str | None:
 def _create_or_reset_continuous_job(w: Any, job_name: str, tasks: list) -> tuple[int, str]:
     """Create/reset an **unpaused Continuous** job with the given tasks."""
     continuous = Continuous(pause_status=PauseStatus.UNPAUSED)
-    tags = {"app": "iot-digital-twin", "component": "pipeline", "job": job_name}
+    tags = resource_names.resource_tags("pipeline", job=job_name)
     existing = _find_job_id(w, job_name)
     if existing is not None:
         try:
@@ -520,7 +520,7 @@ def _create_or_reset_serverless_job(
     """Create/reset a serverless (producer-only) job — run-triggered, no schedule."""
     from databricks.sdk.service.jobs import JobSettings
 
-    tags = {"app": "iot-digital-twin", "component": "zerobus", "job": job_name}
+    tags = resource_names.resource_tags("zerobus", job=job_name)
     existing = _find_job_id(w, job_name)
     if existing is not None:
         w.jobs.reset(
@@ -875,8 +875,9 @@ async def _attach_genie_space(
 
 # --- Lifecycle: start / stop / status ----------------------------------------
 def start_pipeline(job_id: Any, *, w: Any | None = None, continuous: bool = True) -> dict:
-    """Unpause a Continuous job or trigger a run-once job."""
+    """Unpause a Continuous job or trigger a run-once job (owned jobs only)."""
     w = w or _new_ws()
+    assert_owned_job(w, job_id)  # NotOwnedError before any update / run_now
     if continuous:
         w.jobs.update(
             job_id=int(job_id),
@@ -920,8 +921,19 @@ def stop_pipeline(job_id: Any, *, w: Any | None = None, continuous: bool = True)
 
     Pausing first prevents the Continuous scheduler from replacing the run
     between cancellation and pause, which would leave sibling tasks alive.
+
+    The job is re-verified as owned first (name prefix + ``app`` tag); a job
+    that no longer exists is reported ``already_absent``; a foreign job raises
+    :class:`~iot_twin.core.config.NotOwnedError` before any call that changes it.
     """
     w = w or _new_ws()
+    try:
+        assert_owned_job(w, job_id)
+    except NotOwnedError as exc:
+        if job_lookup_missing(exc):
+            logger.info("Job %s already absent while stopping", job_id)
+            return {"job_id": job_id, "state": "STOPPED", "paused": None, "already_absent": True}
+        raise
     if not continuous:
         w.jobs.cancel_all_runs(job_id=int(job_id))
         logger.info("Stopped run-triggered job %s", job_id)

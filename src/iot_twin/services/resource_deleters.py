@@ -13,8 +13,8 @@ Deleter contract (see ``iot_twin.services.teardown_service``):
 - raise anything else → recorded ``failed`` (surfaced; setup NOT cascaded).
 
 Guard rails:
-- **Shared** resources (``metadata.shared`` — the shared SP, ``iot-secrets``
-  scope, and the shared ``iot-pipelines`` project) are skipped both by the
+- **Shared** resources (``metadata.shared`` — the shared SP, ``<prefix>-secrets``
+  scope, and the shared ``<prefix>-pipelines`` project) are skipped both by the
   orchestrator and, defensively, by their own deleter.
 - **Kafka topics** are skipped with a clear note — ``kafka-cluster:DeleteTopic``
   is denied on this cluster (spec §1.8); topics are cleaned up manually on MSK.
@@ -41,7 +41,7 @@ from iot_twin.services.deployment.deployment_service import make_job_deleter
 from iot_twin.services.genie.genie_space_service import make_genie_space_deleter
 from iot_twin.services.teardown_service import Deleter, SkipResource
 
-logger = logging.getLogger("iot_digital_twin.services.resource_deleters")
+logger = logging.getLogger("pharma_twin.services.resource_deleters")
 
 _S3_REGION = "us-east-1"
 _TEMP_PATH_CREDS_ENDPOINT = "/api/2.1/unity-catalog/temporary-path-credentials"
@@ -245,7 +245,7 @@ def make_all_deleters(
         logger.info("teardown: deleted Lakebase endpoint %s", name)
 
     async def del_lakebase_project(res: dict) -> None:
-        raise SkipResource("shared iot-pipelines project — never torn down per-industry")
+        raise SkipResource("shared pipelines Lakebase project — never torn down per-industry")
 
     # --- Identity / secrets ------------------------------------------------
     async def del_service_principal(res: dict) -> None:

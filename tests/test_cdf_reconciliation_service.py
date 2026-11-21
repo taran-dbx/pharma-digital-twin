@@ -16,7 +16,7 @@ from iot_twin.services import cdf_reconciliation_service as cdf
 def test_canonical_names_are_industry_unique_c7234(monkeypatch):
     """Canonical source and destination names do not collide [C7234][defect][regression]."""
     monkeypatch.setenv("UC_CATALOG", "example-catalog")
-    monkeypatch.setenv("UC_SCHEMA", "rtm_lakets_zb")
+    monkeypatch.setenv("UC_SCHEMA", "pharma_twin_zb")
 
     manufacturing = cdf.shadow_table_name(" Manufacturing ")
     pharmaceutical = cdf.shadow_table_name("pharmaceutical")
@@ -69,8 +69,8 @@ async def test_exact_wal2delta_shadow_must_stream_c7236():
 async def test_reconcile_updates_metadata_and_deduplicates_ledger_c7237(monkeypatch):
     """Successful reconciliation persists one exact binding [C7237][regression]."""
     monkeypatch.setenv("UC_CATALOG", "example-catalog")
-    monkeypatch.setenv("UC_SCHEMA", "rtm_lakets_zb")
-    monkeypatch.setenv("PIPELINES_LAKEBASE_PROJECT", "iot-pipelines-example")
+    monkeypatch.setenv("UC_SCHEMA", "pharma_twin_zb")
+    monkeypatch.setenv("PIPELINES_LAKEBASE_PROJECT", "pharma-twin-pipelines-example")
     db = MagicMock()
     migration_conn = MagicMock()
     migration_conn.close = AsyncMock()
@@ -164,8 +164,8 @@ async def test_failure_closes_connections_and_preserves_deployed_status_c7248(
 ):
     """Failed polling clears CDF only on deployed jobs [C7248][defect][regression]."""
     monkeypatch.setenv("UC_CATALOG", "example-catalog")
-    monkeypatch.setenv("UC_SCHEMA", "rtm_lakets_zb")
-    monkeypatch.setenv("PIPELINES_LAKEBASE_PROJECT", "iot-pipelines-example")
+    monkeypatch.setenv("UC_SCHEMA", "pharma_twin_zb")
+    monkeypatch.setenv("PIPELINES_LAKEBASE_PROJECT", "pharma-twin-pipelines-example")
     db = MagicMock()
     deployment = {
         "id": "d1",

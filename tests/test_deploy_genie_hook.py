@@ -60,7 +60,7 @@ def _env(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DATABRICKS_CLIENT_ID", "app-sp")
     monkeypatch.setenv("DATABRICKS_CLIENT_SECRET", "app-secret")
     monkeypatch.setenv("UC_CATALOG", "cat")
-    monkeypatch.setenv("UC_SCHEMA", "sch")
+    monkeypatch.setenv("UC_SCHEMA", "pharma_twin_sch")
     monkeypatch.delenv("DATABRICKS_SQL_WAREHOUSE_ID", raising=False)
     monkeypatch.setattr(ds.uc_secrets, "put_secret", AsyncMock(return_value={"status": "ok"}))
     monkeypatch.setattr(

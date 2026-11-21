@@ -22,7 +22,7 @@ from iot_twin.services.industry.industry_templates import CURATED_INDUSTRIES
 from iot_twin.services.lakets import lakets_service
 from iot_twin.services.pipelines import pipeline_project_service, pipeline_setup_repo
 
-logger = logging.getLogger("iot_digital_twin.services.cdf_reconciliation")
+logger = logging.getLogger("pharma_twin.services.cdf_reconciliation")
 
 CDF_SHADOW_SCHEMA = cdf_config_service.DEFAULT_POSTGRES_SCHEMA
 SOURCE_SCHEMA = "public"

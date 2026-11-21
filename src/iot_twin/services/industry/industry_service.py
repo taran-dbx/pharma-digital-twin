@@ -19,6 +19,8 @@ import logging
 import os
 from typing import Any
 
+from iot_twin.core import resource_names
+from iot_twin.core.config import LAKEBASE_SYNC_DATABASE, NotOwnedError
 from iot_twin.core.state import AppState
 from iot_twin.core.workspace_config import get_secret_scope
 from iot_twin.services.deployment import deployment_service
@@ -28,6 +30,7 @@ from iot_twin.services.industry.industry_templates import (
     get_template,
     mode_config,
 )
+from iot_twin.services.ownership import assert_owned_job
 
 
 def _resolve_app_sp(state: Any) -> dict:
@@ -41,7 +44,7 @@ def _resolve_app_sp(state: Any) -> dict:
     return {"client_id": cid or None}
 
 
-logger = logging.getLogger("iot_digital_twin.services.industry_service")
+logger = logging.getLogger("pharma_twin.services.industry_service")
 
 # Pipeline lifecycle values (row "status", falling back to "state") that map
 # to a "running" / "starting" mode status. Anything else — including no
@@ -52,17 +55,17 @@ _STARTING_STATES = {"starting", "pending", "queued", "provisioning", "deploying"
 
 def pipeline_name(industry: str, mode: str) -> str:
     """Deterministic pipeline name for a curated industry's streaming mode."""
-    return f"iot-{industry}-{mode}"
+    return resource_names.pipeline_name(industry, mode)
 
 
 def catalog_name(industry: str) -> str:
     """Deterministic Unity Catalog name for a curated industry."""
-    return f"iot_{industry}"
+    return resource_names.catalog_name(industry)
 
 
 def topic_name(industry: str, mode: str) -> str:
     """Deterministic Kafka topic name for a curated industry's streaming mode."""
-    return f"iot.{industry}.{mode}"
+    return resource_names.topic_name(industry, mode)
 
 
 async def _list_pipelines(state: AppState) -> list[dict[str, Any]]:
@@ -77,7 +80,7 @@ async def _list_pipelines(state: AppState) -> list[dict[str, Any]]:
 
     ``industry``, ``source_type`` and ``source_config`` are pulled alongside
     ``name``/``status`` so the reconciliation pass in ``get_catalog`` can
-    recognize pipelines that predate the deterministic ``iot-<industry>-
+    recognize pipelines that predate the deterministic ``<prefix>-<industry>-
     <mode>`` naming convention (see ``_infer_mode``).
     """
     if not state or not getattr(state, "db_available", False) or not getattr(state, "db", None):
@@ -151,7 +154,7 @@ _LAKEBASE_SINK_MARKERS = ("lakebase", "lb_", "lakets")
 def _infer_mode(row: dict[str, Any]) -> str | None:
     """Best-effort streaming-mode inference for a pipeline row.
 
-    Existing pipelines deployed before the deterministic ``iot-<industry>-
+    Existing pipelines deployed before the deterministic ``<prefix>-<industry>-
     <mode>`` naming convention (e.g. one literally named ``"Demo"``) can't be
     joined back to a curated mode by name. This infers the mode from
     ``source_type``/``source_config`` instead, so ``get_catalog``'s
@@ -250,7 +253,7 @@ async def resolve_pipeline_for_mode(
     (``routes/industries.py``) both rely on, so the two never drift apart.
 
     Two passes, mirroring ``get_catalog``'s original two-pass algorithm:
-    1. Exact deterministic-name join (``iot-<industry>-<mode>``) — handles
+    1. Exact deterministic-name join (``<prefix>-<industry>-<mode>``) — handles
        every pipeline created through the new industry-catalog flow
        (``start_mode``/``stop_mode``).
     2. Reconciliation — a pipeline deployed before that naming convention
@@ -404,7 +407,6 @@ async def get_catalog(state: AppState) -> list[dict[str, Any]]:
 # ``user_email`` to attribute the row to. ``pipelines.user_email`` is
 # NOT NULL (see ``core/lakebase.py::ensure_pipelines_table``), so a fixed system
 # owner is used for every curated-industry row.
-_INDUSTRY_PIPELINE_OWNER = "industries@iot-digital-twin.system"
 
 # Status ``stop_mode`` writes. Reuses the exact value
 # ``routes/pipelines.py::reset_pipeline`` already writes for "provisioned but
@@ -476,7 +478,7 @@ async def _ensure_pipeline_row(
                 VALUES ($1, $2, $3, $4)
                 RETURNING id
                 """,
-                _INDUSTRY_PIPELINE_OWNER,
+                resource_names.system_owner_email(),
                 name,
                 industry,
                 status,
@@ -548,7 +550,7 @@ async def _get_pipeline_id_and_job(
 
 
 async def _provision_catalog_schema(industry: str, mode: str) -> list[dict]:
-    """Idempotently create catalog ``iot_<industry>`` with schema ``<mode>``.
+    """Idempotently create catalog ``<prefix_ident>_<industry>`` with schema ``<mode>``.
 
     Thin wrapper around ``provisioning_service.provision_uc_catalog`` — the
     real UC catalog/schema provisioning already used by the settings page
@@ -590,9 +592,9 @@ async def _provision_lakebase_branch(
         "create_new_project": True,
         "lb_project_id": pipeline_name(industry, mode),
         "lb_branch_id": "production",
-        "lb_database": "databricks_postgres",
+        "lb_database": LAKEBASE_SYNC_DATABASE,
         "table_name": "sensor_readings",
-        "secret_scope": os.getenv("ZEROBUS_SECRET_SCOPE") or get_secret_scope(),
+        "secret_scope": get_secret_scope(),
         "industry": industry,
     }
     return await setup_pipeline_lakebase(state, params)
@@ -653,6 +655,7 @@ async def _deploy_and_start(
         w = getattr(state, "workspace_client", None) or WorkspaceClient()
         try:
             await deployment_service.sync_runtime_oauth_secret(w)
+            assert_owned_job(w, zerobus_job_id)  # stored id: re-verify before run_now
             run = w.jobs.run_now(job_id=int(zerobus_job_id))
             return {
                 "status": "running",
@@ -685,6 +688,7 @@ async def _deploy_and_start(
     w = getattr(state, "workspace_client", None) or WorkspaceClient()
     try:
         await deployment_service.sync_runtime_oauth_secret(w)
+        assert_owned_job(w, job_id)  # stored id: re-verify before unpausing
         w.jobs.update(
             job_id=int(job_id),
             new_settings=JobSettings(continuous=Continuous(pause_status=PauseStatus.UNPAUSED)),
@@ -710,6 +714,11 @@ def _stop_job(job_id: str, state: AppState | None = None) -> dict:
     from databricks.sdk.service.jobs import Continuous, JobSettings, PauseStatus
 
     w = getattr(state, "workspace_client", None) or WorkspaceClient()
+    try:
+        assert_owned_job(w, job_id)  # stored id: never pause / cancel a foreign job
+    except NotOwnedError as exc:
+        logger.error("refusing to stop job %s: %s", job_id, exc)
+        return {"status": "failed", "job_id": job_id, "error": str(exc)[:200]}
     # PAUSE FIRST, then cancel: a Continuous job's scheduler immediately starts a
     # fresh run when the active one is cancelled, so cancelling before pausing
     # races (the run comes back before the pause lands, leaving it RUNNING).

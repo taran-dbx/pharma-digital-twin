@@ -1,0 +1,61 @@
+# ops/notebooks/pipeline_health_check.ipynb run against the NEW deployment at ~21:00 UTC (serverless, sample=false,
+# redact=true, industry=manufacturing, mode=realtime, lookback_hours=2, app_backend_project=pharma-twin-backend,
+# pipelines_project=pharma-twin-pipelines, uc_schema=pharma_twin). Snapshot: ops/notebooks/runs/manufacturing_realtime_2026-11-20.ipynb
+# An earlier run at 16:25 (before the Lakehouse Sync stall) scored 40 PASS | 5 WARN | 2 FAIL | 1 SKIPPED.
+Overall: FAIL  28 PASS | 10 WARN | 9 FAIL | 1 SKIPPED (1 not applicable to this mode)
+
+## every check (section | check | status | value)
+3. Lakebase hot tier | lb_silent_sensors | FAIL | 15 of 19 (78.9%)
+4. LakeTS outcomes | lakets_cdf_state | FAIL | sync=True, wal2delta=STREAMING, lag 2,214.1 MB
+4. LakeTS outcomes | lakets_gap_fill | FAIL | 229 of 570 (40.2%)
+5. CDF / Unity Catalog cold tier | uc_cdf_lag | FAIL | 84.9m
+5. CDF / Unity Catalog cold tier | uc_freshness | FAIL | 1.5h
+5. CDF / Unity Catalog cold tier | uc_last_commit | FAIL | 1.5h ago (wal2delta.append)
+6. Streaming metrics | metrics_batch_duration | FAIL | p95 = 888.2 s
+6. Streaming metrics | metrics_e2e_latency | FAIL | p95 of batch p99 = 496.1 s
+7. Cross-checks & data quality | xc_reconciliation | FAIL | Lakebase 1,760,129 vs Delta 0 (100.00%)
+3. Lakebase hot tier | lb_duplicates | WARN | 2,800 rows (0.1968%)
+3. Lakebase hot tier | lb_freshness | WARN | 6.7m
+3. Lakebase hot tier | lb_ingest_rate | WARN | 8,992/min vs 23,673/min
+4. LakeTS outcomes | lakets_rate_of_change | WARN | 7,166 outliers (0.50%)
+4. LakeTS outcomes | lakets_rollups | WARN | refresh age 45.3m, 5 pending
+4. LakeTS outcomes | lakets_tiering | WARN | no policy
+5. CDF / Unity Catalog cold tier | uc_small_files | WARN | 770 files, avg 0.5 MB
+6. Streaming metrics | metrics_freshness | WARN | 12.3m
+7. Cross-checks & data quality | xc_e2e_latency | WARN | 6.7m to Lakebase
+7. Cross-checks & data quality | xc_schema_cold | WARN | 0 missing, 7 extra, 1 drifted
+6. Streaming metrics | zerobus_ingest | SKIPPED | -
+1. Header & resolved pipeline | control_plane_record | PASS | deployed
+2. Pipeline & job health | cdf_enabled | PASS | True
+2. Pipeline & job health | deployment_status | PASS | deployed
+2. Pipeline & job health | job_compute | PASS | RTM on
+2. Pipeline & job health | job_last_run | PASS | RUNNING/-
+2. Pipeline & job health | job_recent_failures | PASS | 0 of last 5
+2. Pipeline & job health | job_task_health | PASS | 0 broken of 2
+3. Lakebase hot tier | lb_chronotable | PASS | 71 forward partitions
+3. Lakebase hot tier | lb_connect | PASS | 13 columns
+3. Lakebase hot tier | lb_nulls | PASS | required 0.000%, optional max 0.000%
+3. Lakebase hot tier | lb_out_of_order | PASS | 253 of 50,000 (0.51%)
+3. Lakebase hot tier | lb_rows_window | PASS | ~3,083,725
+3. Lakebase hot tier | lb_size | PASS | 2.0 GB
+4. LakeTS outcomes | lakets_installed | PASS | 0.1.0
+4. LakeTS outcomes | lakets_lvc | PASS | lag 0s, 23 series
+4. LakeTS outcomes | lakets_ops_jobs | PASS | 4/4 deployed, 0 failing
+4. LakeTS outcomes | lakets_partitions | PASS | 71 forward, 0 created in 2h
+4. LakeTS outcomes | lakets_value_range | PASS | 0 of 1,423,103 (0.00%)
+5. CDF / Unity Catalog cold tier | uc_cdf_state | PASS | enabled=True, ledger=True, wal2delta=STREAMING
+5. CDF / Unity Catalog cold tier | uc_connect | PASS | 5 tables listed
+5. CDF / Unity Catalog cold tier | uc_rows_window | PASS | 815,020
+5. CDF / Unity Catalog cold tier | uc_tables | PASS | 2/2 present
+6. Streaming metrics | metrics_table | PASS | 15 batches
+6. Streaming metrics | metrics_throughput | PASS | processed/input = 0.93 (455.2 vs 488.1 rows/s)
+7. Cross-checks & data quality | xc_duplicates_cold | PASS | 0 rows (0.0000%)
+7. Cross-checks & data quality | xc_nulls_cold | PASS | required 0.000%, optional max 0.000%
+7. Cross-checks & data quality | xc_schema_hot | PASS | 0 missing, 0 extra, 0 drifted
+7. Cross-checks & data quality | xc_sse_evidence | PASS | LVC lag 0s, 2617 alert events
+
+# Reading: two causes. (1) Lakehouse Sync stopped at Delta version 1000 at 19:29:32 (07b): the cold-tier, CDF and
+# reconciliation checks fail. (2) From 19:32 the consumer wrote fewer rows than the producer sent (11b, 05c): the
+# freshness, silent-sensor and latency checks fail. lakets_gap_fill (40.2 % of buckets) is NOT explained by either.
+# The degradation continued after this run (worst batch e2e P99 579.4 s at 21:07, 861.5 s at 21:49). The 16:25 run's
+# only FAILs were the 2000 Hz backlog batch (metrics_e2e_latency, metrics_batch_duration).

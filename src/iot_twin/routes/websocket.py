@@ -16,7 +16,7 @@ from iot_twin.services.alerts.alert_engine import engine_for
 from iot_twin.services.alerts.alert_snapshot_sync import mark_snapshot_dirty
 from iot_twin.services.alerts.alert_sse import build_lifecycle_payload, enqueue_alert_events
 
-logger = logging.getLogger("iot_digital_twin.routes.websocket")
+logger = logging.getLogger("pharma_twin.routes.websocket")
 router = APIRouter()
 
 

@@ -31,7 +31,7 @@ from typing import Any
 from iot_twin.core.paths import LAKETS_SQL_PATH as PACKAGED_LAKETS_SQL
 from iot_twin.models.sql_ddl import LAKETS_VERSION_CHECK_SQL
 
-logger = logging.getLogger("iot_digital_twin.services.lakets")
+logger = logging.getLogger("pharma_twin.services.lakets")
 
 
 _CLONE_TIMEOUT_SEC = 60

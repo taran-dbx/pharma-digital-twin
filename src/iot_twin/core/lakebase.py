@@ -20,7 +20,9 @@ import asyncpg
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.core import Config
 
-logger = logging.getLogger("iot_digital_twin.backend")
+from iot_twin.core.config import owned_env
+
+logger = logging.getLogger("pharma_twin.backend")
 
 # Bounded pool waits so a hung Lakebase endpoint cannot pin app workers forever
 # (proxy upstream timeouts were ~10m with no asyncpg command/connect limits).
@@ -47,7 +49,7 @@ def _get_lakebase_credentials(endpoint_name: str | None = None) -> tuple[str, st
             retry_timeout_seconds=LAKEBASE_SDK_TIMEOUT_SECONDS,
         )
     )
-    endpoint_name = endpoint_name or os.getenv("LAKEBASE_ENDPOINT")
+    endpoint_name = endpoint_name or owned_env("LAKEBASE_ENDPOINT") or None
     if not endpoint_name:
         raise RuntimeError("LAKEBASE_ENDPOINT env var not set")
 
@@ -55,6 +57,8 @@ def _get_lakebase_credentials(endpoint_name: str | None = None) -> tuple[str, st
         os.getenv("PGUSER") or os.getenv("DATABRICKS_CLIENT_ID") or w.current_user.me().user_name
     )
     cred = w.postgres.generate_database_credential(endpoint=endpoint_name)
+    if not pg_user or not cred.token:
+        raise RuntimeError(f"Lakebase credential for {endpoint_name} returned no user/token")
     return pg_user, cred.token
 
 

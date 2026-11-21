@@ -98,7 +98,7 @@ export function SecretsSettingsTab({
 
       <InputField
         label="Scope Name"
-        placeholder="iot-secrets"
+        placeholder="pharma-twin-secrets"
         value={settings.scope}
         onChange={(v) => onUpdate({ scope: v })}
         description="The Databricks secret scope that holds all credential keys below"

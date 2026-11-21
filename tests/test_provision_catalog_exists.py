@@ -17,7 +17,7 @@ from iot_twin.services.industry import industry_catalog_service as ics
 from iot_twin.services.industry import industry_provisioning_service as ips
 
 CATALOG = "example_eu_catalog"
-SCHEMA = "rtm_lakets_zb"
+SCHEMA = "pharma_twin_zb"
 APP_SP = "00000000-0000-0000-0000-00000000000a"
 
 
@@ -64,9 +64,9 @@ class TestProvisionSchemaAndTables:
         with patch.object(ics, "execute_dbsql", new=exec_mock):
             await ics.provision_industry_catalog("pharmaceutical", ws=ws)
         all_sql = "\n".join(c.args[0] for c in exec_mock.call_args_list)
-        assert "CREATE SCHEMA IF NOT EXISTS `example-catalog`.rtm_lakets_zb" in all_sql
+        assert "CREATE SCHEMA IF NOT EXISTS `example-catalog`.pharma_twin_zb" in all_sql
         assert (
-            "CREATE TABLE IF NOT EXISTS `example-catalog`.rtm_lakets_zb.pharmaceutical_zerobus"
+            "CREATE TABLE IF NOT EXISTS `example-catalog`.pharma_twin_zb.pharmaceutical_zerobus"
             in all_sql
         )
 
@@ -121,7 +121,7 @@ class TestSingleSpGrants:
             await ics.grant_app_sp("pharmaceutical", ws=ws, principal=APP_SP)
         sqls = "\n".join(c.args[0] for c in exec_mock.call_args_list)
         assert "USE CATALOG ON CATALOG `example-catalog`" in sqls
-        assert "ON SCHEMA `example-catalog`.rtm_lakets_zb" in sqls
+        assert "ON SCHEMA `example-catalog`.pharma_twin_zb" in sqls
 
     @pytest.mark.asyncio
     async def test_grants_only_the_app_sp_on_the_schema(self) -> None:

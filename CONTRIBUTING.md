@@ -48,5 +48,6 @@ constants whose own name is not credential-shaped (e.g. `ZEROBUS_OAUTH_ENTRY_NAM
 ## Deployment changes
 
 Changes to `databricks.yml`, `resources/` or `app.yaml` must keep `make bundle-validate`
-green and update [docs/deployment.md](docs/deployment.md). Never deploy a bundle over an
-existing app without binding it first.
+green and update [docs/deployment.md](docs/deployment.md). Never bind or deploy this
+bundle over an existing app, and build every resource name through
+`iot_twin.core.resource_names` (`tests/test_resource_isolation.py` enforces it).

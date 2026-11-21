@@ -55,7 +55,7 @@ class TestMetricsDdl:
         )
         loc = ms.metrics_table_location("iot_spiketest", "s3://example-shared-bucket", mode)
         assert loc == (
-            "s3://example-shared-bucket/iot-digital-twin/iot_spiketest/metrics/"
+            "s3://example-shared-bucket/pharma-twin/iot_spiketest/metrics/"
             f"streaming_metrics_{mode}/"
         )
 
@@ -65,13 +65,13 @@ class TestMetricsDdl:
         )
         assert "CREATE TABLE IF NOT EXISTS iot_spiketest.metrics.streaming_metrics_realtime" in ddl
         assert "USING DELTA" in ddl
-        assert "LOCATION 's3://example-shared-bucket/iot-digital-twin/" in ddl
+        assert "LOCATION 's3://example-shared-bucket/pharma-twin/" in ddl
         assert "streaming_metrics_realtime/" in ddl
         assert "progress STRING" in ddl
 
     def test_location_trims_trailing_slash_on_base(self) -> None:
         loc = ms.metrics_table_location("iot_x", "s3://bucket/", "microbatch")
-        assert loc == "s3://bucket/iot-digital-twin/iot_x/metrics/streaming_metrics_microbatch/"
+        assert loc == "s3://bucket/pharma-twin/iot_x/metrics/streaming_metrics_microbatch/"
 
     def test_unknown_mode_raises(self) -> None:
         with pytest.raises(ValueError):

@@ -60,7 +60,7 @@ def _make_ws(existing_keys: list[str], sp_app_id: str | None = None) -> MagicMoc
     return w
 
 
-async def _post_provision_secrets(w: MagicMock, scope: str = "iot_scope") -> dict[str, Any]:
+async def _post_provision_secrets(w: MagicMock, scope: str = "pharma-twin-scope") -> dict[str, Any]:
     app = _build_app()
     transport = ASGITransport(app=app)
     body = {"secrets": {"scope": scope}}
@@ -74,7 +74,7 @@ async def _post_provision_secrets(w: MagicMock, scope: str = "iot_scope") -> dic
         ),
         patch("databricks.sdk.WorkspaceClient", return_value=w),
         patch("iot_twin.routes.settings.grant_app_can_use") as grant_mock,
-        patch("iot_twin.routes.settings._app_name", return_value="iot-digital-twin"),
+        patch("iot_twin.routes.settings._app_name", return_value="pharma-twin"),
     ):
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post("/api/settings/provision/secrets", json=body)
@@ -94,7 +94,7 @@ class TestProvisionSecretsAppGrant:
         args = out["grant"].call_args.args
         # (w, app_name, application_id)
         assert args[0] is w
-        assert args[1] == "iot-digital-twin"
+        assert args[1] == "pharma-twin"
         assert args[2] == "fresh-app-id"
 
         provisioned = out["resp"].json()["provisioned"]
@@ -111,7 +111,7 @@ class TestProvisionSecretsAppGrant:
             existing_keys=["zerobus-client-id", "zerobus-client-secret"],
             sp_app_id="existing-app-id",
         )
-        out = await _post_provision_secrets(w, scope="iot_scope")
+        out = await _post_provision_secrets(w, scope="pharma-twin-scope")
 
         assert out["resp"].status_code == 200
         # SP must NOT be created on the already-exists path
@@ -120,12 +120,12 @@ class TestProvisionSecretsAppGrant:
         w.service_principals.list.assert_called_once()
         _, kwargs = w.service_principals.list.call_args
         filt = kwargs.get("filter", "")
-        assert "iot-sss-iot_scope" in filt
+        assert "pharma-twin-sss-pharma-twin-scope" in filt
 
         out["grant"].assert_called_once()
         args = out["grant"].call_args.args
         assert args[0] is w
-        assert args[1] == "iot-digital-twin"
+        assert args[1] == "pharma-twin"
         assert args[2] == "existing-app-id"
 
         provisioned = out["resp"].json()["provisioned"]

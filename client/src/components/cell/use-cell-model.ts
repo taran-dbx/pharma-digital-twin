@@ -1,8 +1,10 @@
 /**
- * Operator model of the manufacturing machining cell (MILL → INSPECT → PACK).
+ * Operator model of Trinity Medical's implant cell (MILL → CMM → PACK).
  * Every live number comes from SSE readings (or Zerobus latest rows) and the
- * catalog alert rules; production state comes from the cell's stop/resume
- * record. Nothing is derived or invented on the client.
+ * catalog's validated-limit rules; production state comes from the cell's
+ * stop/resume record. Quality values (parts at risk, right-first-time,
+ * time-to-detect) are derived only from the alert episode, those readings and
+ * the deterministic lot clock.
  */
 import { useEffect, useMemo, useState } from "react";
 
@@ -17,15 +19,29 @@ import type {
   IndustryMaintenanceEvent,
   PipelineMode,
 } from "@/lib/industries-api";
+import type { LotDisposition } from "@/lib/manufacturing-lot";
+import { spindleRisk, type SpindleRisk } from "@/lib/manufacturing-risk";
+import {
+  costOfPoorQualityUsd,
+  episodeDisposition,
+  excursionWindow,
+  projectedRightFirstTime,
+  timeToDetectSeconds,
+  type ExcursionWindow,
+  type ProjectedRft,
+} from "@/lib/manufacturing-quality";
 import { spindleHeatStateAt, type SpindleHeatState } from "@/lib/manufacturing-scenario";
 import {
   CELL_SENSORS,
+  CMM_LAB_SENSOR,
   PACK_LINE_SENSOR,
+  SPINDLE_RULE_ID,
   SPINDLE_SENSOR,
   activeSpindleAlert,
   isActiveAlert,
   isCellMachineSensor,
   lastSpindleService,
+  lotHold,
   sensorOverLimit,
   spindleHealth,
   spindleLimitFrom,
@@ -63,6 +79,8 @@ export interface RuleWatch {
 export interface MachiningCellModel {
   limit: SpindleLimit | null;
   spindleAlert: AlertRecord | null;
+  /** Thermal-risk model output from the latest predicted alert, if any. */
+  risk: SpindleRisk | null;
   alerts: AlertRecord[];
   openAlerts: number;
   spindle: LiveSignal & { health: HealthState; history: SensorHistoryPoint[] };
@@ -83,13 +101,28 @@ export interface MachiningCellModel {
   now: number;
   episode: SpindleEpisode;
   production: CellProduction;
-  /** A batch hold is in force: recorded on this episode and not yet released by a resume. */
+  /** The PACK gate is down for a QA hold recorded on this episode, until a resume. */
   batchHeld: boolean;
+  quality: CellQuality;
 }
 
-/** Resuming the cell after inspection releases a hold recorded before the resume. */
+export interface CellQuality {
+  /** Parts cut while Spindle 3 was outside its validated limit (latest episode). */
+  disposition: LotDisposition | null;
+  /** First over-limit reading → cleared (or now); null without an excursion. */
+  window: ExcursionWindow | null;
+  projectedRft: ProjectedRft | null;
+  costOfPoorQualityUsd: number | null;
+  /** First reading over the limit → alert opened, seconds (live readings only). */
+  timeToDetectS?: number;
+}
+
+/**
+ * Resuming the cell after CMM lifts the PACK gate for a hold recorded before
+ * the resume. The QA hold itself stays on the quarantined parts.
+ */
 function batchHeldNow(episode: SpindleEpisode, production: CellProduction): boolean {
-  const hold = episode.decisions.hold_batch;
+  const hold = lotHold(episode.decisions);
   if (!hold) return false;
   const state = production.state;
   if (state?.state !== "running" || !state.changed_at) return true;
@@ -113,6 +146,12 @@ function numeric(value: unknown): number | undefined {
 function limitText(rule: IndustryAlertRule | undefined, unit: string): string | undefined {
   if (!rule) return undefined;
   return `Limit ${rule.operator === "lt" ? "≥" : "≤"} ${formatNumber(rule.threshold, 0)} ${unit}`;
+}
+
+function cmmStation(lab: LiveSignal): StationView {
+  return lab.value === undefined
+    ? { health: "waiting", readout: "lab —" }
+    : { health: "normal", readout: `lab ${formatNumber(lab.value, 1)} ${lab.unit}` };
 }
 
 function manufacturingReadings(sensors: Record<string, SensorReading>): SensorReading[] {
@@ -242,6 +281,7 @@ export function useMachiningCellModel({
     return {
       limit,
       spindleAlert,
+      risk: spindleRisk(alerts),
       alerts,
       openAlerts: alerts.filter(isActiveAlert).length,
       spindle: { ...temp, health, history: spindleHistory },
@@ -251,7 +291,7 @@ export function useMachiningCellModel({
           health,
           readout: temp.value === undefined ? "—" : `${formatNumber(temp.value, 1)} ${temp.unit}`,
         },
-        inspect: { health: "no-feed" as const, readout: "no sensor feed" },
+        inspect: cmmStation(signal(CMM_LAB_SENSOR, "°C")),
         pack: {
           health: packHealth,
           readout: speed.value === undefined ? "—" : `${formatNumber(speed.value, 1)} ${speed.unit}`,
@@ -269,5 +309,29 @@ export function useMachiningCellModel({
     };
   }, [mode, rules, maintenance, zerobusReadings, sensors, history, alerts, now, stopped]);
 
-  return { ...model, lastMachineTs, episode, production, batchHeld: batchHeldNow(episode, production) };
+  const quality = useMemo<CellQuality>(() => {
+    const spindleRule = rules.find((r) => r.rule_id === SPINDLE_RULE_ID);
+    const window = excursionWindow(episode.alert, now, {
+      history: model.spindle.history,
+      threshold: model.limit?.threshold,
+      durationS: spindleRule?.duration_s ?? 0,
+    });
+    const disposition = episodeDisposition(window);
+    return {
+      disposition,
+      window,
+      projectedRft: projectedRightFirstTime(disposition, now),
+      costOfPoorQualityUsd: costOfPoorQualityUsd(disposition),
+      timeToDetectS: timeToDetectSeconds(episode.alert, model.spindle.history, model.limit?.threshold),
+    };
+  }, [episode.alert, now, model.spindle.history, model.limit, rules]);
+
+  return {
+    ...model,
+    lastMachineTs,
+    episode,
+    production,
+    batchHeld: batchHeldNow(episode, production),
+    quality,
+  };
 }

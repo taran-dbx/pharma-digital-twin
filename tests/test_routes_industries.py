@@ -120,7 +120,7 @@ class TestStartIndustryMode:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
 
-        fake_result = {"pipeline": "iot-pharmaceutical-realtime", "status": "starting"}
+        fake_result = {"pipeline": "pharma-twin-pharmaceutical-realtime", "status": "starting"}
         start_mock = AsyncMock(return_value=fake_result)
         with patch("iot_twin.routes.industries.industry_service.start_mode", start_mock):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -171,7 +171,7 @@ class TestStopIndustryMode:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
 
-        fake_result = {"pipeline": "iot-manufacturing-microbatch", "status": "idle"}
+        fake_result = {"pipeline": "pharma-twin-manufacturing-microbatch", "status": "idle"}
         stop_mock = AsyncMock(return_value=fake_result)
         with patch("iot_twin.routes.industries.industry_service.stop_mode", stop_mock):
             async with AsyncClient(transport=transport, base_url="http://test") as client:

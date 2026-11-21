@@ -1,7 +1,8 @@
 """Tests for usecases/manufacturing/manufacturing_kpis.ipynb.
 
 * structure: valid nbformat 4, unique cell ids, self-contained copies of the shared helpers;
-* KPI formula helpers (OEE = A x P x Q, MTBA, stop time, drift, counter check) against small
+* KPI formula helpers (process health = A x P x Q, the classic OEE product; MTBA, stop
+  time, drift, counter check) against small
   hand-computed fixtures, executed straight from the notebook cells;
 * a fresh offline run in sample mode renders every KPI section and its data-source note;
 * graceful 'not deployed' / 'not applicable' states;
@@ -33,7 +34,7 @@ OPS_NOTEBOOK = ROOT / "ops" / "notebooks" / "pipeline_health_check.ipynb"
 GENIE_CONTENT = ROOT / "src" / "iot_twin" / "services" / "genie" / "genie_space_content.py"
 SECTIONS = (
     "Pipeline at a glance",
-    "1. Overall Equipment Effectiveness (OEE)",
+    "1. Process health index (telemetry approximation)",
     "2. Downtime and alarms",
     "3. Sensor health trends",
     "4. Throughput per hour versus target",
@@ -264,10 +265,12 @@ def test_counter_check_rejects_fluctuating_levels(f):
 
 
 def test_asset_mapping_and_threshold_breach(f):
-    assert f["asset_of"]("cnc_1_spindle_temp") == "CNC-1"
-    assert f["asset_of"]("assy_line_1_speed") == "Assembly line 1"
-    assert f["asset_of"]("hvac_zone_1_temp") == "Facility (HVAC)"
-    assert f["asset_of_sensor_id"]("mfg-sns-press_1_pressure") == "Hydraulic press 1"
+    assert f["asset_of"]("cnc_1_spindle_temp") == "CNC-1 5-axis mill"
+    assert f["asset_of"]("assy_line_1_speed") == "Sterile pack line"
+    assert f["asset_of"]("hvac_zone_1_temp") == "CMM-1 metrology lab"
+    assert f["asset_of"]("hvac_ahu_1_supply_temp") == "Facility (HVAC)"
+    assert f["asset_of_sensor_id"]("mfg-sns-press_1_pressure") == "Clean & passivation line"
+    assert "CMM-1 metrology lab" in f["NON_PRODUCTION"]
     assert f["breach"]("cnc_1_spindle_temp", 61.0) is True
     assert f["breach"]("press_1_pressure", 119.0) is True
     assert f["breach"]("press_1_pressure", 121.0) is False
@@ -289,7 +292,7 @@ def test_sample_run_renders_every_section_and_data_source(executed):
         assert "#### Data source" in _plain(executed, cell_id), cell_id
         assert "| time window | last 24 h" in _plain(executed, cell_id), cell_id
     assert "Production counts (units per hour): not available from this pipeline" in text
-    assert "Plant OEE" in text and "Mean time between alerts" in text
+    assert "Plant process health" in text and "Mean time between alerts" in text
     errors = [o for c in executed.cells for o in c.get("outputs", []) if o.output_type == "error"]
     assert not errors
     streams = [o for c in executed.cells for o in c.get("outputs", []) if o.output_type == "stream"]
@@ -384,7 +387,8 @@ def test_exporter_replaces_an_existing_label(tmp_path):
         model, _write(tmp_path, source), "LIVE RUN, redacted, 2026-02-02"
     )
     assert [c.source for c in notebook.cells][0] == "**LIVE RUN, redacted, 2026-02-02**"
-    assert len(notebook.cells) == 2
+    # label + the non-runnable snapshot guard + the source cell
+    assert [c.id for c in notebook.cells] == ["live-run-label", exporter.SNAPSHOT_GUARD_ID, "code"]
 
 
 def _write(tmp_path: Path, notebook) -> Path:

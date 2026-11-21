@@ -19,7 +19,7 @@ from iot_twin.core.workspace_config import get_genie_space_id, get_uc_catalog, g
 from iot_twin.services import intelligence_catalog_service as ics
 from iot_twin.services.alerts.alert_engine import engine_for
 
-logger = logging.getLogger("iot_digital_twin.services.alert_snapshot_sync")
+logger = logging.getLogger("pharma_twin.services.alert_snapshot_sync")
 
 DEFAULT_INTERVAL_S = 60.0
 INTERVAL_ENV = "ALERT_SNAPSHOT_SYNC_INTERVAL_S"
@@ -73,7 +73,7 @@ async def sync_alert_snapshot(
         ics._quoted_table("intelligence_alert_snapshot"),
         ics._warehouse(ws, warehouse_id),
         rows,
-        "alert_id, industry, rule_id, sensor_id, status, severity, fault_code, value, threshold, opened_at, updated_at",
+        ics.ALERT_SNAPSHOT_COLUMN_LIST,
     )
     return {"rows": count, "skipped": False}
 
