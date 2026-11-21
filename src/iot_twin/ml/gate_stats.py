@@ -18,8 +18,13 @@ one 4 h replay holds about 48 cycles. The gate therefore works on **cycles**:
 A plan-aware *oracle* that alerts at the start of every precursor (real or
 fading) and never otherwise warns all strong and weak breaches and raises a
 false alarm in every fade and bump cycle: its standardised discrimination is
-``0.80 - 0.50 = 0.30``. That is the ceiling a precursor-only detector can reach
-on this scenario; the gate asks for a lower 95 % bound above 0.
+``0.80 - 0.50 = 0.30``. It is a *reference point*, not a ceiling: a model can
+beat it by alerting on a fade less often than on a real precursor. The gate
+asks for a lower 95 % bound above 0.
+
+The stratified CIs resample cycles within plan groups, so they are
+conditional on the realised plan mix; ``block_bootstrap`` resamples whole
+held-out periods and is reported alongside.
 """
 
 from __future__ import annotations
@@ -59,6 +64,7 @@ class CycleOutcome:
     breach: bool
     warned_30s: bool
     false_alarms: int
+    period: int = 0  # held-out run or replay hour the cycle belongs to
 
 
 def _warned(lead: float | None, min_lead_s: float) -> bool:
@@ -74,6 +80,7 @@ def cycle_outcomes(
     group_of: Callable[[int], str],
     min_lead_s: float = EARLY_WARNING_S,
     cycle_s: float = CYCLE_S,
+    period: int = 0,
 ) -> list[CycleOutcome]:
     """One record per full cycle in ``[start, end)``; ``group_of(index)`` names its plan group."""
     onsets = [onset for onset, _ in breaches]
@@ -92,6 +99,7 @@ def cycle_outcomes(
                 breach=bool(in_cycle),
                 warned_30s=warned,
                 false_alarms=alarms.get(index, 0),
+                period=period,
             )
         )
     return records
@@ -223,9 +231,51 @@ def paired_difference(
     )
 
 
+def block_bootstrap(
+    records: Sequence[CycleOutcome],
+    *,
+    draws: int = BOOTSTRAP_DRAWS,
+    seed: int = 0,
+    cycle_s: float = CYCLE_S,
+) -> dict[str, tuple[float, float, float]]:
+    """``{metric: (estimate, lo95, hi95)}`` resampling whole periods (runs / replay hours).
+
+    Cycles inside one run share its noise and drift, so a cycle-level bootstrap
+    can be optimistic; this one resamples the held-out periods with replacement.
+    It also lets the plan mix vary, so it is not conditional on the realised mix.
+    """
+    point = summarise(records, cycle_s)
+    periods: dict[int, list[CycleOutcome]] = {}
+    for record in records:
+        periods.setdefault(record.period, []).append(record)
+    blocks = list(periods.values())
+    rng = random.Random(seed)
+    samples: dict[str, list[float]] = {key: [] for key in point}
+    for _ in range(draws):
+        resampled = [record for _ in blocks for record in rng.choice(blocks)]
+        for key, value in summarise(resampled, cycle_s).items():
+            samples[key].append(value)
+    out: dict[str, tuple[float, float, float]] = {}
+    for key, values in samples.items():
+        ordered = sorted(values)
+        out[key] = (
+            point[key],
+            ordered[int(0.025 * (len(ordered) - 1))],
+            ordered[int(round(0.975 * (len(ordered) - 1)))],
+        )
+    return out
+
+
 def as_rows(records: Sequence[CycleOutcome]) -> list[list[object]]:
-    return [[r.group, r.breach, r.warned_30s, r.false_alarms] for r in records]
+    return [[r.group, r.breach, r.warned_30s, r.false_alarms, r.period] for r in records]
 
 
 def from_rows(rows: Sequence[Sequence[object]]) -> list[CycleOutcome]:
-    return [CycleOutcome(str(g), bool(b), bool(w), int(f)) for g, b, w, f in rows]  # type: ignore[call-overload]
+    out = []
+    for row in rows:
+        group, breach, warned, alarms = row[0], row[1], row[2], row[3]
+        period = row[4] if len(row) > 4 else 0
+        out.append(
+            CycleOutcome(str(group), bool(breach), bool(warned), int(alarms), int(period))  # type: ignore[call-overload]
+        )
+    return out

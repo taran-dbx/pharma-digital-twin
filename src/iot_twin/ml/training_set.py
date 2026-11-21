@@ -562,3 +562,30 @@ def steady_clear_floor(
     lo = int(pos)
     hi = min(lo + 1, len(steady) - 1)
     return steady[lo] + (steady[hi] - steady[lo]) * (pos - lo)
+
+
+SCENARIO_TAG = "scenario_id"
+
+
+def is_scenario_telemetry(readings: Iterable[Mapping[str, Any]]) -> bool:
+    """True when any reading carries the simulator's ``metadata.scenario_id`` tag.
+
+    The live producer stamps ``scenario_id`` on Spindle 3 temperature readings,
+    so ``manufacturing_realtime`` holding such rows is simulated telemetry, not
+    a real machine; ``--data-source auto`` must not train on it as ``real``.
+    ``metadata`` may be a mapping or a JSON string.
+    """
+    import json
+
+    for reading in readings:
+        metadata = reading.get("metadata")
+        if isinstance(metadata, str):
+            if SCENARIO_TAG not in metadata:
+                continue
+            try:
+                metadata = json.loads(metadata)
+            except ValueError:
+                continue
+        if isinstance(metadata, Mapping) and metadata.get(SCENARIO_TAG):
+            return True
+    return False

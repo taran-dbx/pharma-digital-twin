@@ -16,10 +16,15 @@ Run by the ``pharma-twin-risk-model-train`` job (resources/risk_model.yml) as a
    cut-off chosen on validation, metrics on test.
 4. Log to MLflow (params, metrics, signature, input example) and register in
    Unity Catalog with the ``challenger`` alias.
-5. ``--promote if_better`` (default) scores the current ``champion`` on the
-   same held-out test rows and moves ``champion`` (and the serving endpoint)
-   only when the new version beats it (``challenger_beats_champion``).
-   ``--promote always`` moves it unconditionally; ``never`` never does.
+5. ``--promote if_better`` (default) selects ``champion`` neutrally: the new
+   version, the current champion and ``--compare-versions`` are scored on the
+   same pooled held-out cycles (test split plus a fresh replay), each must pass
+   ``evaluation.qualifies`` (including input invariance), and the best by
+   standardised discrimination wins (``evaluation.neutral_winner``). Outcomes
+   are logged and tagged on every version. ``always`` moves champion to the
+   new version (if its clear level is above calm running); ``never`` reports
+   only. The gate is defined for simulated live-format data; any other
+   ``data_origin`` forces ``never``.
 """
 
 from __future__ import annotations
@@ -88,6 +93,9 @@ def _args(argv: list[str]) -> argparse.Namespace:
         default="",
         help="comma-separated extra versions scored on the same held-out rows (fallbacks)",
     )
+    parser.add_argument("--code-sha", default="unknown", help="git SHA the run was submitted from")
+    parser.add_argument("--code-dirty", default="unknown", help="true if the tree had local edits")
+    parser.add_argument("--source-hash", default="unknown", help="sha256 of the uploaded source")
     parser.add_argument("--replay-hours", type=float, default=12.0)
     parser.add_argument("--replay-seed", type=int, default=21)
     parser.add_argument(
@@ -125,8 +133,11 @@ def _real_readings(table: str, days: int) -> list[dict[str, Any]]:
 
     spark = SparkSession.builder.getOrCreate()
     names = ", ".join(f"'{name}'" for name in SPINDLE_SENSOR_NAMES)
+    columns = "sensor_name, value, event_time"
+    if "metadata" in spark.table(table).columns:
+        columns += ", metadata"
     frame = spark.sql(
-        f"SELECT sensor_name, value, event_time FROM {table} "  # noqa: S608 - identifiers from job params
+        f"SELECT {columns} FROM {table} "  # noqa: S608 - identifiers from job params
         f"WHERE sensor_name IN ({names}) "
         f"AND event_time >= current_timestamp() - INTERVAL {int(days)} DAYS "
         f"ORDER BY event_time LIMIT {REAL_MAX_ROWS}"
@@ -139,6 +150,9 @@ def _quoted(table: str) -> str:
 
 
 def load_training_set(args: argparse.Namespace) -> Any:
+    from dataclasses import replace
+
+    from iot_twin.ml.live_format_telemetry import pinned_maintenance
     from iot_twin.ml.spindle_features import (
         excursion_onsets,
         last_spindle_maintenance_epoch,
@@ -146,7 +160,7 @@ def load_training_set(args: argparse.Namespace) -> Any:
         validated_limit_c,
     )
     from iot_twin.ml.synthetic_telemetry import DATA_ORIGIN, generate_runs
-    from iot_twin.ml.training_set import RunInput, build_training_set
+    from iot_twin.ml.training_set import RunInput, build_training_set, is_scenario_telemetry
 
     limit = validated_limit_c()
     common = {"limit_c": limit, "horizon_s": args.horizon_s, "step_s": args.step_s}
@@ -158,12 +172,25 @@ def load_training_set(args: argparse.Namespace) -> Any:
                 raise
             logger.warning("real telemetry unavailable (%s); using synthetic", exc)
             readings = []
+        if readings and is_scenario_telemetry(readings):
+            # The live producer tags simulated readings with metadata.scenario_id.
+            message = (
+                "telemetry carries metadata.scenario_id: it is simulated producer "
+                "output, not a real machine"
+            )
+            if args.data_source == "real":
+                raise ValueError(message)
+            logger.warning("%s; using live_format", message)
+            readings = []
         if readings:
             real = build_training_set(
                 [RunInput("real", readings, last_spindle_maintenance_epoch())],
                 data_origin="real",
                 **common,
             )
+            # The catalog maintenance date is a fixture, so its age is not a
+            # measurement either: pin it as for live-format rows.
+            real = replace(real, rows=tuple(pinned_maintenance(row) for row in real.rows))
             events = len(
                 excursion_onsets(
                     real.series_by_run["real"],
@@ -226,6 +253,15 @@ LGBM_PARAMS: dict[str, Any] = {
     "random_state": 7,
     "verbose": -1,
 }
+
+
+def _feature_gain(model: Any, feature: str) -> float:
+    """Total split gain of ``feature`` in the trained booster (0.0: never split on)."""
+    booster = model.booster_
+    gains = dict(
+        zip(booster.feature_name(), booster.feature_importance(importance_type="gain"), strict=True)
+    )
+    return float(gains.get(feature, 0.0))
 
 
 def train_and_evaluate(training_set: Any, args: argparse.Namespace) -> dict[str, Any]:
@@ -378,6 +414,7 @@ def train_and_evaluate(training_set: Any, args: argparse.Namespace) -> dict[str,
         "embargo_s": float(embargo),
         "val_pr_auc": float(average_precision_score(y_val, val_scores)),
         "best_iteration": float(model.best_iteration_ or LGBM_PARAMS["n_estimators"]),
+        "hours_since_maintenance_split_gain": _feature_gain(model, "hours_since_maintenance"),
         "rows_train": float(len(fit_rows)),
         "rows_validation": float(len(val_rows)),
         "rows_test": float(len(test_rows)),
@@ -426,6 +463,7 @@ def log_and_register(
     from mlflow.models import infer_signature
     from mlflow.tracking import MlflowClient
 
+    from iot_twin.ml.provenance import source_hash
     from iot_twin.ml.spindle_features import FEATURE_NAMES, WINDOW_S, validated_limit_c
 
     mlflow.set_registry_uri("databricks-uc")
@@ -470,6 +508,11 @@ def log_and_register(
                 "min_precision": args.min_precision,
                 "feature_names": ",".join(FEATURE_NAMES),
                 "early_stopping_metric": "binary_logloss",
+                "maintenance_pinned": str(training_set.data_origin != "synthetic").lower(),
+                "code_sha": args.code_sha,
+                "code_dirty": args.code_dirty,
+                "source_hash": args.source_hash,
+                "source_hash_runtime": source_hash(Path(args.src_root).resolve().parent),
             }
         )
         mlflow.log_metrics(metrics)
@@ -545,71 +588,37 @@ def _replay_frame(segment: Any) -> Any:
     return pd.DataFrame(list(segment.features), columns=list(FEATURE_NAMES)).astype(float)
 
 
-def model_metrics(
+def _with_hours(frame: Any, hours: float | None) -> Any:
+    """``frame`` with ``hours_since_maintenance`` set to ``hours`` (unchanged if None)."""
+    if hours is None:
+        return frame
+    return frame.assign(hours_since_maintenance=float(hours))
+
+
+def _scores(
+    predict: Any, result: dict[str, Any], replay: list[Any], hours: float | None = None
+) -> dict[str, Any]:
+    return {
+        "val": [float(s) for s in predict(_with_hours(result["x_val"], hours))],
+        "test": [float(s) for s in predict(_with_hours(result["x_test"], hours))],
+        "replay": [
+            [float(s) for s in predict(_with_hours(_replay_frame(seg), hours))] for seg in replay
+        ],
+    }
+
+
+def _periods(
     result: dict[str, Any],
     training_set: Any,
-    args: argparse.Namespace,
     scores: dict[str, Any],
     open_at: float,
     clear_at: float,
     replay: list[Any],
-) -> tuple[dict[str, Any], dict[str, list[int]]]:
-    """Gate metrics of one model at its own cut-off / clear level.
+) -> list[tuple[list[Any], list[Any], float, float]]:
+    """(breaches, model alerts, start, end) per held-out period: test runs, then replay hours."""
+    from iot_twin.ml.lead_metrics import alert_episodes
+    from iot_twin.ml.training_set import period_alerts, run_breaches
 
-    ``scores`` holds ``val``, ``test`` and ``replay`` (one list per segment).
-    Held-out test cycles and fresh replay cycles are pooled; the clock window
-    and the steady-running floor come from validation. Returns ``(metrics,
-    null counts)``.
-    """
-    from sklearn.metrics import average_precision_score
-
-    from iot_twin.ml.gate_stats import as_rows, bootstrap, cycle_outcomes, group_counts
-    from iot_twin.ml.lead_metrics import (
-        alert_episodes,
-        clock_alerts,
-        combine,
-        event_report,
-    )
-    from iot_twin.ml.spindle_features import (
-        threshold_rule_delay_s,
-        threshold_rule_hysteresis_c,
-        validated_limit_c,
-    )
-    from iot_twin.ml.training_set import (
-        choose_clock_window,
-        period_alerts,
-        period_event_report,
-        run_breaches,
-        steady_clear_floor,
-    )
-
-    delay = threshold_rule_delay_s()
-    common = {
-        "limit_c": validated_limit_c(),
-        "hysteresis_c": threshold_rule_hysteresis_c(),
-        "rule_delay_s": delay,
-        "step_s": args.step_s,
-    }
-    val_events = period_event_report(
-        training_set,
-        result["val_rows"],
-        scores["val"],
-        open_at=open_at,
-        clear_at=clear_at,
-        significance=False,
-        **common,
-    )
-    window = choose_clock_window(
-        training_set,
-        result["val_rows"],
-        max_duty=val_events.alert_open_fraction,
-        rule_delay_s=delay,
-    )
-    any_window = choose_clock_window(
-        training_set, result["val_rows"], max_duty=1.0, rule_delay_s=delay
-    )
-
-    # (breaches, model alerts, start, end) per held-out period: test runs, then replay hours.
     periods = []
     for run_id, (start, end, alerts) in sorted(
         period_alerts(
@@ -624,25 +633,120 @@ def model_metrics(
         )
         breaches = [b for b in segment.breaches if segment.start <= b[0] < segment.end]
         periods.append((breaches, alerts, segment.start, segment.end))
+    return periods
+
+
+def _records(periods: list[Any]) -> list[Any]:
+    from iot_twin.ml.gate_stats import cycle_outcomes
+
+    records = []
+    for index, (breaches, alerts, start, end) in enumerate(periods):
+        records.extend(
+            cycle_outcomes(
+                breaches, alerts, start=start, end=end, group_of=_plan_group, period=index
+            )
+        )
+    return records
+
+
+def invariance(
+    result: dict[str, Any],
+    training_set: Any,
+    predict: Any,
+    open_at: float,
+    clear_at: float,
+    replay: list[Any],
+) -> dict[str, float]:
+    """Gate quantities re-scored with hours_since_maintenance at each INVARIANCE_HOURS."""
+    from iot_twin.ml.evaluation import INVARIANCE_HOURS
+    from iot_twin.ml.gate_stats import summarise
+
+    out: dict[str, float] = {}
+    discs, alarms = [], []
+    for hours in INVARIANCE_HOURS:
+        scores = _scores(predict, result, replay, hours)
+        stats = summarise(
+            _records(_periods(result, training_set, scores, open_at, clear_at, replay))
+        )
+        discs.append(stats["discrimination_std"])
+        alarms.append(stats["false_alarms_per_hour"])
+        out[f"invariance_{int(hours)}h_discrimination_std"] = stats["discrimination_std"]
+        out[f"invariance_{int(hours)}h_false_alarms_per_hour"] = stats["false_alarms_per_hour"]
+        out[f"invariance_{int(hours)}h_warned_30s_share"] = stats["warned_30s_share"]
+    out["invariance_discrimination_std_range"] = max(discs) - min(discs)
+    out["invariance_false_alarms_per_hour_range"] = max(alarms) - min(alarms)
+    return out
+
+
+def model_metrics(
+    result: dict[str, Any],
+    training_set: Any,
+    args: argparse.Namespace,
+    predict: Any,
+    open_at: float,
+    clear_at: float,
+    replay: list[Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Gate metrics of one model at its own cut-off / clear level.
+
+    Held-out test cycles and fresh replay cycles are pooled; the clock window
+    and the steady-running floor come from validation; the invariance check
+    re-scores the same cycles with the maintenance age changed. Returns
+    ``(metrics, null counts and cycle records)``.
+    """
+    from sklearn.metrics import average_precision_score
+
+    from iot_twin.ml.gate_stats import as_rows, block_bootstrap, bootstrap, group_counts
+    from iot_twin.ml.lead_metrics import clock_alerts, combine, event_report
+    from iot_twin.ml.spindle_features import threshold_rule_delay_s
+    from iot_twin.ml.training_set import (
+        choose_clock_window,
+        period_event_report,
+        steady_clear_floor,
+    )
+
+    delay = threshold_rule_delay_s()
+    scores = _scores(predict, result, replay)
+    val_events = period_event_report(
+        training_set,
+        result["val_rows"],
+        scores["val"],
+        open_at=open_at,
+        clear_at=clear_at,
+        limit_c=_limit(),
+        hysteresis_c=_hysteresis(),
+        rule_delay_s=delay,
+        step_s=args.step_s,
+        significance=False,
+    )
+    window = choose_clock_window(
+        training_set,
+        result["val_rows"],
+        max_duty=val_events.alert_open_fraction,
+        rule_delay_s=delay,
+    )
+    any_window = choose_clock_window(
+        training_set, result["val_rows"], max_duty=1.0, rule_delay_s=delay
+    )
+    periods = _periods(result, training_set, scores, open_at, clear_at, replay)
 
     def pooled(alerts_of: Any) -> tuple[Any, list[Any]]:
-        reports, records = [], []
-        for index, (breaches, alerts, start, end) in enumerate(periods):
-            chosen = alerts_of(alerts, start, end)
-            reports.append(
-                event_report(
-                    breaches,
-                    chosen,
-                    start=start,
-                    end=end,
-                    rule_delay_s=delay,
-                    seed=args.seed + index,
-                )
+        reports = [
+            event_report(
+                breaches,
+                alerts_of(alerts, start, end),
+                start=start,
+                end=end,
+                rule_delay_s=delay,
+                seed=args.seed + index,
             )
-            records.extend(
-                cycle_outcomes(breaches, chosen, start=start, end=end, group_of=_plan_group)
-            )
-        return combine(reports), records
+            for index, (breaches, alerts, start, end) in enumerate(periods)
+        ]
+        chosen = [
+            (breaches, alerts_of(alerts, start, end), start, end)
+            for breaches, alerts, start, end in periods
+        ]
+        return combine(reports), _records(chosen)
 
     events, records = pooled(lambda alerts, start, end: alerts)
     clock, clock_records = pooled(
@@ -655,9 +759,6 @@ def model_metrics(
             start, end, open_offset_s=any_window.open_offset_s, duration_s=any_window.duration_s
         )
     )
-    stats = bootstrap(records, seed=args.seed)
-    clock_stats = bootstrap(clock_records, seed=args.seed)
-    any_clock_stats = bootstrap(any_clock_records, seed=args.seed)
     metrics: dict[str, Any] = {
         "decision_threshold": float(open_at),
         "clear_threshold": float(clear_at),
@@ -678,17 +779,22 @@ def model_metrics(
         "clock_any_duty_permutation_p": any_clock.permutation_p,
         "test_pr_auc": float(average_precision_score(result["y_test"], scores["test"])),
     }
-    for prefix, values in (
-        ("", stats),
-        ("clock_", clock_stats),
-        ("clock_any_duty_", any_clock_stats),
-    ):
+    blocks = (
+        ("", bootstrap(records, seed=args.seed)),
+        ("clock_", bootstrap(clock_records, seed=args.seed)),
+        ("clock_any_duty_", bootstrap(any_clock_records, seed=args.seed)),
+    )
+    for prefix, values in blocks:
         for key, (estimate, lo, hi) in values.items():
             if prefix and key in ("cycles", "breaches"):
                 continue
             metrics[f"{prefix}{key}"] = estimate
             metrics[f"{prefix}{key}_lo95"] = lo
             metrics[f"{prefix}{key}_hi95"] = hi
+    for key, (_, lo, hi) in block_bootstrap(records, seed=args.seed).items():
+        metrics[f"{key}_block_lo95"] = lo
+        metrics[f"{key}_block_hi95"] = hi
+    metrics.update(invariance(result, training_set, predict, open_at, clear_at, replay))
     metrics["cycle_groups"] = group_counts(records)
     nulls = {
         "permutation_counts": list(events.permutation_counts),
@@ -698,12 +804,16 @@ def model_metrics(
     return metrics, nulls
 
 
-def _scores(predict: Any, result: dict[str, Any], replay: list[Any]) -> dict[str, Any]:
-    return {
-        "val": [float(s) for s in predict(result["x_val"])],
-        "test": [float(s) for s in predict(result["x_test"])],
-        "replay": [[float(s) for s in predict(_replay_frame(seg))] for seg in replay],
-    }
+def _limit() -> float:
+    from iot_twin.ml.spindle_features import validated_limit_c
+
+    return validated_limit_c()
+
+
+def _hysteresis() -> float:
+    from iot_twin.ml.spindle_features import threshold_rule_hysteresis_c
+
+    return threshold_rule_hysteresis_c()
 
 
 def version_metrics(
@@ -713,18 +823,17 @@ def version_metrics(
     full_name: str,
     version: str,
     replay: list[Any],
-) -> tuple[dict[str, Any], dict[str, list[int]]]:
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """A registered version scored on the challenger's validation, test and replay rows."""
     import mlflow
 
     model = mlflow.pyfunc.load_model(f"models:/{full_name}/{version}")
     levels = model.predict(result["x_test"].head(1))
-    scores = _scores(lambda frame: model.predict(frame)["risk_score"], result, replay)
     return model_metrics(
         result,
         training_set,
         args,
-        scores,
+        lambda frame: model.predict(frame)["risk_score"],
         float(levels["decision_threshold"].iloc[0]),
         float(levels["clear_threshold"].iloc[0]),
         replay,
@@ -744,6 +853,9 @@ def _alias_version(full_name: str, alias: str) -> str | None:
     return str(found.version)
 
 
+SIMULATED_ORIGIN = "live_format_simulated"
+
+
 def decide_promotion(
     result: dict[str, Any],
     training_set: Any,
@@ -751,19 +863,42 @@ def decide_promotion(
     full_name: str,
     new_version: str,
 ) -> dict[str, Any]:
-    """Qualify every compared version on the same pooled held-out cycles; decide ``champion``.
+    """Neutral champion selection over every compared version on the same pooled cycles.
 
-    * the challenger becomes champion when it passes ``challenger_beats_champion``
-      (``--promote if_better``) or, with ``--promote always``, when its clear level
-      is at or above steady running (that check is never skipped);
-    * otherwise, if the current champion fails ``qualifies``, champion moves to
-      the qualifying version with the best gate metric;
-    * if no version qualifies, champion moves to the best version by the gate
-      metric and that version is tagged ``status=unqualified``.
+    * Every version (the new one and ``--compare-versions`` plus the current
+      champion) is scored on the same held-out test and fresh replay cycles and
+      checked with ``qualifies`` (including input invariance).
+    * The winner is ``neutral_winner``: the best standardised discrimination
+      among qualifying versions; incumbency plays no part. Every other
+      qualifying version gets a paired-bootstrap difference against it.
+    * ``--promote if_better`` (default) moves champion to the winner;
+      ``always`` moves it to the new version if its clear level is above calm
+      running; ``never`` reports only. If nothing qualifies, champion moves to
+      the best version by the gate metric, tagged ``status=unqualified``.
+    * The gate is defined for simulated live-format data only (plan groups,
+      replay pooling). Any other ``data_origin`` forces ``--promote never``.
     """
-    from iot_twin.ml.evaluation import best_by_gate, challenger_beats_champion, qualifies
+    from iot_twin.ml.evaluation import best_by_gate, neutral_winner, qualifies
     from iot_twin.ml.gate_stats import from_rows, paired_difference
 
+    champion_version = _alias_version(full_name, args.alias)
+    if training_set.data_origin != SIMULATED_ORIGIN:
+        return {
+            "champion_version_before": champion_version,
+            "champion_version_after": champion_version,
+            "promoted": False,
+            "comparison": (
+                f"data_origin={training_set.data_origin}: the promotion gate is defined for "
+                "simulated live-format data only; --promote never forced"
+            ),
+            "winner": None,
+            "fallback": None,
+            "unqualified_champion": None,
+            "paired_vs_winner": {},
+            "replay": None,
+            "versions": {},
+            "nulls": {},
+        }
     replay = fresh_replay(args)
     model = result["model"]
     metrics = result["metrics"]
@@ -771,12 +906,11 @@ def decide_promotion(
         result,
         training_set,
         args,
-        _scores(lambda frame: model.predict_proba(frame)[:, 1], result, replay),
+        lambda frame: model.predict_proba(frame)[:, 1],
         metrics["decision_threshold"],
         metrics["clear_threshold"],
         replay,
     )
-    champion_version = _alias_version(full_name, args.alias)
     compared = sorted(
         {v for v in [champion_version, *args.compare_versions.split(",")] if v and v.strip()},
         key=int,
@@ -792,38 +926,46 @@ def decide_promotion(
         all_nulls[version] = version_nulls
     ok, problems = qualifies(challenger)
     table[new_version] = {"metrics": challenger, "qualifies": ok, "problems": problems}
-    champion_values = table[champion_version]["metrics"] if champion_version else None
-    paired = None
-    if champion_version:
-        paired = paired_difference(
-            from_rows(nulls["cycle_records"]),
-            from_rows(all_nulls[champion_version]["cycle_records"]),
-            seed=args.seed,
-        )
-    beats, reason = challenger_beats_champion(challenger, champion_values, paired=paired)
-    floor_ok = challenger["clear_threshold"] >= challenger["steady_clear_floor"]
-    promote = (args.promote == "if_better" and beats) or (args.promote == "always" and floor_ok)
-    champion_after = new_version if promote else champion_version
-    fallback = None
+    flat = {v: row["metrics"] for v, row in table.items()}
+    winner = neutral_winner(flat)
+    paired: dict[str, list[float]] = {}
+    if winner:
+        for version, row in table.items():
+            if version != winner and row["qualifies"]:
+                paired[version] = list(
+                    paired_difference(
+                        from_rows(all_nulls[version]["cycle_records"]),
+                        from_rows(all_nulls[winner]["cycle_records"]),
+                        seed=args.seed,
+                    )
+                )
     unqualified = None
-    champion_ok = bool(champion_version) and table[champion_version]["qualifies"]
-    if not promote and args.promote != "never" and not champion_ok:
-        passing = {v: row["metrics"] for v, row in table.items() if row["qualifies"]}
-        if passing:
-            champion_after = best_by_gate(passing)
-            fallback = champion_after
-        else:
-            champion_after = best_by_gate({v: row["metrics"] for v, row in table.items()})
-            unqualified = champion_after
+    if args.promote == "never":
+        champion_after = champion_version
+    elif args.promote == "always":
+        floor_ok = challenger["clear_threshold"] >= challenger["steady_clear_floor"]
+        champion_after = new_version if floor_ok else champion_version
+    elif winner:
+        champion_after = winner
+    else:
+        champion_after = best_by_gate(flat)
+        unqualified = champion_after
+    reason = (
+        (f"neutral winner v{winner}" if winner else "no version qualifies")
+        + "; paired vs winner: "
+        + ", ".join(
+            f"v{v} {d[0]:+.3f} [{d[1]:+.3f}, {d[2]:+.3f}]" for v, d in sorted(paired.items())
+        )
+    )
     return {
         "champion_version_before": champion_version,
         "champion_version_after": champion_after,
-        "challenger_beats_champion": beats,
+        "promoted": champion_after == new_version and champion_after != champion_version,
         "comparison": reason,
-        "promoted": promote,
-        "fallback": fallback,
+        "winner": winner,
+        "fallback": None,
         "unqualified_champion": unqualified,
-        "paired_vs_champion": paired,
+        "paired_vs_winner": paired,
         "replay": {
             "hours": args.replay_hours,
             "seed": args.replay_seed,
@@ -902,6 +1044,38 @@ def deploy_champion(
     return "updating"
 
 
+def selection_outcome(version: str, decision: dict[str, Any]) -> str:
+    """``winner`` / ``tied_with_winner`` / ``worse_than_winner`` / ``not_qualified``."""
+    row = decision["versions"][version]
+    if not row["qualifies"]:
+        return "not_qualified"
+    if version == decision["winner"]:
+        return "winner"
+    _, lo, hi = decision["paired_vs_winner"][version]
+    return "worse_than_winner" if hi < 0.0 else "tied_with_winner"
+
+
+def _tag_outcomes(model_name: str, run_id: str, decision: dict[str, Any]) -> None:
+    from mlflow.tracking import MlflowClient
+
+    client = MlflowClient(registry_uri="databricks-uc")
+    for version, row in decision["versions"].items():
+        outcome = selection_outcome(version, decision)
+        paired = decision["paired_vs_winner"].get(version)
+        detail = (
+            f"run {run_id}: {outcome}; discrimination_std "
+            f"{row['metrics']['discrimination_std']:.3f} "
+            f"[{row['metrics']['discrimination_std_lo95']:.3f}, "
+            f"{row['metrics']['discrimination_std_hi95']:.3f}]"
+        )
+        if paired:
+            detail += f"; vs winner {paired[0]:+.3f} [{paired[1]:+.3f}, {paired[2]:+.3f}]"
+        if row["problems"]:
+            detail += "; " + "; ".join(row["problems"])
+        client.set_model_version_tag(model_name, version, "selection_outcome", outcome)
+        client.set_model_version_tag(model_name, version, "selection_detail", detail[:4900])
+
+
 def _log_decision(run_id: str, decision: dict[str, Any]) -> None:
     import mlflow
 
@@ -915,10 +1089,11 @@ def _log_decision(run_id: str, decision: dict[str, Any]) -> None:
             }
         )
         values[f"v{version}_qualifies"] = float(row["qualifies"])
-    values["challenger_beats_champion"] = float(decision["challenger_beats_champion"])
     values["promoted"] = float(decision["promoted"])
+    items = sorted(values.items())
     with mlflow.start_run(run_id=run_id):
-        mlflow.log_metrics(values)
+        for start in range(0, len(items), 500):  # log_metrics batches are capped
+            mlflow.log_metrics(dict(items[start : start + 500]))
         mlflow.log_dict(decision["nulls"], "null_counts.json")
         mlflow.log_dict(
             {k: v for k, v in decision.items() if k != "nulls"}, "promotion_decision.json"
@@ -962,6 +1137,7 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
             registered["model_name"], args.alias, after
         )
         endpoint = deploy_champion(workspace, args, registered["model_name"], after)
+    _tag_outcomes(registered["model_name"], registered["run_id"], decision)
     if decision["unqualified_champion"]:
         from mlflow.tracking import MlflowClient
 

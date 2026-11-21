@@ -186,6 +186,9 @@ QUALIFIED = {
     "clock_warned_30s_share": 0.4,
     "permutation_p": 0.001,
     "discrimination_std_lo95": 0.05,
+    "discrimination_std": 0.2,
+    "invariance_discrimination_std_range": 0.0,
+    "invariance_false_alarms_per_hour_range": 0.0,
 }
 
 
@@ -198,6 +201,8 @@ class TestPromotionRule:
             ("clock_warned_30s_share", 0.6, "clock"),
             ("permutation_p", 0.2, "permutation"),
             ("discrimination_std_lo95", -0.01, "lower 95"),
+            ("invariance_discrimination_std_range", 0.08, "not invariant"),
+            ("invariance_false_alarms_per_hour_range", 1.1, "not invariant"),
         ):
             ok, problems = qualifies({**QUALIFIED, key: bad})
             assert ok is False and word in problems[0]
@@ -471,3 +476,80 @@ class TestPairingAndShortPeriods:
         assert short.warned_30s == 1
         assert short.permutation_counts == (1,) * 50
         assert short.permutation_p == 1.0
+
+
+class TestNeutralSelection:
+    def test_winner_is_the_best_qualifying_point_estimate_not_the_incumbent(self) -> None:
+        from iot_twin.ml.evaluation import neutral_winner
+
+        table = {
+            "7": {
+                **QUALIFIED,
+                "discrimination_std": 0.21,
+                "invariance_discrimination_std_range": 0.1,
+            },
+            "11": {**QUALIFIED, "discrimination_std": 0.32},
+            "12": {**QUALIFIED, "discrimination_std": 0.29},
+        }
+        assert neutral_winner(table) == "11"  # v7 fails invariance and cannot win
+        table["12"] = {**QUALIFIED, "discrimination_std": 0.32, "false_alarms_per_hour": 1.0}
+        assert neutral_winner(table) == "12"  # tie on the estimate: fewer false alarms
+        assert neutral_winner({"4": {**QUALIFIED, "permutation_p": 0.3}}) is None
+
+
+class TestBlockBootstrap:
+    def test_resamples_whole_periods(self) -> None:
+        from iot_twin.ml.gate_stats import CycleOutcome, as_rows, block_bootstrap, from_rows
+
+        records = [
+            CycleOutcome("strong", True, period < 3, 0, period)
+            for period in range(6)
+            for _ in range(5)
+        ]
+        out = block_bootstrap(records, draws=300, seed=2)
+        est, lo, hi = out["warned_30s_share"]
+        assert est == 0.5 and lo < 0.5 < hi
+        assert from_rows(as_rows(records)) == records
+        assert from_rows([["quiet", False, False, 1]])[0].period == 0  # older rows
+
+
+class TestTelemetryOrigin:
+    def test_scenario_tagged_readings_are_not_real(self) -> None:
+        from iot_twin.ml.training_set import is_scenario_telemetry
+
+        real = [{"sensor_name": "cnc_1_spindle_temp", "value": 45.0, "metadata": {}}]
+        tagged = [{"metadata": '{"scenario_id": "spindle-3-heat", "phase": "normal"}'}]
+        assert is_scenario_telemetry(real) is False
+        assert is_scenario_telemetry(real + tagged) is True
+        assert is_scenario_telemetry([{"metadata": {"scenario_id": "spindle-3-heat"}}]) is True
+        assert is_scenario_telemetry([{"metadata": "not json scenario_id"}]) is False
+
+
+class TestProvenance:
+    def test_source_hash_is_stable_and_changes_with_content(self, tmp_path) -> None:
+        from iot_twin.ml.provenance import source_files, source_hash
+
+        (tmp_path / "ml").mkdir()
+        (tmp_path / "ml" / "a.py").write_text("x = 1\n")
+        pkg = tmp_path / "src" / "iot_twin" / "ml"
+        pkg.mkdir(parents=True)
+        (tmp_path / "src" / "iot_twin" / "__init__.py").write_text("")
+        (pkg / "b.py").write_text("y = 2\n")
+        first = source_hash(tmp_path)
+        assert first == source_hash(tmp_path) and len(first) == 64
+        assert [p.name for p in source_files(tmp_path)] == ["a.py", "__init__.py", "b.py"]
+        (pkg / "b.py").write_text("y = 3\n")
+        assert source_hash(tmp_path) != first
+
+    def test_repo_hash_covers_the_uploaded_python_files(self) -> None:
+        import sys
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        sys.path.insert(0, str(root / "scripts"))
+        import submit_risk_model_training as submit
+
+        from iot_twin.ml.provenance import source_files
+
+        uploaded = {p for p in submit.files_to_upload() if p.suffix == ".py"}
+        assert set(source_files(root)) == uploaded

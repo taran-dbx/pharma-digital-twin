@@ -92,6 +92,26 @@ def _upload(workspace, root: str, files: list[Path]) -> None:
         )
 
 
+def code_provenance() -> tuple[str, str, str]:
+    """``(git SHA, "true"/"false" dirty, source hash)`` of the tree being uploaded."""
+    import subprocess
+
+    sys.path.insert(0, str(REPO_ROOT / "src"))
+    from iot_twin.ml.provenance import source_hash
+
+    def git(*cmd: str) -> str:
+        try:
+            return subprocess.run(
+                ["git", *cmd], cwd=REPO_ROOT, check=True, capture_output=True, text=True
+            ).stdout.strip()
+        except (OSError, subprocess.CalledProcessError):
+            return ""
+
+    sha = git("rev-parse", "HEAD") or "unknown"
+    dirty = "true" if git("status", "--porcelain", "--", "ml", "src") else "false"
+    return sha, dirty, source_hash(REPO_ROOT)
+
+
 def task_parameters(args: argparse.Namespace, root: str) -> list[str]:
     params = [
         "--src-root",
@@ -114,6 +134,12 @@ def task_parameters(args: argparse.Namespace, root: str) -> list[str]:
         args.experiment or f"{root.removeprefix('/Workspace')}/experiment",
         "--promote",
         args.promote,
+        "--code-sha",
+        args.code_sha,
+        "--code-dirty",
+        args.code_dirty,
+        "--source-hash",
+        args.source_hash,
         *args.extra,
     ]
     return params
@@ -128,6 +154,9 @@ def main(argv: list[str]) -> int:
         print("pass --profile <cli-profile> (or set DATABRICKS_CONFIG_PROFILE)", file=sys.stderr)
         return 2
     args = _args(rest)
+    args.code_sha, args.code_dirty, args.source_hash = code_provenance()
+    if args.code_dirty == "true":
+        print("warning: ml/ or src/ has uncommitted changes; the run logs code_dirty=true")
     workspace = WorkspaceClient(profile=profile)
     user = workspace.current_user.me().user_name
     root = args.workspace_dir or f"/Workspace/Users/{user}/pharma-twin-risk-model"

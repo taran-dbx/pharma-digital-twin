@@ -150,6 +150,11 @@ FALSE_ALARM_TOLERANCE_PER_H = 1.0
 SIGNIFICANCE_P = 0.05
 FALSE_ALARM_CEILING_PER_H = 3.0  # the design budget, counting every flap
 GATE_METRIC = "discrimination_std_lo95"
+# Input invariance: re-scored with a non-signal input (hours_since_maintenance)
+# at INVARIANCE_HOURS, the same cycles must give the same answer within these.
+INVARIANCE_HOURS = (1500.0, 2500.0, 3000.0)
+INVARIANCE_DISCRIMINATION_TOL = 0.03
+INVARIANCE_FALSE_ALARM_TOL_PER_H = 0.3
 
 
 def qualifies(metrics: Mapping[str, float]) -> tuple[bool, list[str]]:
@@ -162,9 +167,23 @@ def qualifies(metrics: Mapping[str, float]) -> tuple[bool, list[str]]:
       in-cycle window chosen on validation at this model's alert duty);
     * pooled cycle-permutation ``permutation_p`` < ``SIGNIFICANCE_P``;
     * ``discrimination_std_lo95`` > 0: the lower 95 % bootstrap bound of
-      discrimination standardised to the scenario's nominal plan mix.
+      discrimination standardised to the scenario's nominal plan mix;
+    * input invariance: re-scored with ``hours_since_maintenance`` at each of
+      ``INVARIANCE_HOURS`` (it carries no signal in the simulated scenario and
+      the live scorer sends a value that grows by 24 h a day), the ranges of
+      standardised discrimination and false alarms per hour stay within
+      ``INVARIANCE_DISCRIMINATION_TOL`` and ``INVARIANCE_FALSE_ALARM_TOL_PER_H``.
     """
     problems: list[str] = []
+    disc_range = metrics["invariance_discrimination_std_range"]
+    fa_range = metrics["invariance_false_alarms_per_hour_range"]
+    if disc_range > INVARIANCE_DISCRIMINATION_TOL or fa_range > INVARIANCE_FALSE_ALARM_TOL_PER_H:
+        problems.append(
+            "not invariant to hours_since_maintenance "
+            f"({'/'.join(f'{h:g}' for h in INVARIANCE_HOURS)} h): discrimination range "
+            f"{disc_range:.3f} (tol {INVARIANCE_DISCRIMINATION_TOL}), false alarms/h range "
+            f"{fa_range:.2f} (tol {INVARIANCE_FALSE_ALARM_TOL_PER_H})"
+        )
     if metrics["clear_threshold"] < metrics["steady_clear_floor"]:
         problems.append(
             f"clear level {metrics['clear_threshold']:.3f} < steady-running p90 "
@@ -234,3 +253,21 @@ def best_by_gate(table: Mapping[str, Mapping[str, float]]) -> str | None:
     if not table:
         return None
     return max(table, key=lambda version: (table[version][GATE_METRIC], int(version)))
+
+
+def neutral_winner(table: Mapping[str, Mapping[str, float]]) -> str | None:
+    """Champion by neutral selection: among versions that pass ``qualifies``, the
+    highest standardised discrimination (point estimate) on the shared pooled
+    cycles; ties go to fewer false alarms, then the newer version. Incumbency
+    plays no part. ``None`` when no version qualifies."""
+    passing = [v for v, metrics in table.items() if qualifies(metrics)[0]]
+    if not passing:
+        return None
+    return max(
+        passing,
+        key=lambda v: (
+            table[v]["discrimination_std"],
+            -table[v]["false_alarms_per_hour"],
+            int(v),
+        ),
+    )

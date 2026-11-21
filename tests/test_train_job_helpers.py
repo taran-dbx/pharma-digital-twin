@@ -99,3 +99,38 @@ def test_job_defaults_match_the_contract(train) -> None:
     args = _args(train)
     assert args.clear_hysteresis == DEFAULT_HYSTERESIS
     assert json.dumps(train.LGBM_PARAMS)
+
+
+class TestSelectionAndRealData:
+    def _decision(self):
+        return {
+            "winner": "11",
+            "versions": {
+                "11": {"qualifies": True, "problems": [], "metrics": {}},
+                "12": {"qualifies": True, "problems": [], "metrics": {}},
+                "4": {"qualifies": True, "problems": [], "metrics": {}},
+                "7": {"qualifies": False, "problems": ["not invariant"], "metrics": {}},
+            },
+            "paired_vs_winner": {"12": [-0.03, -0.09, 0.02], "4": [-0.1, -0.17, -0.04]},
+        }
+
+    def test_selection_outcomes(self) -> None:
+        train = _module("train_spindle_risk", ROOT / "ml" / "train_spindle_risk.py")
+        decision = self._decision()
+        assert train.selection_outcome("11", decision) == "winner"
+        assert train.selection_outcome("12", decision) == "tied_with_winner"
+        assert train.selection_outcome("4", decision) == "worse_than_winner"
+        assert train.selection_outcome("7", decision) == "not_qualified"
+
+    def test_non_simulated_data_never_promotes(self, monkeypatch) -> None:
+        train = _module("train_spindle_risk", ROOT / "ml" / "train_spindle_risk.py")
+        monkeypatch.setattr(train, "_alias_version", lambda name, alias: "7")
+        monkeypatch.setattr(
+            train, "fresh_replay", lambda args: pytest.fail("no simulated replay for real data")
+        )
+        decision = train.decide_promotion(
+            {}, SimpleNamespace(data_origin="real"), SimpleNamespace(alias="champion"), "m", "13"
+        )
+        assert decision["promoted"] is False
+        assert decision["champion_version_after"] == "7"
+        assert "--promote never forced" in decision["comparison"]
