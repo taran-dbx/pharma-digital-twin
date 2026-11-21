@@ -168,3 +168,34 @@ def test_exactly_one_shadow_insert_path_c9307_regression(
     ns = _ns(notebook, monkeypatch, "lakets")
     ns["DATA"] = data
     assert ns["check_insert_triggers"]().status == ns[level]
+
+
+# -- history-table row filter --------------------------------------------------------------------
+HISTORY = "`example-catalog`.`pharma_twin`.`lb__shadow_manufacturing_sensor_readings_history`"
+
+
+@pytest.mark.parametrize(
+    "name", ["uc_window", "uc_rate_hour", "uc_dupes", "uc_recon", "uc_total", "uc_nulls"]
+)
+def test_history_row_queries_read_only_row_images_c9310_regression(
+    notebook, monkeypatch, name
+) -> None:
+    """[C9310][regression] Pruned-shadow `delete` change rows never count as data rows."""
+    ns = _namespace(notebook, ("params", "config", "sql-guard", "queries"), monkeypatch)
+    fields = {"table": HISTORY, "hours": 2, "qhours": 2, "t0": "2026-01-01 00:00:00",
+              "t1": "2026-01-01 01:00:00"}  # fmt: skip
+    sql = ns["UC_SQL"][name].format(**ns["cdc_row_fields"](name, fields))
+    assert (
+        f"(SELECT * FROM {HISTORY} WHERE _pg_change_type IN ('insert', 'update_postimage'))" in sql
+    )
+    ns["assert_read_only"](sql)
+
+
+def test_other_tables_and_metadata_queries_are_unchanged_c9311_smoke(notebook, monkeypatch) -> None:
+    """[C9311][smoke] Micro-batch/zerobus Delta tables and DESCRIBE queries keep the raw table."""
+    ns = _namespace(notebook, ("params", "config", "sql-guard", "queries"), monkeypatch)
+    plain = {"table": "`c`.`pharma_twin`.`manufacturing_microbatch`", "hours": 2}
+    assert ns["cdc_row_fields"]("uc_window", plain) == plain
+    history = {"table": HISTORY}
+    assert ns["cdc_row_fields"]("uc_history", history) == history
+    assert ns["cdc_row_fields"]("uc_detail", history) == history

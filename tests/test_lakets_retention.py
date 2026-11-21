@@ -37,8 +37,12 @@ def test_prune_asset_is_fail_closed_and_bounded_c9401_smoke() -> None:
     assert "v_committed := lakets._cdf_committed_lsn(p_shadow_name);" in sql
     assert "IF v_committed IS NULL THEN" in sql
     assert "mark_lsn <= v_committed" in sql
-    assert "age(xmin) > age($1)" in sql
+    assert "age(xmin) > age($2)" in sql
+    assert "WHERE id <= $1" in sql and "ORDER BY id" in sql  # index range, oldest first
     assert "LIMIT $3" in sql
+    assert "pg_current_wal_insert_lsn()" in sql
+    assert "lakets._cdf_prune_acknowledgements" in sql
+    assert "taken_at <= now() - p_keep" in sql
 
 
 def test_tiering_job_prunes_in_bounded_batches_c9402_regression() -> None:
@@ -46,7 +50,7 @@ def test_tiering_job_prunes_in_bounded_batches_c9402_regression() -> None:
     src = lakets_deploy_service._TIERING_NOTEBOOK_SOURCE.decode("utf-8")
     assert "to_regprocedure('lakets.prune_cdf_shadow(text,interval,integer)')" in src
     assert "SELECT lakets.prune_cdf_shadow(%s, %s::interval, %s)" in src
-    assert "SHADOW_PRUNE_MAX_BATCHES = 80" in src
+    assert "SHADOW_PRUNE_BUDGET_S = 20 * 60" in src
     assert "if deleted == 0:" in src
     compile(src.replace("# MAGIC", "#").replace("dbutils.library.restartPython()", "pass"),
             "tiering", "exec")  # fmt: skip
@@ -57,6 +61,7 @@ def _retention_on(monkeypatch, request):
     """Tests exercise the enabled path unless they opt out with the 'retention_off' mark."""
     if request.node.get_closest_marker("retention_off") is None:
         monkeypatch.setenv(retention.RETENTION_ENABLED_ENV, "true")
+        monkeypatch.setenv(retention.PRUNE_ACK_ENV, "true")
 
 
 @pytest.mark.retention_off
@@ -73,6 +78,18 @@ async def test_retention_is_off_by_default_and_touches_nothing_c9412_regression(
     assert result["status"] == "disabled" and result["applied"] == []
     conn.execute.assert_not_awaited()
     conn.fetchval.assert_not_awaited()
+
+
+def test_retention_job_bounds_drop_locks_and_retries_c9413_regression() -> None:
+    """[C9413][regression] Partition DROPs give up after 5 s (no queue of blocked inserts) and
+    lock-skipped chunks are retried while eligible chunks remain."""
+    src = lakets_deploy_service._RETENTION_NOTEBOOK_SOURCE.decode("utf-8")
+    assert 'DROP_LOCK_TIMEOUT = "5s"' in src
+    assert "run_with_backoff(f\"SET lock_timeout = '{DROP_LOCK_TIMEOUT}'\")" in src
+    assert 'remaining = run_with_backoff(ELIGIBLE_SQL, (schema, table), fetch="one") or 0' in src
+    assert "if remaining == 0 or attempt == DROP_ATTEMPTS:" in src
+    compile(src.replace("# MAGIC", "#").replace("dbutils.library.restartPython()", "pass"),
+            "retention", "exec")  # fmt: skip
 
 
 @pytest.mark.asyncio
@@ -217,20 +234,21 @@ class TestShadowPruneSafety:
 
     @pytest.mark.asyncio
     async def test_in_flight_transaction_is_not_pruned_c9408_regression(self, db) -> None:
-        """[C9408][regression] A writer open when the mark is taken commits later: kept."""
+        """[C9408][regression] A writer open when the mark is taken holds LOWER ids than rows
+        committed after it; the id bound alone would prune it, the xmin rule keeps it."""
         conn, pg_server, name = db
         writer = await _connect(pg_server, name)
         try:
             tx = writer.transaction()
             await tx.start()
-            await writer.execute(_INSERT, 50, "in_flight")  # xid assigned, not committed
-            await _prune(conn)  # mark: snapshot xmin <= the writer's xid
+            await writer.execute(_INSERT, 50, "in_flight")  # ids allocated, not committed
+            await conn.execute(_INSERT, 10, "committed")  # higher ids, committed
+            await _prune(conn)  # mark: max_id covers both, snapshot xmin <= the writer's xid
             await tx.commit()
-            await _commit_sync_to_now(conn)  # the sync is past the mark...
-            result = await _prune(conn)  # ...but the writer had not finished before it
-            assert result["deleted"] == 0
+            await _commit_sync_to_now(conn)  # the sync is past the mark
+            result = await _prune(conn)
+            assert result["deleted"] == 10
             assert await _shadow_sources(conn) == {"in_flight": 50}
-            await _prune(conn)
             await _commit_sync_to_now(conn)
             assert (await _prune(conn))["deleted"] == 50  # durable once a later mark is passed
         finally:
@@ -288,3 +306,34 @@ class TestHotTierPolicies:
         await _commit_sync_to_now(conn)
         dropped = await conn.fetchval("SELECT lakets.execute_retention('sensor_readings')")
         assert dropped > 0
+
+
+class TestPruneAcknowledgement:
+    @pytest.mark.asyncio
+    async def test_prune_refuses_without_the_history_risk_ack_c9414_regression(
+        self, db, monkeypatch
+    ) -> None:
+        """[C9414][regression] Without LAKETS_SHADOW_PRUNE_ACK_HISTORY_RISK the ack row is
+        revoked and prune refuses, even when every row is durable."""
+        conn, *_ = db
+        monkeypatch.delenv(retention.PRUNE_ACK_ENV, raising=False)
+        result = await retention.ensure_retention(conn)
+        assert result["shadow_prune"].startswith("refused")
+        await conn.execute(_INSERT, 100, "x")
+        await _prune(conn)
+        await _commit_sync_to_now(conn)
+        refused = await _prune(conn)
+        assert refused["status"] == "refused" and refused["deleted"] == 0
+        assert await _shadow_sources(conn) == {"x": 100}
+
+    @pytest.mark.asyncio
+    async def test_ack_row_records_who_and_what_c9415_smoke(self, db) -> None:
+        """[C9415][smoke] The acknowledgement names the role and the accepted risk."""
+        conn, *_ = db
+        row = await conn.fetchrow(
+            "SELECT acknowledged_by, statement FROM lakets._cdf_prune_acknowledgements"
+            " WHERE shadow_table = $1",
+            SHADOW,
+        )
+        assert row["acknowledged_by"] == "postgres"
+        assert "replaces the UC history table" in row["statement"]

@@ -11,6 +11,23 @@ the CDF shadow 6.6 GB after one day, growing ~1.7 GB/h together at 2000 Hz.
 - Shadow: ``lakets.prune_cdf_shadow()`` (``assets/lakets_cdf_prune.sql``) deletes only
   rows whose inserting transaction finished before a WAL mark the sync has committed.
 
+RECOVERY RISK, read before enabling shadow pruning: afterwards the shadow holds only the
+last ~2 h. If Lakehouse Sync ever re-snapshots the shadow and that RE-CREATES (replaces)
+the UC history table instead of appending, every older cold row is lost for good. Whether
+a resnapshot appends or replaces is an open question for the Lakebase team. Pruning
+therefore also needs ``LAKETS_SHADOW_PRUNE_ACK_HISTORY_RISK=true``, which writes an
+acknowledgement row the SQL function checks; without it the function refuses.
+
+Costs: each pruned row writes a full-row delete to WAL (REPLICA IDENTITY FULL) and a
+``delete`` change row to the history table, roughly doubling the cold tier's rows.
+
+Hot tier, timing: the Retention job runs daily (03:00 UTC), so with DROP_AFTER = 24 h
+a chunk can stay up to ~48 h (dropped at the first daily run after it is 24 h old and
+durable). Schedule the job more often for a tighter bound. Enabling tiering also adds
+LakeTS's three statement-level write-tracking triggers (an UPDATE of
+lakets._chunk_metadata per insert statement, on the same few chunk rows for all writers);
+re-measure insert throughput and lock waits at 2,000 rows/s when enabling it.
+
 :func:`ensure_retention` is idempotent and never raises. It is OFF unless
 ``LAKETS_RETENTION_ENABLED=true``: while off it changes nothing (no policy, no prune
 function), so the Tiering job's prune step is a no-op too. Enabling it is a separate,
@@ -33,6 +50,11 @@ logger = logging.getLogger("pharma_twin.services.lakets.retention")
 DEFAULT_TIER_AFTER = "1 hour"
 DEFAULT_DROP_AFTER = "24 hours"
 RETENTION_ENABLED_ENV = "LAKETS_RETENTION_ENABLED"
+PRUNE_ACK_ENV = "LAKETS_SHADOW_PRUNE_ACK_HISTORY_RISK"
+PRUNE_ACK_STATEMENT = (
+    "Shadow pruning keeps ~2 h in Lakebase; a Lakehouse Sync resnapshot that replaces the "
+    "UC history table would lose older cold history."
+)
 TIER_AFTER_ENV = "LAKETS_HOT_TIER_AFTER"
 DROP_AFTER_ENV = "LAKETS_HOT_DROP_AFTER"
 
@@ -54,6 +76,21 @@ _ADD_TIERED_RETENTION_SQL = (
 def prune_sql() -> str:
     """Idempotent DDL for the marks table and ``lakets.prune_cdf_shadow``."""
     return LAKETS_CDF_PRUNE_SQL_PATH.read_text(encoding="utf-8")
+
+
+def prune_acknowledged() -> bool:
+    return os.getenv(PRUNE_ACK_ENV, "").strip().lower() in {"1", "true", "yes"}
+
+
+_SHADOW_OF_SQL = (
+    "SELECT shadow_table_name FROM lakets._chronotable_registry "
+    "WHERE schema_name = $1 AND table_name = $2 AND sync_enabled"
+)
+_ACK_SQL = (
+    "INSERT INTO lakets._cdf_prune_acknowledgements (shadow_table, acknowledged_by, statement) "
+    "VALUES ($1, current_user, $2) ON CONFLICT (shadow_table) DO NOTHING"
+)
+_REVOKE_ACK_SQL = "DELETE FROM lakets._cdf_prune_acknowledgements WHERE shadow_table = $1"
 
 
 def retention_enabled() -> bool:
@@ -92,6 +129,12 @@ async def ensure_retention(
         if not await conn.fetchval(_POLICY_EXISTS_SQL, schema, table, "tiered_retention"):
             await conn.fetchval(_ADD_TIERED_RETENTION_SQL, table, tier_after, drop_after, schema)
             applied.append("tiered_retention")
+        shadow = await conn.fetchval(_SHADOW_OF_SQL, schema, table)
+        if shadow:
+            if prune_acknowledged():
+                await conn.execute(_ACK_SQL, shadow, PRUNE_ACK_STATEMENT)
+            else:  # unsetting the env revokes it
+                await conn.execute(_REVOKE_ACK_SQL, shadow)
     except Exception as exc:
         logger.warning("Retention setup failed for %s.%s: %s", schema, table, exc)
         return {"resource": resource, "status": "failed", "error": str(exc)[:300]}
@@ -102,4 +145,5 @@ async def ensure_retention(
         "tier_after": tier_after,
         "drop_after": drop_after,
         "shadow_keep": SHADOW_KEEP,
+        "shadow_prune": "acknowledged" if prune_acknowledged() else "refused (not acknowledged)",
     }

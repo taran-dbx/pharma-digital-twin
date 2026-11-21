@@ -130,14 +130,43 @@ tables = run_with_backoff(
     fetch="all",
 )
 
+# Dropping a partition takes an ACCESS EXCLUSIVE lock on the partitioned parent. A
+# DROP that waits for it queues every later insert behind it and stalls the
+# consumer, so each DROP gives up after DROP_LOCK_TIMEOUT. execute_retention()
+# skips a chunk whose DROP failed (RAISE WARNING) and the job retries it.
+DROP_LOCK_TIMEOUT = "5s"
+DROP_ATTEMPTS = 3
+DROP_RETRY_PAUSE_S = 30
+
+run_with_backoff(f"SET lock_timeout = '{DROP_LOCK_TIMEOUT}'")
+
+# Chunks past drop_after that are still present (lock-skipped or not yet durable).
+ELIGIBLE_SQL = (
+    "SELECT count(*) FROM lakets._chunk_metadata cm "
+    "JOIN lakets._chronotable_registry c ON c.id = cm.chronotable_id "
+    "JOIN lakets._policy_registry p ON p.chronotable_id = c.id AND p.enabled "
+    "  AND p.policy_type IN ('retention', 'tiered_retention') "
+    "WHERE c.schema_name = %s AND c.table_name = %s AND cm.status IN ('active', 'tiered') "
+    "  AND cm.range_end <= now() - (p.config->>'drop_after')::interval"
+)
+
 for schema, table in tables:
     key = f"{schema}.{table}"
     try:
-        dropped = run_with_backoff(
-            "SELECT lakets.execute_retention(%s, %s)",
-            (table, schema),
-            fetch="one",
-        )
+        dropped = 0
+        for attempt in range(1, DROP_ATTEMPTS + 1):
+            this_round = run_with_backoff(
+                "SELECT lakets.execute_retention(%s, %s)",
+                (table, schema),
+                fetch="one",
+            ) or 0
+            dropped += this_round
+            remaining = run_with_backoff(ELIGIBLE_SQL, (schema, table), fetch="one") or 0
+            if remaining == 0 or attempt == DROP_ATTEMPTS:
+                break
+            # Lock-skipped chunks get another go; durability-deferred ones simply stay
+            # until the sync has committed past them (next daily run).
+            time.sleep(DROP_RETRY_PAUSE_S)
         results[key] = dropped
         print(f"Retention on {key}: dropped {dropped} chunk(s)")
     except (psycopg2.OperationalError, psycopg2.InterfaceError):
@@ -577,7 +606,7 @@ for schema, table in tables:
 # committed to Delta, and nothing while the shadow is not STREAMING.
 SHADOW_KEEP = "2 hours"
 SHADOW_PRUNE_BATCH = 50000
-SHADOW_PRUNE_MAX_BATCHES = 80  # <= 4 M rows per 30-min run (~2,200 rows/s)
+SHADOW_PRUNE_BUDGET_S = 20 * 60  # of the 30-min interval; drains a backlog over several runs
 has_prune = run_with_backoff(
     "SELECT to_regprocedure('lakets.prune_cdf_shadow(text,interval,integer)') IS NOT NULL",
     fetch="one",
@@ -591,7 +620,8 @@ if has_prune:
     for (shadow,) in shadows:
         pruned, last, errors = 0, None, []
         try:
-            for _ in range(SHADOW_PRUNE_MAX_BATCHES):
+            prune_started = time.monotonic()
+            while time.monotonic() - prune_started < SHADOW_PRUNE_BUDGET_S:
                 last = run_with_backoff(
                     "SELECT lakets.prune_cdf_shadow(%s, %s::interval, %s)",
                     (shadow, SHADOW_KEEP, SHADOW_PRUNE_BATCH),
