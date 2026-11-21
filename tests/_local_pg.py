@@ -90,6 +90,10 @@ def local_postgres() -> Iterator[LocalPostgres | None]:
         shutil.rmtree(root, ignore_errors=True)
         yield None
         return
+    version = subprocess.run(
+        [str(bin_dir / "postgres"), "--version"], capture_output=True, text=True, env=env
+    ).stdout.strip()
+    print(f"[local_pg] started {version or 'postgres (unknown version)'} from {bin_dir}")
     try:
         yield LocalPostgres(socket_dir=root, port=port)
     finally:
