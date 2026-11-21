@@ -167,11 +167,17 @@ databricks jobs submit --no-wait -p <profile> --json '{
     "dependencies": ["databricks-sdk>=0.133.0", "psycopg2-binary"]}}]}'
 ```
 
-The committed run (~21:00 UTC) reports **Overall FAIL (28 PASS, 10 WARN, 9 FAIL, 1 SKIPPED)**.
+**2026-11-21:** `notebooks/runs/manufacturing_realtime_2026-11-21.ipynb` (09:39 UTC, `lookback_hours=1`,
+after the statement-level INSERT triggers) reports **Overall FAIL (44 PASS, 4 WARN, 1 FAIL, 1 SKIPPED)**.
+The only FAIL is `metrics_batch_duration`, the Real-Time Mode false positive described below. Summary:
+[`docs/evidence/2026-11-21/11_health_check_summary.txt`](../docs/evidence/2026-11-21/11_health_check_summary.txt).
+
+The 2026-11-20 run (~21:00 UTC) reports **Overall FAIL (28 PASS, 10 WARN, 9 FAIL, 1 SKIPPED)**.
 The FAILs have two causes: (1) Lakehouse Sync stopped at Delta version 1000 at 19:29 UTC, so the
 cold-tier and CDF checks fail and Lakebase no longer reconciles with Delta; (2) from 19:32 the
 consumer wrote fewer rows than the producer sent, so the freshness, silent-sensor and latency
-checks fail. `lakets_gap_fill` (229 of 570 buckets, 40.2 %) is not explained by either. The
+checks fail. `lakets_gap_fill` (229 of 570 buckets, 40.2 %) turned out to be 12 minutes of ingest lag (the check
+now ignores lag). The
 degradation continued after this run: the worst batch e2e P99 reached 579.4 s at 21:07 and 861.5 s
 at 21:49. An earlier run the same day at 16:25, before the stall, scored 40 PASS, 5 WARN, 2 FAIL,
 1 SKIPPED; its two FAILs came from one batch recorded while the producer ran at 2000 Hz. At 500 Hz

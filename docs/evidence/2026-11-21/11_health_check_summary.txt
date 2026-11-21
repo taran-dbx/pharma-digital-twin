@@ -1,0 +1,76 @@
+# ops/notebooks/pipeline_health_check.ipynb (this PR's version) run against the live deployment, 2026-11-21
+# serverless one-time run, sample=false, redact=true, industry=manufacturing, mode=realtime, lookback_hours=1,
+# app_backend_project=pharma-twin-backend, pipelines_project=pharma-twin-pipelines, uc_schema=pharma_twin.
+# Pipeline at the default producer target (2000) since 09:30 UTC, statement-level INSERT triggers since 08:13.
+# Snapshot: ops/notebooks/runs/manufacturing_realtime_2026-11-21.ipynb (run completed 09:39 UTC).
+#
+# A first run at 09:33 (its first attempt aborted with the known psycopg2 SIGABRT; the retry completed) scored
+# 35 PASS | 4 WARN | 2 FAIL | 9 SKIPPED: eight hot-tier queries hit the 40 s statement timeout, and lakets_rollups
+# FAILed at a 63.6 min refresh age. That FAIL is a check bug: the rollup is provisioned with refresh_lag 1 h and
+# lakets.refresh_rollup() skips runs inside it, so the age normally reaches 75 min. The check now judges how
+# overdue the refresh is (age - refresh_lag - 15 min job interval). The re-run below is the committed snapshot;
+# its hot-tier queries all completed.
+
+Overall: FAIL  44 PASS | 4 WARN | 1 FAIL | 1 SKIPPED (1 not applicable to this mode)
+6. Streaming metrics | metrics_batch_duration | FAIL | p95 = 311.1 s
+4. LakeTS outcomes | lakets_gap_fill | WARN | 76 of 570 (13.3%)
+4. LakeTS outcomes | lakets_tiering | WARN | no policy
+5. CDF / Unity Catalog cold tier | uc_small_files | WARN | 378 files, avg 4.2 MB
+7. Cross-checks & data quality | xc_schema_cold | WARN | 0 missing, 7 extra, 1 drifted
+6. Streaming metrics | zerobus_ingest | SKIPPED | -
+1. Header & resolved pipeline | control_plane_record | PASS | deployed
+2. Pipeline & job health | cdf_enabled | PASS | True
+2. Pipeline & job health | deployment_status | PASS | deployed
+2. Pipeline & job health | job_compute | PASS | RTM on
+2. Pipeline & job health | job_last_run | PASS | RUNNING/-
+2. Pipeline & job health | job_recent_failures | PASS | 0 of last 8
+2. Pipeline & job health | job_task_health | PASS | 0 broken of 2
+3. Lakebase hot tier | lb_chronotable | PASS | 163 forward partitions
+3. Lakebase hot tier | lb_connect | PASS | 13 columns
+3. Lakebase hot tier | lb_duplicates | PASS | 0 rows (0.0000%)
+3. Lakebase hot tier | lb_freshness | PASS | 5s
+3. Lakebase hot tier | lb_ingest_rate | PASS | 106,632/min vs 93,880/min
+3. Lakebase hot tier | lb_nulls | PASS | required 0.000%, optional max 0.000%
+3. Lakebase hot tier | lb_out_of_order | PASS | 658 of 50,000 (1.32%)
+3. Lakebase hot tier | lb_rows_window | PASS | 5,632,810
+3. Lakebase hot tier | lb_silent_sensors | PASS | 0 of 19 (0.0%)
+3. Lakebase hot tier | lb_size | PASS | 7.3 GB
+4. LakeTS outcomes | lakets_cdf_state | PASS | sync=True, wal2delta=STREAMING, lag 16.2 MB
+4. LakeTS outcomes | lakets_insert_triggers | PASS | 0 per-row of 3
+4. LakeTS outcomes | lakets_installed | PASS | 0.1.0
+4. LakeTS outcomes | lakets_lvc | PASS | lag 0s, 23 series
+4. LakeTS outcomes | lakets_ops_jobs | PASS | 4/4 deployed, 0 failing
+4. LakeTS outcomes | lakets_partitions | PASS | 163 forward, 0 created in 1h
+4. LakeTS outcomes | lakets_rate_of_change | PASS | 7,496 outliers (0.13%)
+4. LakeTS outcomes | lakets_rollups | PASS | refresh age 67.4m (overdue 0s), 0 pending
+4. LakeTS outcomes | lakets_sync_slot | PASS | active=True, last write 12s ago, retains 26.0 MB
+4. LakeTS outcomes | lakets_value_range | PASS | 0 of 5,636,274 (0.00%)
+5. CDF / Unity Catalog cold tier | uc_cdf_lag | PASS | -53s
+5. CDF / Unity Catalog cold tier | uc_cdf_state | PASS | enabled=True, ledger=True, wal2delta=STREAMING
+5. CDF / Unity Catalog cold tier | uc_connect | PASS | 5 tables listed
+5. CDF / Unity Catalog cold tier | uc_freshness | PASS | 15s
+5. CDF / Unity Catalog cold tier | uc_last_commit | PASS | 2s ago (wal2delta.append)
+5. CDF / Unity Catalog cold tier | uc_rows_window | PASS | 5,609,857
+5. CDF / Unity Catalog cold tier | uc_tables | PASS | 2/2 present
+6. Streaming metrics | metrics_e2e_latency | PASS | p95 of batch p99 = 439 ms
+6. Streaming metrics | metrics_freshness | PASS | 40s
+6. Streaming metrics | metrics_table | PASS | 10 batches
+6. Streaming metrics | metrics_throughput | PASS | processed/input = 1.19 (1,806.4 vs 1,522.0 rows/s)
+7. Cross-checks & data quality | xc_duplicates_cold | PASS | 0 rows (0.0000%)
+7. Cross-checks & data quality | xc_e2e_latency | PASS | 5s to Lakebase
+7. Cross-checks & data quality | xc_nulls_cold | PASS | required 0.000%, optional max 0.000%
+7. Cross-checks & data quality | xc_reconciliation | PASS | Lakebase 6,211,906 vs Delta 6,211,906 (0.00%)
+7. Cross-checks & data quality | xc_schema_hot | PASS | 0 missing, 0 extra, 0 drifted
+7. Cross-checks & data quality | xc_sse_evidence | PASS | LVC lag 0s, 3490 alert events
+
+# Reading
+# - Before (2026-11-20 ~21:00, 12_health_check_summary.txt): 28 PASS | 10 WARN | 9 FAIL. Every FAIL tied to the sync stall
+#   or the consumer backlog is gone: uc_last_commit, uc_cdf_lag, uc_freshness, lakets_cdf_state, xc_reconciliation
+#   (Lakebase 6,211,906 = Delta 6,211,906), lb_silent_sensors, metrics_e2e_latency all PASS; new lakets_sync_slot and
+#   lakets_insert_triggers PASS.
+# - Remaining FAIL metrics_batch_duration: Real-Time Mode reports its 300 s trigger as the batch duration; the 60 s
+#   threshold is the known false positive (ops/README.md), unchanged here.
+# - lakets_gap_fill WARN 76 of 570 = 4 minutes x 19 sensors: real holes, from this session's stop/redeploy at 09:24-09:30
+#   (no rows produced while the job was stopped). The check no longer counts ingest lag.
+# - lakets_tiering WARN (no policy), uc_small_files WARN, xc_schema_cold WARN (the CDF bookkeeping columns) are unchanged
+#   from 2026-11-20 and out of scope.

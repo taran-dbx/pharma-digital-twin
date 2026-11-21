@@ -1,0 +1,30 @@
+# AFTER: streaming latency from <catalog>.pharma_twin.manufacturing_metrics (mode = realtime), 2026-11-21
+# One row per 5-minute Real-Time Mode batch; e2e_p50 / e2e_p99 are Spark's own percentiles over every record of
+# the batch (source available -> sink); a window's P99 is bounded above by its worst batch P99.
+
+batch_id | completed (UTC) | num_input_rows | input_rps | processed_rps | e2e_p50 ms | e2e_p99 ms | queuing_p99 ms | processing_p99 ms
+0 | 08:25:50 | 350360 | 0.0 | 1136.3 | 7.0 | 37.0 | 37.0 | 1.0
+1 | 08:30:51 | 537259 | 1741.8 | 1784.5 | 7.0 | 40.0 | 33.0 | 1.0
+2 | 08:35:52 | 535706 | 1779.2 | 1780.6 | 7.0 | 18.0 | 18.0 | 1.0
+3 | 08:40:53 | 535290 | 1779.1 | 1778.4 | 7.0 | 19.0 | 19.0 | 1.0
+4 | 08:45:54 | 536047 | 1780.8 | 1781.7 | 7.0 | 19.0 | 18.0 | 1.0
+5 | 08:50:55 | 536237 | 1782.2 | 1781.2 | 7.0 | 19.0 | 19.0 | 1.0
+6 | 08:55:56 | 536161 | 1780.9 | 1782.6 | 7.0 | 19.0 | 19.0 | 1.0
+0 | 09:07:32 | 494475 | 0.0 | 1589.4 | 8.0 | 42.0 | 43.0 | 1.0
+1 | 09:12:33 | 646100 | 2075.4 | 2145.9 | 8.0 | 379.0 | 365.0 | 1.0
+2 | 09:17:34 | 644817 | 2141.5 | 2143.0 | 7.0 | 20.0 | 20.0 | 1.0
+3 | 09:22:35 | 644462 | 2141.7 | 2141.1 | 7.0 | 22.0 | 22.0 | 1.0
+
+(batch 0 of each run spans the cluster start-up, so its input_rps is reported as 0 by Spark and it is excluded below)
+
+$ SQL: SELECT <run>, count(*) batches, sum(num_input_rows) records, min/max(processed_rps), percentile(e2e_p50,0.5),
+        max(e2e_p50), percentile(e2e_p99,0.5), max(e2e_p99) FROM ..._metrics WHERE mode='realtime'
+        AND timestamp >= '2026-11-21T08:26:00Z' AND timestamp < '2026-11-21T09:24:00Z' AND input_rps > 0 GROUP BY run
+window (batch completion, UTC)        | producer target | batches | records   | processed rows/s | e2e P50 median / worst | e2e P99 median / worst
+08:30:51-08:55:56 (RUN 1, 25 min)     | 2000 (default)  | 6       | 3,216,700 | 1,778.4-1,784.5  | 7 / 7 ms               | 19 / 40 ms
+09:12:33-09:22:35 (RUN 2, 10 min)     | 2400            | 3       | 1,935,379 | 2,141.1-2,145.9  | 7 / 8 ms               | 22 / 379 ms
+
+## Before / after at the default 2000 Hz target
+2026-11-20 15:05-15:40 (LakeTS row triggers, 05a/11): ~950 rows/s written vs ~1,795 produced; 2nd batch P50 17.9 s, P99 317.2 s
+2026-11-21 08:30-08:56 (statement triggers, this PR): ~1,780 rows/s written = produced; every batch P50 7 ms, P99 <= 40 ms
+processing_p99 stays 1 ms in every batch: all latency is queuing, and there is no queue any more.

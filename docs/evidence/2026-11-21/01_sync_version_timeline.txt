@@ -1,0 +1,83 @@
+# Lakehouse Sync (wal2delta) commit timeline for <catalog>.pharma_twin.lb__shadow_manufacturing_sensor_readings_history
+# captured 2026-11-21T07:25Z-07:45Z (read-only: DESCRIBE HISTORY on the SQL warehouse; pg_settings / wal2delta.tables /
+# pg_replication_slots on the pipeline branch primary; databricks postgres list-cdf-statuses).
+
+## Commits per hour (one wal2delta.append every ~15 s = 240/h while rows flow)
+hour (UTC)        | first version | last version | commits
+2026-11-20 14:00  |    0 |    3 |   4
+2026-11-20 15:00  |    4 |  173 | 170
+2026-11-20 16:00  |  174 |  401 | 228
+2026-11-20 17:00  |  402 |  641 | 240
+2026-11-20 18:00  |  642 |  881 | 240
+2026-11-20 19:00  |  882 | 1000 | 119   <- stall 1 starts after version 1000 (19:29:32)
+2026-11-20 20:00  |    - |    - |   0
+2026-11-20 21:00  | 1001 | 1023 |  23   <- resumes 21:55:06
+2026-11-20 22:00  | 1024 | 1263 | 240
+2026-11-20 23:00  | 1264 | 1503 | 240
+2026-11-21 00:00  | 1504 | 1743 | 240
+2026-11-21 01:00  | 1744 | 1800 |  57   <- stall 2 starts after version 1800 (01:14:10)
+2026-11-21 02:00-06:00 | - |  - |   0
+2026-11-21 07:00  | 1801 | 1923 | 123   <- resumes 07:08:11 (still committing every 15 s at capture)
+
+## Every gap > 2 min between consecutive versions
+version | previous commit       | this commit           | gap (min) | note
+2       | 2026-11-20 14:31:31   | 2026-11-20 14:44:32   |  13.0     | before the producer started
+4       | 2026-11-20 14:46:02   | 2026-11-20 15:05:16   |  19.2     | producer stopped (validation -> deploy)
+154     | 2026-11-20 15:42:31   | 2026-11-20 15:51:46   |   9.3     | job redeploy (05a)
+174     | 2026-11-20 15:56:31   | 2026-11-20 16:03:16   |   6.8     | job redeploy (05b)
+1001    | 2026-11-20 19:29:32   | 2026-11-20 21:55:06   | 145.6     | STALL 1 (rows kept landing in Lakebase)
+1005    | 2026-11-20 21:55:27   | 2026-11-20 21:58:00   |   2.6     |
+1801    | 2026-11-21 01:14:10   | 2026-11-21 07:08:11   | 354.0     | STALL 2 (rows kept landing in Lakebase)
+
+## The commits around both stalls (operation, engine)
+ 233 2026-11-20T16:18:01Z wal2delta.append  wal2delta
+ 234 2026-11-20T16:18:08Z OPTIMIZE           Databricks-Runtime/19.15 (predictive optimization, removed 231 files, added 3)
+ 999 2026-11-20T19:29:17Z wal2delta.append  wal2delta
+1000 2026-11-20T19:29:32Z wal2delta.append  wal2delta
+1001 2026-11-20T21:55:06Z OPTIMIZE           Databricks-Runtime/19.16 (predictive optimization, readVersion 1000, removed 767 files, added 6)
+1002 2026-11-20T21:55:27Z wal2delta.append  wal2delta
+1800 2026-11-21T01:14:10Z wal2delta.append  wal2delta
+1801 2026-11-21T07:08:11Z wal2delta.append  wal2delta
+1802 2026-11-21T07:08:12Z wal2delta.append  wal2delta
+Operations in the whole history: CREATETABLE 1, wal2delta.resnapshot 1 (v1), OPTIMIZE 2 (v234, v1001), wal2delta.append 1936.
+
+## Lakebase never stopped receiving rows during either stall (rows per event_time hour, public.sensor_readings)
+2026-11-20 19:00 1,758,399 | 20:00 1,760,243 | 21:00 1,710,530 | 2026-11-21 01:00 1,757,258 | 02:00 1,758,322
+03:00 1,758,346 | 04:00 1,734,049 | 05:00 1,756,633 | 06:00 1,756,459   (producer 500 Hz = ~1.757 M/h)
+
+## Sync writer configuration on the pipeline branch (SHOW / pg_settings, read-only)
+wal2delta.checkpoint_interval = 200     <- both stalls began right after a multiple of 200 (1000, 1800)
+wal2delta.commit_concurrency  = 1
+wal2delta.refresh_interval    = 15
+wal2delta.snapshot_cache_ttl_seconds = 10800
+wal2delta.parquet_file_bytes  = 1000000000
+wal2delta extension 0.1.0; wal_level logical; max_slot_wal_keep_size -1 (the slot can retain unbounded WAL)
+max_replication_write_lag = 500 (MB), max_replication_flush_lag = 10240 (MB): Lakebase write back-pressure limits
+pg_postmaster_start_time() = 2026-11-21 05:12:50 UTC: the compute restarted during stall 2 and the sync
+  did NOT resume until 07:08 (wal2delta.tables rows were re-evaluated at 07:07:25-07:09:51)
+
+## State at capture (sync healthy again)
+pg_replication_slots: wal2delta_main_slot_<id>  logical  active=true  wal_status=reserved  retained 16 MB  flush lag 3.8 MB
+pg_stat_replication:  wal2delta  streaming
+wal2delta.tables:     lakets_cdf._shadow_manufacturing_sensor_readings STREAMING, last_write_time = now - ~1 s;
+                      9 other tables SKIPPED ("Does not have REPLICA IDENTITY FULL": lakets registry tables, the LVC
+                      cache and the rollup; expected, only lakets_cdf is published)
+list-cdf-statuses:    _shadow_manufacturing_sensor_readings CDF_STATE_STREAMING, last_sync_time 07:28:26Z
+pg_stat_replication_slots: total_txns 349,864, total_bytes 17.96 GB, spill_txns 0, stream_txns 0
+  (no spilled or streamed transactions: no giant transaction was being decoded)
+
+## Reading
+- The writer stalled twice, each time right after a version that is a multiple of checkpoint_interval (200).
+  The other seven multiples (200, 400, 600, 800, 1200, 1400, 1600) passed, so this is a correlation, not a
+  proof. wal2delta.info() / get_delta_lsn() return "permission denied" to workspace users, so the writer's own
+  error is not visible from here.
+- It is not a schema change (no ALTER on the shadow; no non-append Delta ops apart from predictive OPTIMIZE,
+  which ran AFTER stall 1 had ended), not a missing replica identity (the shadow is REPLICA IDENTITY FULL and
+  STREAMING), not a long transaction (no spilled/streamed txns; no long-running backends), and not lack of
+  input (1.76 M rows/h kept landing).
+- While stalled, the slot keeps every WAL byte: ~820 B of WAL per inserted row with LakeTS 0.1.0's row
+  triggers -> 488 rows/s x 820 B = 0.40 MB/s = ~1.44 GB/h at 500 Hz. Stall 1 was 1.5 h old at the 21:00
+  health check: 1.5 h x 1.44 GB/h = ~2.2 GB, exactly the lag that check reported (07b, 2026-11-20).
+  pg_stat_wal agrees: 17.96 GB of WAL between 20:59 and 07:25 (~1.7 GB/h including everything else).
+- Recovery was spontaneous (146 min and 354 min); a compute restart did not bring it back by itself.
+  The stall is inside the managed Lakehouse Sync writer and is escalated (see open issues).

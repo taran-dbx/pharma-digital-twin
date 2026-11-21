@@ -1,0 +1,36 @@
+# Lakehouse Sync after the fix: is the stalled sync committing again, and what ends a stall?
+# DESCRIBE HISTORY on <catalog>.pharma_twin.lb__shadow_manufacturing_sensor_readings_history (captured ~09:30 UTC 2026-11-21)
+
+## Yes: the same sync (no re-create, no slot drop) resumed after version 1000 and has kept committing
+version 1001 (21:55:06 on 2026-11-20) ... 1800 (01:14:10) ... 1801 (07:08:11) ... 2319 (09:24:21 on 2026-11-21)
+commits per hour on 2026-11-21: 07:00 226 (v1801-2026) | 08:00 210 (v2027-2236) | 09:00 83 so far (v2237-2319)
+
+## Every gap > 1 min since stall 2 ended
+version | previous commit       | this commit           | gap (min) | cause
+1804    | 2026-11-21 07:08:12   | 2026-11-21 07:09:54   |  1.7      | catch-up after stall 2
+2001    | 2026-11-21 07:44:42   | 2026-11-21 07:54:25   |  9.7      | STALL 3, before the fix (500 Hz, slot ~0.7 MB)
+2094    | 2026-11-21 08:16:36   | 2026-11-21 08:22:36   |  6.0      | pipeline stopped for the 2000 Hz redeploy (no input)
+2237    | 2026-11-21 08:58:06   | 2026-11-21 09:03:51   |  5.8      | pipeline stopped for the 2400 capacity redeploy (no input)
+During both runs (08:23-08:56, 09:04-09:22) there was a commit every 15 s, including across version 2200
+(2199 08:48:51, 2200 08:49:06, 2201 08:49:21).
+
+## What the three stalls have in common
+stall | last version before | resumed with                                                   | length
+1     | 1000 (19:29:32)     | v1001 OPTIMIZE (predictive optimization, readVersion 1000)      | 145.6 min
+2     | 1800 (01:14:10)     | v1801 wal2delta.append (no OPTIMIZE); compute had restarted 05:12 | 354.0 min
+3     | 2000 (07:44:42)     | v2001 OPTIMIZE (predictive optimization, readVersion 2000, 997 files) | 9.7 min
+- All three start right after a multiple of wal2delta.checkpoint_interval (200). Seven other multiples passed.
+- Two of three end exactly when a predictive-optimization OPTIMIZE that read the stall's last version commits.
+- Stall 3 happened at 500 Hz with ~0.4 MB/s of WAL and a near-empty slot, so WAL volume does not trigger a stall.
+
+## Lakebase vs Delta, closed windows after the fix (exact)
+event_time 08:30-08:50 (target 2000): Lakebase 2,136,493 rows | Delta inserts 2,136,493
+event_time 09:05-09:20 (target 2400): Lakebase 1,922,667 rows | Delta inserts 1,922,667
+
+## Conclusion
+The stall is inside the managed Lakehouse Sync writer (wal2delta) and is NOT caused by the per-row trigger WAL
+volume. That volume (820 B/row, ~1.4 MB/s at 1,750 rows/s) decided how fast WAL piled up behind a stalled slot
+(2.2 GB in 1.5 h on 2026-11-20). It also added ~0.7 ms of Postgres time per row, which together with the
+consumer's 3-partition skew made the primary the bottleneck. After the fix the WAL rate per row is lower and
+the primary has headroom. The stall itself is escalated with this timeline; the health check now flags it
+within 2-10 minutes instead of an hour (lakets_sync_slot).

@@ -1,0 +1,15 @@
+# lakets_gap_fill 40.2 % (health check 2026-11-20 ~21:00) explained: it measured ingest LAG, not missing data.
+# The check counted (sensor, minute) buckets for event_time >= date_trunc('minute', now()) - 29 min.
+229 missing of 570 = 12.05 minutes x 19 sensors. At 21:00 the consumer was 8-13 min behind the producer
+(05c: newest event_time 469-800 s old), so the newest ~12 minutes were still in Kafka.
+
+## The same window, re-counted on 2026-11-21 from the live table (read-only)
+$ WITH obs AS (SELECT sensor_name, date_trunc('minute', event_time) m FROM public.sensor_readings
+    WHERE event_time >= '2026-11-20 20:31:00+00' AND event_time < '2026-11-20 21:01:00+00' GROUP BY 1,2)
+  SELECT count(DISTINCT sensor_name) sensors, count(*) observed_buckets, count(DISTINCT sensor_name)*30 expected FROM obs
+sensors | observed_buckets | expected
+19 | 570 | 570
+(and no minute in that window has fewer than 19 sensors)
+
+Fix in this PR: the check now counts the 30 complete minutes before the newest ingested minute, so it reports
+real holes; lag stays with lb_freshness / xc_e2e_latency.

@@ -1,0 +1,18 @@
+# Kafka partition skew: the producer keys by sensor_name; Kafka's default partitioner is murmur2(key) mod N.
+# Sensor list: the 19 sensors seen in public.sensor_readings in the last 10 min (2026-11-21 ~07:30, ~15,400 rows each).
+# Assignment computed with Kafka's murmur2 (same seed/mix as the Java client), not measured from the broker.
+
+N partitions | sensors per partition (share of rows)                                      | busiest partition
+3 (deployed) | p0: 9 (47.4 %)  p1: 6 (31.6 %)  p2: 4 (21.1 %)                              | 47.4 %
+6            | 4 / 4 / 3 / 5 / 2 / 1  (21.1 / 21.1 / 15.8 / 26.3 / 10.5 / 5.3 %)           | 26.3 %
+12           | 11 of 12 partitions used, max 3 sensors (15.8 %)                            | 15.8 %
+
+At the default 2000 Hz the producer acks ~1,795 rows/s (05a, 2026-11-20), so partition 0 must sustain
+0.474 x 1,795 = ~850 rows/s on ONE Spark task / ONE Postgres connection. RTM runs one long task per partition,
+and LakebaseWriter flushes synchronously, so a partition's throughput is 1 / (per-row write cost).
+With LakeTS's row triggers measured at ~0.96-1.0 ms of server time per row (04) plus the flush round trips and
+the concurrent load of the other two writers on a 0.5-4 CU compute, each writer topped out near ~320 rows/s:
+p0 capped at ~320, p1 (needs 567) capped at ~320, p2 (needs 379) at ~320 -> ~950 rows/s total, the ceiling in 05a.
+Adding Spark workers cannot help (a partition is never split across tasks); the fix is cheaper rows (04).
+After the fix one writer does ~8,000 rows/s server-side, ~9x the busiest partition's need, so the topic is NOT
+re-partitioned (and the existing topic was not altered).
