@@ -265,7 +265,13 @@ async def sss_ingest(request: Request, state: AppState = Depends(get_app_state))
                             "sss",
                         )
                     )
-                # asyncpg: use executemany-style INSERT for batch performance
+                # Legacy per-pipeline path only (industry-first pipelines are
+                # broadcast-only above). executemany runs one INSERT per row, so the
+                # set-based LakeTS triggers (assets/lakets_insert_triggers.sql) fire
+                # once per row here and this path gets none of their speed-up; it is
+                # still correct (exactly one shadow/LVC write per row). Left as is:
+                # a multi-row INSERT would change the in-transaction count that
+                # lb.executemany returns and this route reports as in_txn_count.
                 in_txn_count = await lb.executemany(
                     """
                     INSERT INTO sensor_readings

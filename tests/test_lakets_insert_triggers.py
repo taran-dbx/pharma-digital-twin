@@ -51,10 +51,17 @@ class TestContract:
         assert "DROP TRIGGER IF EXISTS trg_lakets_lvc ON" in sql
         # One transaction, writers wait instead of racing the swap.
         assert "LOCK TABLE %I.%I IN SHARE ROW EXCLUSIVE MODE" in sql
-        assert "SET LOCAL lock_timeout" in sql
-        # One LVC row per key per statement, newest by the ChronoTable time column.
+        # Function-level SET (restored on return), never a SET LOCAL that leaks.
+        assert "SET lock_timeout = '15s'" in sql
+        assert "SET LOCAL" not in sql.replace("a SET LOCAL would leak", "")
+        # One LVC row per key per statement: latest time, NULLs last, deterministic tie-break.
         assert "SELECT DISTINCT ON (%4$s) %3$s, now() FROM _lakets_new_rows" in sql
-        assert "ORDER BY %4$s, %5$I DESC" in sql
+        assert "ORDER BY %4$s, %5$I DESC NULLS LAST%7$s" in sql
+        assert "v_tiebreak := 'id DESC';" in sql
+        # Exactly one INSERT path: the statement functions stand down for a row trigger.
+        assert "lakets._row_insert_trigger_present(TG_RELID, 'trg_lakets_sync')" in sql
+        assert "lakets._row_insert_trigger_present(TG_RELID, 'trg_lakets_lvc')" in sql
+        assert "CREATE OR REPLACE FUNCTION lakets.use_row_insert_triggers(" in sql
 
     def test_cutover_never_reinstalls_a_row_insert_sync_trigger_c9102_regression(self) -> None:
         """[C9102][regression] A re-run cutover must not make INSERT copy rows twice."""
@@ -196,6 +203,21 @@ async def _assert_lvc_is_newest(conn) -> None:
     assert wrong == 0
 
 
+async def _assert_lvc_is_last_inserted(conn) -> None:
+    """Per-row LVC semantics: the last row inserted (highest id) per sensor wins."""
+    wrong = await conn.fetchval(
+        """
+        SELECT count(*) FROM public._lvc_sensor_readings c
+        JOIN LATERAL (
+            SELECT value, event_time FROM public.sensor_readings s
+            WHERE s.sensor_name = c.sensor_name ORDER BY id DESC LIMIT 1
+        ) last_row ON TRUE
+        WHERE (c.value, c.event_time) IS DISTINCT FROM (last_row.value, last_row.event_time)
+        """
+    )
+    assert wrong == 0
+
+
 class TestLive:
     @pytest.mark.asyncio
     async def test_swap_keeps_shadow_and_lvc_exact_c9106_smoke(self, lakets_db) -> None:
@@ -251,3 +273,99 @@ class TestLive:
         await conn.execute(_INSERT, 200, 4)
         await _assert_shadow_exact(conn)
         await _assert_lvc_is_newest(conn)
+
+    @pytest.mark.asyncio
+    async def test_reverse_swap_restores_row_triggers_c9109_regression(self, lakets_db) -> None:
+        """[C9109][regression] use_row_insert_triggers() undoes the swap; the shadow stays exact."""
+        conn = lakets_db
+        await insert_triggers.ensure_statement_insert_triggers(conn)
+        summary = json.loads(
+            await conn.fetchval("SELECT lakets.use_row_insert_triggers('sensor_readings')")
+        )
+        assert summary["statement_insert_triggers"] == []
+        assert await _row_insert_triggers(conn) == ["trg_lakets_lvc", "trg_lakets_sync"]
+        await conn.execute(_INSERT, 120, 6)
+        await _assert_shadow_exact(conn)
+        await _assert_lvc_is_last_inserted(conn)  # per-row semantics are back
+        again = await insert_triggers.ensure_statement_insert_triggers(conn)  # and back
+        assert again["status"] == "ok"
+        await conn.execute(_INSERT, 80, 6)
+        await _assert_shadow_exact(conn)
+
+    @pytest.mark.asyncio
+    async def test_a_row_insert_trigger_never_double_copies_c9110_regression(
+        self, lakets_db
+    ) -> None:
+        """[C9110][regression] If enable_sync/enable_lvc re-add per-row INSERT triggers next to
+        the statement ones, the statement functions stand down: each row is copied once."""
+        conn = lakets_db
+        await insert_triggers.ensure_statement_insert_triggers(conn)
+        # What lakets._enable_chronotable_sync / lakets.enable_lvc create:
+        await conn.execute(
+            "CREATE OR REPLACE TRIGGER trg_lakets_sync AFTER INSERT OR UPDATE OR DELETE ON"
+            " public.sensor_readings FOR EACH ROW EXECUTE FUNCTION lakets._sync_trigger_fn();"
+            " CREATE OR REPLACE TRIGGER trg_lakets_lvc AFTER INSERT ON public.sensor_readings"
+            " FOR EACH ROW EXECUTE FUNCTION lakets._lvc_trigger_fn()"
+        )
+        await conn.execute(_INSERT, 150, 5)  # would violate the shadow's unique id if copied twice
+        await _assert_shadow_exact(conn)
+        await _assert_lvc_is_last_inserted(conn)  # only the per-row LVC trigger ran
+
+    @pytest.mark.asyncio
+    async def test_lock_timeout_does_not_leak_into_the_callers_transaction_c9111_defect(
+        self, lakets_db
+    ) -> None:
+        """[C9111][defect] The swap's 15 s lock_timeout is scoped to the function call."""
+        conn = lakets_db
+        await insert_triggers.ensure_statement_insert_triggers(conn)  # installs the functions
+        async with conn.transaction():
+            await conn.execute("SET LOCAL lock_timeout = '3s'")
+            await conn.fetchval(insert_triggers.SWAP_SQL, "sensor_readings", "public")
+            assert await conn.fetchval("SHOW lock_timeout") == "3s"
+
+    @pytest.mark.asyncio
+    async def test_non_owner_swap_fails_and_changes_nothing_c9112_regression(
+        self, lakets_db
+    ) -> None:
+        """[C9112][regression] A role that does not own the table gets a reported failure and
+        the triggers stay as they were (the swap is one transaction)."""
+        conn = lakets_db
+        before = await _row_insert_triggers(conn)
+        await conn.execute(
+            "CREATE ROLE not_owner LOGIN; GRANT USAGE ON SCHEMA lakets, lakets_cdf TO not_owner;"
+            " GRANT SELECT ON ALL TABLES IN SCHEMA lakets TO not_owner;"
+            " GRANT INSERT, SELECT ON public.sensor_readings TO not_owner"
+        )
+        async with conn.transaction():
+            await conn.execute("SET LOCAL ROLE not_owner")
+            result = await insert_triggers.ensure_statement_insert_triggers(conn)
+        assert result["status"] == "failed"
+        assert "owner" in result["error"] or "permission denied" in result["error"]
+        assert await _row_insert_triggers(conn) == before
+
+    @pytest.mark.asyncio
+    async def test_equal_event_times_in_one_insert_keep_the_last_row_c9113_regression(
+        self, lakets_db
+    ) -> None:
+        """[C9113][regression] Two rows for one sensor with the same event_time in a single
+        INSERT: the cache keeps the later row (highest id), as the per-row trigger did."""
+        conn = lakets_db
+        await insert_triggers.ensure_statement_insert_triggers(conn)
+        await conn.execute(
+            """
+            INSERT INTO public.sensor_readings (sensor_name, industry, value, unit, sensor_type,
+                event_time, min_value, max_value, nominal_value, fault_active, metadata, source)
+            SELECT 'twin', 'manufacturing', v, 'C', 'temperature', t, 0, 100, 50, false,
+                   '{}'::jsonb, 'sss'
+            FROM (SELECT now() + interval '1 minute' AS t) ts, (VALUES (1.0), (2.0)) AS r(v)
+            """
+        )
+        cached = await conn.fetchval(
+            "SELECT value FROM public._lvc_sensor_readings WHERE sensor_name = 'twin'"
+        )
+        newest_id_value = await conn.fetchval(
+            "SELECT value FROM public.sensor_readings WHERE sensor_name = 'twin'"
+            " ORDER BY id DESC LIMIT 1"
+        )
+        assert cached == newest_id_value == 2.0
+        await _assert_shadow_exact(conn)
