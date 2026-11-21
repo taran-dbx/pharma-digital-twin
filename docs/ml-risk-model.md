@@ -177,7 +177,10 @@ Coolant flow is not modelled. There is a coolant sensor, but it is not a model i
   learn a spurious dependence (see the replay diagnosis).
 * `synthetic` (`iot_twin.ml.synthetic_telemetry`) is the older 1 Hz generator that
   trained v1–v4.
-* `real` uses real telemetry only.
+* `real` uses real telemetry only. Telemetry that carries the simulator's
+  `metadata.scenario_id` tag (the live producer's output) is **not** real: `auto`
+  falls back to `live_format`, and `real` fails. Real rows also pin the maintenance
+  age, because the catalog maintenance date is a fixture, not a measurement.
 
 There is no live-format data in Delta yet: the live pipeline had not run the
 updated scenario.
@@ -211,8 +214,8 @@ scores left no usable cut-off.
 * **Live-format (simulated) data.** A row is calm when its 60 s feature window
   holds no precursor and no heat episode (`training_set.scenario_calm`), at least
   60 s after a breach cleared.
-* **Real telemetry.** A plan-free fallback: at least 240 s before the next breach
-  onset.
+* **Real telemetry.** There is no scenario plan, so no calm floor is defined for
+  gating. The promotion gate does not run on real data (see Qualification).
 * **Why not the fallback on simulated data.** It also counts fading precursors as
   calm, so its p90 swung with how many of them a 3 h validation slice held. v4's
   ranged 0.18–0.69 over four fresh samples, and the gate flipped from run to run.
@@ -225,8 +228,9 @@ Scores are taken every 5 s, as in the app:
 | Breach lead | onset minus the open time of the predicted alert that is still open at the onset and opened at most 240 s before it. Otherwise the breach is missed |
 | False alarm | a predicted alert that opens outside every breach and precedes no breach onset within 240 s. Every flap counts |
 | Cycle record | one per full 300 s cycle: plan group (strong / weak / none excursions, fade / bump false alarms, quiet), breach, warned ≥ 30 s, false alarms |
-| Standardised discrimination | the per-group rates re-weighted to the nominal plan mix: warned share over strong / weak / none at 0.55 / 0.25 / 0.20, minus the false-alarm-cycle share over fade / bump / quiet at 0.30 / 0.20 / 0.50. A sample that happens to hold many fades does not move it. A plan-aware **oracle**, which alerts on every precursor and only then, scores 0.80 − 0.50 = **0.30**: the ceiling for a precursor detector here |
-| 95 % CI | a bootstrap over cycles, stratified by plan group (2,000 draws). Every table reports it |
+| Standardised discrimination | the per-group rates re-weighted to the nominal plan mix: warned share over strong / weak / none at 0.55 / 0.25 / 0.20, minus the false-alarm-cycle share over fade / bump / quiet at 0.30 / 0.20 / 0.50. A sample that happens to hold many fades does not move it. A plan-aware **oracle**, which alerts on every precursor and only then, scores 0.80 − 0.50 = **0.30**. This is a **reference point, not a ceiling**: a model that alerts on fades less often than on real precursors can beat it |
+| 95 % CI | a bootstrap over cycles, stratified by plan group (2,000 draws), so it is **conditional on the realised plan mix**. A **run-level block bootstrap**, which resamples whole held-out runs and replay hours (and so lets the mix vary), is reported alongside |
+| Input invariance | the pooled cycles re-scored with `hours_since_maintenance` at 1500, 2500 and 3000 h. The feature carries no signal in the scenario, and the live scorer's value grows by 24 h a day. The range of standardised discrimination must be ≤ 0.03 and the range of false alarms per hour ≤ 0.3 |
 | Cycle permutation | each alert keeps its offset inside its cycle, but alerts move to randomly permuted cycles (1,000 draws; the permutation seed for period i is `seed + i`). A period with fewer than 2 full cycles contributes its observed count to every draw. `p = (1 + #draws ≥ observed) / 1001`, so **p ≤ 0.001 is the floor of 1,000 permutations** |
 | Clock baseline | a sensor-blind alert over one fixed window of every cycle. *Duty-matched* is the best window chosen on validation whose length is at most the model's alert duty; *any duty* is the best window of any length |
 | Shift baseline | the alerts circularly shifted in time. It is **not** a valid null under a periodic schedule; it is reported for history only |
@@ -248,30 +252,59 @@ All five conditions are blocking:
 3. pooled breaches warned ≥ 30 s ahead exceed the duty-matched clock;
 4. pooled cycle-permutation p < 0.05;
 5. the **lower 95 % bound of standardised discrimination is above 0**. This is the
-   gate metric.
+   gate metric;
+6. **input invariance** to `hours_since_maintenance` (above).
 
-**Choosing `champion`:**
+**The gate is defined for simulated live-format data only.** It needs the scenario
+plan (groups, calm floor) and the simulated replay. With any other `data_origin`
+the job skips the replay and forces `--promote never`, until a real-data gate
+exists.
 
-* **Against a qualifying champion,** a challenger must show a **paired-bootstrap
-  gain**: the challenger-minus-champion difference in standardised discrimination,
-  resampled on the same cycles, must have a lower 95 % bound above 0. Its false
-  alarms must also stay within 1 per hour. Otherwise the incumbent stays.
-* **If the champion does not qualify,** `champion` moves to the qualifying version
-  with the best gate metric.
-* **If no version qualifies,** it moves to the best version by the gate metric and
-  tags it `status=unqualified`.
-* **Logging.** The decision, the paired difference, each version's metrics, and the
-  cycle records and null counts (`null_counts.json`) are all logged.
+**Choosing `champion` (neutral selection).**
+
+* Every version (the new one, the current champion and `--compare-versions`) is
+  scored on the **same** pooled cycles at its own shipped levels.
+* Among those that qualify, the winner is the one with the best standardised
+  discrimination (point estimate); ties go to fewer false alarms, then the newer
+  version (`evaluation.neutral_winner`). Incumbency plays no part.
+* Every other qualifying version gets a paired-bootstrap difference against the
+  winner on the same cycles.
+* Each version is tagged `selection_outcome`: `winner`, `tied_with_winner` (the
+  paired CI includes 0), `worse_than_winner` or `not_qualified`, with a
+  `selection_detail` tag giving the numbers and problems.
+* If no version qualifies, `champion` moves to the best version by the gate metric,
+  tagged `status=unqualified`.
+* **Logging.** Each version's metrics, the decision, the cycle records and the null
+  counts (`null_counts.json`, `promotion_decision.json`) are logged.
+
+**Provenance.** Every run logs:
+
+* `code_sha` and `code_dirty`, from the submit script;
+* `source_hash`, over the uploaded Python files, and `source_hash_runtime`, over the
+  files the job ran. They must match;
+* `maintenance_pinned` and the trained booster's `hours_since_maintenance_split_gain`.
+
+### Pre-registered deciding run
+
+These seeds were named in this file and committed **before** the run. The run was
+submitted from that commit, and its `code_sha` param records the SHA:
+
+* **Training:** `--seed 131 --live-start-epoch 1840000000` (36 × 1 h runs).
+* **Fresh replay:** `--replay-seed 141 --replay-start-epoch 1844000000 --replay-hours 12`.
+* **Compared:** `--compare-versions 4,6,7,11,12`.
+* **Selection:** `--promote if_better` (neutral).
+
+No earlier run used these seeds or epochs. The numbers below come from that run.
 
 ### Measured early warning (fresh, simulated data, not live)
 
-**Final run: v12** (`docs/evidence/ml/training_run_v12.json`).
+**Previous run: v12** (`docs/evidence/ml/training_run_v12.json`). It used the incumbent rule, and the pre-registered run above supersedes it.
 
 * The training data is seed 101, epochs from 1,832,000,000.
 * The fresh replay is 12 h, seed 111, epoch 1,836,000,000.
 * Pooled, that is **231 cycles with 166 breaches**, none used by any earlier
   selection.
-* The rules were frozen before this run.
+* It predates the invariance check and neutral selection.
 
 Values are point estimates with their [95 % CI]:
 
@@ -295,8 +328,8 @@ Values are point estimates with their [95 % CI]:
 * **v11.** It has the highest point estimate. It was not the challenger in this run:
   it had been promoted over v7 by 0.003, and that was reverted by hand once the
   paired rule was adopted.
-* **The oracle ceiling.** Point estimates of 0.20–0.32 sit around the oracle's 0.30:
-  the models use most of what a precursor-only detector can get on this scenario.
+* **The oracle reference.** Point estimates of 0.20–0.32 sit around the oracle's 0.30.
+  It is a reference point, not a ceiling.
 
 Cycle-level view on the same pooled cycles. Breach groups show warned ≥ 30 s out of
 breaches; the other groups show cycles with a false alarm out of cycles:
@@ -394,13 +427,22 @@ open episode would break the episode semantics above.
   cycles) are only predictable once the ramp starts.
 * **False alarms are structural.** Fading precursors and warm bumps (about 15 % of
   cycles) are indistinguishable from real ones until the ramp.
-* **The gate is simulation-only.** Standardisation and the steady-running floor use
-  the scenario plan. On real telemetry the floor falls back to the plan-free
-  definition, and discrimination is not standardised.
+* **The gate is simulation-only.** Standardisation, the calm floor and the replay
+  use the scenario. On real telemetry the job forces `--promote never`, and
+  scenario-tagged telemetry is not accepted as real.
 * **Uncalibrated scores.** Probabilities are not calibrated.
 * **Maintenance age.** `hours_since_maintenance` carries no signal in live-format
-  data and is pinned in training. v7, trained before the pin, still depends on it a
-  little: live is about 1,950 h today and clips at 3000 h from 2027-01-04.
+  data, and it is pinned in training from v8 on (zero split gain in v8–v12).
+  * **v7, trained before the pin, depends on it materially:** 14 % of its split gain,
+    579 splits.
+  * On the seed-11 test cycles at the clipped 3000 h its false alarms rise 12 → 17
+    and weak-precursor warnings fall 15 / 17 → 7 / 17. It is tagged `known_defect`.
+  * **The gate measures every model at 3000 h**, on both the test rows and the
+    replay, plus the invariance re-scores at 1500 and 2500 h.
+  * **The live regime:** the scorer sends the catalog age, about 1,950 h on
+    2026-11-21 (maintenance `mfg-mnt-001` was on 2026-09-01). It rises 24 h a day
+    and clips at 3000 h from 2027-01-04. A version that passes invariance behaves
+    the same across that whole range.
 * **Scoring delay and buffer.** The app scores at most every
   `RISK_SCORE_INTERVAL_S` (5 s). The buffer is sized for 2 × 60 s at up to 30 Hz per
   sensor.
