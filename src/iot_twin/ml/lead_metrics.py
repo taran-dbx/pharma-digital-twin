@@ -434,10 +434,16 @@ def event_report(
             min_lead_s=min_lead_s,
             lookback_s=lookback_s,
         )
+    warned_30s = sum(1 for lead in warned if lead >= min_lead_s)
+    if significance and not permuted and permutations > 0:
+        # Fewer than two full cycles: nothing to permute, so the null equals the
+        # observed count. Without this a pooled null would drop the period while
+        # the observed total keeps it, biasing permutation_p low.
+        permuted = (warned_30s,) * permutations
     return EventReport(
         breaches=len(onsets),
         warned=len(warned),
-        warned_30s=sum(1 for lead in warned if lead >= min_lead_s),
+        warned_30s=warned_30s,
         median_lead_s=_quantile(warned, 0.5),
         lead_p25_s=_quantile(warned, 0.25),
         lead_p75_s=_quantile(warned, 0.75),

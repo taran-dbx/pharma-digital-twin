@@ -114,6 +114,9 @@ class TestTrainingSet:
         assert set(ts.breaches_by_run) == set(ts.series_by_run)
         assert set(ts.series_by_run["live-format-5-000"].points) == {"temp"}
         assert 0 < ts.positives < len(ts.rows)
+        assert {row.features["hours_since_maintenance"] for row in ts.rows} == {
+            lf.PINNED_MAINTENANCE_H
+        }
         onsets = sorted(o for eps in ts.breaches_by_run.values() for o, _ in eps)
         for row in ts.rows:
             ahead = any(0 < onset - row.at <= 120.0 for onset in onsets)

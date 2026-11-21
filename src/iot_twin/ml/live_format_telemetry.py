@@ -23,7 +23,7 @@ The scenario physics is SIMULATED (see the module docstring of
 from __future__ import annotations
 
 import random
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -156,10 +156,9 @@ def generate_live_format_runs(
     start_epoch: float = DEFAULT_START_EPOCH,
     rate_hz: float = LIVE_RATE_HZ,
 ) -> Iterator[LiveFormatRun]:
-    """Consecutive runs (one cycle apart); ``hours_since_maintenance`` is random per run.
-
-    The live producer has no wear model, so wear does not change the signals
-    here either: the feature is present (the scorer sends it) but uninformative.
+    """Consecutive runs (one cycle apart). ``last_maintenance_at`` is random per run
+    but unused for training (see ``build_live_format_training_set``): the live
+    producer has no wear model, so wear does not change the signals.
     """
     rng = random.Random(seed)
     for index in range(n_runs):
@@ -173,6 +172,26 @@ def generate_live_format_runs(
             readings=tuple(readings),
             last_maintenance_at=start - hours * 3600.0,
         )
+
+
+# hours_since_maintenance is pinned for live-format rows. The producer has no
+# wear model, so the feature carries no signal; with a random per-run value the
+# trees learned a spurious dependence that showed at the clipped serve-time value
+# (more false alarms, fewer warnings). A constant column is never split on. It is
+# pinned at the clip value, which the replay epochs and the live scorer (from
+# 2027-01-04, 3000 h after the catalog's mfg-mnt-001) send, so older versions
+# compared on these rows see the same input as on the replay.
+PINNED_MAINTENANCE_H = MAX_MAINTENANCE_AGE_H
+
+
+def pinned_maintenance(row: LabelledRow) -> LabelledRow:
+    """A copy of ``row`` with ``hours_since_maintenance`` pinned (see above)."""
+    return LabelledRow(
+        run_id=row.run_id,
+        at=row.at,
+        features={**row.features, "hours_since_maintenance": PINNED_MAINTENANCE_H},
+        label=row.label,
+    )
 
 
 def _temperature_only(series: SpindleSeries) -> SpindleSeries:
@@ -220,7 +239,7 @@ def build_live_format_training_set(
                 series,
                 breaches,
                 run_id=run.run_id,
-                last_maintenance_at=run.last_maintenance_at,
+                last_maintenance_at=None,
                 limit_c=limit_c,
                 horizon_s=horizon_s,
                 step_s=step_s,
@@ -228,6 +247,7 @@ def build_live_format_training_set(
             )
         )
         series_by_run[run.run_id] = _temperature_only(series)
+    rows = [pinned_maintenance(row) for row in rows]
     rows.sort(key=lambda row: row.at)
     return TrainingSet(
         rows=tuple(rows),
@@ -237,7 +257,59 @@ def build_live_format_training_set(
     )
 
 
+@dataclass(frozen=True)
+class ReplaySegment:
+    """One hour of fresh replay through the scorer's feature path (as live)."""
+
+    start: float
+    end: float
+    times: tuple[float, ...]
+    features: tuple[Mapping[str, float], ...]
+    breaches: tuple[tuple[float, float | None], ...]
+
+
+def replay_segments(
+    *,
+    hours: float,
+    seed: int,
+    start_epoch: float,
+    limit_c: float,
+    hysteresis_c: float,
+    rule_delay_s: float,
+    rate_hz: float = LIVE_RATE_HZ,
+) -> Iterator[ReplaySegment]:
+    """Fresh live-format hours, one segment per hour, scored like the app's scorer.
+
+    Uses the catalog maintenance age, as the live scorer does. Built hour by
+    hour to bound memory at 25 Hz.
+    """
+    from iot_twin.ml.lead_metrics import breach_episodes
+    from iot_twin.ml.replay import replay_rows
+    from iot_twin.ml.spindle_features import last_spindle_maintenance_epoch
+
+    maintenance = last_spindle_maintenance_epoch()
+    for index in range(int(round(hours))):
+        start = start_epoch + index * 3600.0
+        readings = live_format_readings(
+            start=start, duration_s=3600.0, rate_hz=rate_hz, seed=seed * 1000 + index
+        )
+        rows = replay_rows(readings, limit_c=limit_c, last_maintenance_at=maintenance)
+        temp = SpindleSeries.from_readings(readings).points["temp"]
+        breaches = breach_episodes(
+            *temp, limit_c=limit_c, hysteresis_c=hysteresis_c, duration_s=rule_delay_s
+        )
+        yield ReplaySegment(
+            start=rows[0].at,
+            end=rows[-1].at + 5.0,
+            times=tuple(row.at for row in rows),
+            features=tuple(row.features for row in rows),
+            breaches=tuple(breaches),
+        )
+
+
 __all__ = [
+    "ReplaySegment",
+    "replay_segments",
     "DATA_ORIGIN",
     "LIVE_RATE_HZ",
     "REPLAY_START_EPOCH",
