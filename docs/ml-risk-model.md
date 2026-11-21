@@ -5,9 +5,12 @@ Spindle 3 on CNC-1 (Ti-6Al-4V hip stems) has a validated thermal limit of 60 °C
 once the limit is **breached**. The thermal-risk model scores the spindle every few
 seconds and opens a **predicted** alert *before* the limit trips. That alert goes
 to the same alert table, lifecycle, SSE stream, Genie snapshot and cell UI.
-On the live producer's scheduled heat event, which has no early warning signal,
-the model warns **7 s before the excursion onset**. The minutes of lead in the
-metrics come from a synthetic precursor (see the model card).
+On a held-out **replay** of the producer's (SIMULATED) Spindle 3 scenario through
+the dev endpoint, model v6 warned **34 of 38 breaches at least 30 s ahead** (median
+lead 91 s) at 2.3 false alarms per hour. The chance baseline was 28 % and the
+threshold rule warns none. The scenario is simulated physics, and the updated
+producer was **not live yet** when this was measured, so this is not proof on a real
+machine (see [Measured early warning](#measured-early-warning-replay-not-live)).
 
 ```
 readings ─► evaluate_and_emit ─► threshold rules ─────────────► AlertEngine ─► alert / alert_event (Lakebase)
@@ -21,7 +24,11 @@ training job pharma-twin-risk-model-train ─► MLflow run ─► UC model vers
 | Piece | Where |
 | --- | --- |
 | Feature + label code (single source of truth) | `src/iot_twin/ml/spindle_features.py` |
-| Synthetic training data (SYNTHETIC, labelled) | `src/iot_twin/ml/synthetic_telemetry.py` |
+| SIMULATED Spindle 3 scenario (one generator: live producer + training) | `src/iot_twin/scenario_engine/spindle_scenario.py` (embedded via `client/src/lib/generated/spindle-scenario-python.ts`) |
+| Live-format training data (producer code path, virtual clock, ~25 Hz) | `src/iot_twin/ml/live_format_telemetry.py` |
+| Older 1 Hz synthetic data (v1–v4) | `src/iot_twin/ml/synthetic_telemetry.py` |
+| Per-breach lead / false-alarm / chance metrics | `src/iot_twin/ml/lead_metrics.py` |
+| Endpoint replay | `scripts/replay_risk_endpoint.py`, `src/iot_twin/ml/replay.py` |
 | Alert contract (rule id, metadata keys, names) | `src/iot_twin/ml/risk_contract.py` |
 | Training task | `ml/train_spindle_risk.py` (serverless `spark_python_task`) |
 | Served model (MLflow models-from-code) | `ml/spindle_risk_model.py` |
@@ -44,8 +51,8 @@ The names follow the `RESOURCE_PREFIX` convention (default `pharma-twin` /
 | `risk_model_short_name` | `spindle_thermal_risk` | UC model name, `RISK_MODEL_NAME` |
 | `risk_endpoint_name` | `pharma-twin-spindle-risk` | serving endpoint, `RISK_ENDPOINT_NAME` (via `value_from: risk-endpoint`) |
 | `risk_job_name` | `pharma-twin-risk-model-train` | training job |
-| `risk_model_version` | `4` (the current `@champion`) | version the endpoint serves after a `bundle deploy`. **Keep it equal to `@champion`**: each training run prints the `--var risk_model_version=N` to use |
-| `risk_training_data_source` | `auto` | `auto`, `synthetic` or `real` |
+| `risk_model_version` | `6` (the current `@champion`) | version the endpoint serves after a `bundle deploy`. **Keep it equal to `@champion`**: each training run prints the `--var risk_model_version=N` to use |
+| `risk_training_data_source` | `auto` | `auto` (real if enough, else `live_format`), `live_format`, `synthetic` or `real` |
 | `risk_alert_threshold` | `model` | `RISK_ALERT_THRESHOLD`: `model` uses the cut-off the served version ships; a number overrides it |
 
 The app scorer also reads these optional env vars: `RISK_ALERT_HYSTERESIS` (unset: the model's clear level, else 0.05),
@@ -77,106 +84,247 @@ call the endpoint.
 | `temp_margin_c` | Distance to the validated limit: `60 − temp_last` |
 | `hours_since_maintenance` | Hours since the last Spindle 3 maintenance in the catalog (`mfg-mnt-001`), clipped to the 0–3000 h training range at train *and* serve time |
 
-**Label.** Forward-looking: 1 when any temperature reading exceeds the validated
-limit in `(t, t + horizon]`. The default horizon is 120 s (`--horizon-s`). Rows
-where the spindle is *already* over the limit are dropped, because the threshold
-rule handles those and the model's job is to warn before the trip. Samples are
-taken every 5 s.
+**Label.** Forward-looking: 1 when a **breach** of the validated limit starts in
+`(t, t + horizon]`. The default horizon is 120 s (`--horizon-s`). Samples are taken
+every 5 s. For live-format data a breach is the threshold rule's episode
+(`lead_metrics.breach_episodes`): it opens when the temperature stays over the limit
+for `duration_s` (2 s), its onset is the first over-limit reading of that run, and it
+clears at limit − hysteresis (55 °C). At the live ~25 Hz rate, single noisy samples
+over the limit are common in the cool-down and never open an alert. Labelling every
+over-limit sample (the older rule, still used for `synthetic` and `real`) would have
+counted about 72 "onsets" an hour against about 8 real breaches. Rows inside a
+breach are dropped, because the threshold rule handles those.
 
-**Data.** `--data-source auto` uses real `manufacturing_realtime` telemetry when
-the last 14 days contain at least 2,000 labelled rows and 20 excursions. Otherwise
-it trains on **SYNTHETIC** runs, and the choice is logged as the `data_origin`
-param, run tag and model-version tag. Live telemetry has one scheduled heat event
-every 5 minutes and is too regular to train on, so the shipped model is
-synthetic. The synthetic runs come from:
+### The simulated Spindle 3 scenario (one generator for live and training)
 
-* the `iot_simulator` catalog (nominal, noise, range and cycles of the four spindle
-  sensors, with noise in sensor units as the producer emits it);
-* the producer's scheduled heat event (`SPINDLE_HEAT_SCENARIO`, mirrored and
-  checked by a test) on half of the 5-minute cycles, with a random peak so
-  some ramps stay under the limit;
-* `ScenarioEngine` degraded → failed → recovering phase effects and lot metadata on
-  a quarter of the runs (15-minute phases);
-* spindle wear (hotter and rougher with hours since maintenance) and, on 65 % of
-  heat events, a bearing-friction precursor: vibration and load rise 45–150 s
-  before the ramp. **This precursor is a modelling assumption, not measured
-  behaviour.**
+**This is simulated physics, not measured machine behaviour.** It is a plausible
+stand-in for what precedes spindle thermal runaway on a real mill. Bearing preload
+or wear friction shows up as rising vibration and spindle power (so torque) and a
+slow temperature creep, tens of seconds to minutes before the temperature takes off.
+Coolant flow is not modelled. There is a coolant sensor, but it is not a model input.
 
-Every synthetic reading is tagged `data_origin=synthetic`. Defaults are 24 runs
-× 2 h at 1 Hz, giving 30,897 labelled rows with 23 % positive.
+* **One generator.** `src/iot_twin/scenario_engine/spindle_scenario.py` is the only
+  implementation, and two consumers share it:
+  * the realtime producer notebook embeds its source verbatim
+    (`client/src/lib/generated/spindle-scenario-python.ts`, written by
+    `scripts/sync_spindle_scenario.py` and checked by a test);
+  * the training data and the replay import it.
+* **Per-cycle plan.** Every 300 s cycle draws a deterministic plan from a per-cycle
+  PRNG, so the dashboard can still show when the next excursion is due. The TS port
+  ships only the PRNG and the first draw, and a test checks that both agree.
 
-**Training.** LightGBM (`LGBMClassifier`, 400 trees max, early stopping on
-validation PR-AUC). The split is time-ordered, train → validation (20 % of
-train) → test (last 25 %), so every test row is later than every training row.
-An embargo of `window_s + horizon_s` (180 s) drops the training rows just before
-each boundary, because their feature window or label horizon overlaps the next
-period. The cut-off is chosen on validation as the highest-recall threshold with
-precision ≥ 0.9 (fallback: best F1), then evaluated once on test. The clear
-level is the cut-off minus `--clear-hysteresis` (0.05). The job checks the cut-off
-against calm running. *Calm* means label-0 windows that are steady: at least
-8 °C below the limit, with the temperature changing less than 5 °C/min. Near-miss
-ramps that stay under the limit are not calm, so they don't count. The job logs
-`val_calm_score_p50/p90/p99`, the p99 per wear band (0–1000, 1000–2000 and
-2000–3000 h), and `val_negative_score_p99`, the p99 over every label-0 window.
-It warns when any calm p99 is at or above the cut-off, or when the calm p90 is
-above the clear level. On v4 the calm p99 is 0.28 (at most 0.29 per band),
-against a 0.47 cut-off. Both thresholds are stored in the model version (a `decision`
-artifact), so the served pyfunc returns `decision_threshold` and
-`clear_threshold` with every score. A single-class split fails training on
-train/validation; on test it skips ROC-AUC / PR-AUC with a warning.
+| Cycle plan | Share | What happens |
+| --- | --- | --- |
+| Excursion, strong precursor | 70 % × 55 % | vibration +1.1–4.2 mm/s, power +5–21 %, temp creep 0.9–3.5 °C, ramp at 210 s to a 20–29 °C peak |
+| Excursion, weak precursor | 70 % × 25 % | the same shape at 15–35 % of the amplitude |
+| Excursion, no precursor | 70 % × 20 % | temperature ramp only |
+| False alarm, fade | 15 % × 60 % | a precursor as strong as a real one that fades over 20–60 s; no breach |
+| False alarm, warm bump | 15 % × 40 % | +3–6 °C bump and a mild precursor; stays under the limit |
+| Quiet | 15 % | nothing |
 
-**Metrics** (test split, synthetic, live run, model version 4; see
-`docs/evidence/ml/`):
+* **Lead.** Uniform in 30–180 s before the ramp. The breach onset follows the ramp
+  start by about 16–21 s.
+* **Shape.** The envelope is `u^γ` with γ in 0.5–2.0, times a slow wobble of two
+  random sinusoids (±50 %).
+* **Noise.** Per-sample noise comes from the caller's RNG, on top of the
+  simulator's own noise and drift.
+* **Choosing the amplitudes.** The first draft (vibration ×2.0, power ×0.12,
+  γ 0.6–2.5) was too faint and back-loaded for any lead. We raised them once,
+  before the final training runs, and did not tune them against test or replay
+  results.
+* **Live producer behaviour.** Only Spindle 3 temperature is tagged with
+  `phase`/`fault_active`, and only during the heat episode. The precursor carries no
+  tag, so the model cannot read the answer from metadata.
+
+**Data.** `--data-source` takes four values. The choice is logged as the
+`data_origin` param, run tag and model-version tag.
+
+* `auto` (the default) uses real `manufacturing_realtime` telemetry when the last
+  14 days contain at least 2,000 labelled rows and 20 excursions. Otherwise it falls
+  back to `live_format`.
+* `live_format` (`iot_twin.ml.live_format_telemetry`, `data_origin=live_format_simulated`)
+  runs the live producer's own code path offline on a virtual clock:
+  * the `iot_simulator` `SensorSimulator` objects for the four spindle sensors;
+  * calibrated like the producer's `_calibrate_simulator` (noise in sensor units,
+    random faults off);
+  * **at the live sample rate**: 500 records/s over 19 sensors, measured at 25.7 Hz
+    per spindle sensor on the live pipeline (the generator uses 25 Hz);
+  * the shared scenario.
+
+  Defaults are 36 runs × 1 h. `hours_since_maintenance` is random per run, but it
+  does not affect the signals, because the producer has no wear model.
+* `synthetic` (`iot_twin.ml.synthetic_telemetry`) is the older 1 Hz generator that
+  trained v1–v4.
+* `real` uses real telemetry only.
+
+There is no live-format data in Delta yet: the live pipeline had not run the
+updated scenario when v6 was trained.
+
+**Why v4 showed no live lead.** v4 was trained at 1 Hz on a precursor the live
+producer did not have, and the live producer only had a temperature ramp. The
+sample rate differs too: window maxima and slopes over about 1,500 points per
+minute differ from 60 points per minute.
+
+**Training.** The model is LightGBM (`LGBMClassifier`, 400 trees max, early stopping
+on validation PR-AUC).
+
+* **Split.** Time-ordered: train → validation (20 % of train) → test (last 25 %), so
+  every test row is later than every training row.
+* **Embargo.** `window_s + horizon_s` (180 s) of training rows are dropped before
+  each boundary.
+* **Cut-off and clear level** (`--threshold-rule event`, the default for
+  live-format data) are chosen **on validation only**. The rule replays every
+  (cut-off, clear band) pair through the predicted alert's open / clear hysteresis
+  and keeps the pair that warns the most breaches at least 30 s ahead with at most
+  `--false-alarm-budget` (3) false alarms per hour.
+  * Bands are 0.05, 0.10, 0.15 or 0.20.
+  * Pairs whose clear level is below the 90th percentile of steady-running scores
+    are skipped. *Steady running* is at least 240 s before the next breach onset
+    and 60 s after the last clear, so fading false alarms count as steady.
+  * Such a pair would leave the alert open through calm running, and a stuck-open
+    alert "warns" of whatever comes next by luck.
+* **Older sources.** `--threshold-rule precision` keeps the v4 rule: highest recall
+  at precision ≥ `--min-precision` (0.9).
+* **Shipping and test.** Both levels ship in the model version (the `decision`
+  artifact), and the test split is scored once.
+* **Calm-score check.** The job still logs `val_calm_score_*` and warns when they
+  are high. On live-format data its "calm" includes precursor and false-alarm
+  windows (label 0), so those warnings are expected; `val_calm_steady_clear_floor`
+  is the steady-running floor the event rule used.
+
+**Promotion (`--promote if_better`, default).** The job registers the new version
+with alias `challenger`. It then loads the current `@champion`, scores the *same*
+held-out test rows, and replays both models at their own shipped levels. `champion`
+moves (and the job repoints the endpoint, when one is given) only if the challenger
+meets all four conditions (`evaluation.challenger_beats_champion`):
+
+* it warns strictly more breaches at least 30 s ahead;
+* its skill over chance is strictly higher: the warned share minus the same alerts'
+  chance baseline, so an alert that is merely open more often cannot win;
+* its false alarms are within 1 per hour of the champion's;
+* its PR-AUC is not lower.
+
+The comparison is logged as `challenger_*` / `champion_*` metrics and the
+`comparison` tag. `--promote always|never` overrides it.
+
+**Event metrics** (`iot_twin.ml.lead_metrics`, scored every 5 s like the app):
+
+| Term | Definition |
+| --- | --- |
+| Breach lead | onset minus the open time of the predicted alert that is still open at the onset and opened at most 240 s before it. Otherwise the breach is missed |
+| False alarm | a predicted alert that opens outside every breach and precedes no breach onset within 240 s |
+| Chance baseline | the same alert episodes circularly shifted by 200 evenly spaced offsets. It keeps their rate and durations but breaks the alignment with the cycle. Reported as the mean and p95 of the "warned ≥ 30 s" share |
+| Alert duty | the share of time a predicted alert is open |
+| Threshold rule | opens 2 s after the onset: lead −2 s, never warns |
+
+**Metrics, v6 vs v4.** Test split (8.9 h of held-out live-format data, 79 breaches),
+from the training run that promoted v6. Both models are scored on the same rows at
+their own levels (`docs/evidence/ml/training_run_v6.json`):
 
 <!-- metrics:start -->
-| Metric | Value |
-| --- | --- |
-| ROC-AUC | 0.814 |
-| PR-AUC | 0.718 (positive rate 0.218) |
-| Cut-off / clear level (shipped in the model) | 0.47 / 0.42 (`max_recall_at_precision>=0.9`, band 0.05) |
-| Calm validation scores | p50 0.115, p90 0.169; live calm windows 0.11-0.27 depending on wear (see evidence) |
-| Precision / recall / F1 at the cut-off | 0.899 / 0.577 / 0.703 |
-| Excursions in the test period | 171 |
-| Predicted before the onset | 161 (94.2 %) |
-| Mean lead before onset | 75.9 s |
-| Lead time gained vs the threshold rule | mean 77.8 s, median 101 s |
-| Rows train / validation / test (after the 180 s embargo) | 18,479 / 4,628 / 7,725 |
-| Live producer heat event (no precursor) | 7 s before onset (first score over the cut-off 12 s into the ramp; onset at 19 s) |
+| Metric | v6 (champion) | v4 (previous) |
+| --- | --- | --- |
+| Cut-off / clear level | 0.40 / 0.35 (`max_warned_30s_at_false_alarms_per_h<=3`) | 0.47 / 0.42 |
+| Breaches warned ≥ 30 s ahead | **74.7 %** (59 / 79) | 58.2 % |
+| Median lead (warned breaches) | 82 s (p25 29 s, p75 124 s) | 46 s |
+| False alarms per hour | 2.47 | 2.02 |
+| Chance baseline (warned ≥ 30 s) | 30.7 % (p95 69.6 %) | 24.3 % |
+| Skill over chance | 0.44 | 0.34 |
+| Alert duty | 38 % | 31 % |
+| PR-AUC / ROC-AUC | 0.769 / 0.861 | 0.685 / – |
+| Threshold rule | −2 s, 0 % warned | −2 s, 0 % warned |
+| Rows train / validation / test (after the 180 s embargo) | 13,377 / 3,352 / 5,598 | – |
 <!-- metrics:end -->
 
-The app scores each pipeline at most every `RISK_SCORE_INTERVAL_S` (5 s), so on
-the live heat event a scoring round can land up to 5 s after the score crosses
-the cut-off. That can use up most of the 7 s. Lower the interval if the live lead
-matters.
+### Measured early warning (replay, not live)
 
-"Lead time" is measured per excursion. The onset is the first over-limit
-reading; the alert engine records it on the breach alert as
-`excursion_started_at`. The threshold rule opens `duration_s` = 2 s after the
-onset. The model "fires" at the first sample in `[onset − horizon, onset)` with
-score ≥ cut-off. *Lead before onset* is onset − fire; *gain vs the threshold
-rule* is (onset + 2 s) − fire. Missed events count as 0 s. In the UI, the risk
-badge shows the same quantity for the live episode: the breach alert's
-`excursion_started_at` minus the predicted alert's `opened_at`.
+The task asked for a live measurement over at least 60 minutes. The session that
+owns the app and pipeline redeploys had not deployed the updated producer: the
+producer job's notebook still had the old ramp-only heat event and no
+`apply_spindle_scenario`. So **no live measurement was possible**. Instead,
+`scripts/replay_risk_endpoint.py` replays **4 h** of held-out live-format data
+through the real endpoints:
+
+* the cycles start at epoch 1,798,000,000, after every training run;
+* the seed is 9001;
+* there are 48 cycles: 38 excursions (25 strong, 9 weak and 4 with no precursor),
+  7 false-alarm cycles and 3 quiet ones;
+* features come from the scorer's path (`build_features` on the last 120 s, every 5 s);
+* the dev endpoint serves v6, and `pharma-twin-spindle-risk` serves v4.
+
+The result is in `docs/evidence/ml/replay_v4_vs_v6.json`:
+
+| Over 4 h, 38 breaches | v6 (dev endpoint) | v4 | Threshold rule |
+| --- | --- | --- | --- |
+| Warned ≥ 30 s ahead | **34 / 38 (89.5 %)** | 30 / 38 (78.9 %) | 0 |
+| Median lead (p25–p75) | **91 s** (46–107 s) | 49 s (36–99 s) | −2 s |
+| False alarms per hour | 2.26 (9 in 4 h: 5 fades, 4 warm bumps) | 2.26 | 0 |
+| Chance baseline, mean (p95) | 28.3 % (73.7 %) | 23.7 % (65.9 %) | – |
+| Alert duty | 38 % | 34 % | – |
+| Warned ≥ 30 s by precursor: strong / weak / none | 25/25 · 9/9 · **0/4** | 25/25 · 5/9 · 0/4 | – |
+
+**Reading it honestly:**
+
+* **The lead comes from the precursor.** Breaches with no precursor get no warning
+  of 30 s or more (0 of 4). Every false alarm happened in a scenario false-alarm
+  cycle; none came from quiet running.
+* **The chance baseline is high.** 70 % of cycles have a breach and an alert is open
+  38 % of the time, so luck alone warns 28 % of breaches on average (up to 74 % at
+  p95 of the shifts). v6's 89.5 % is well above the mean but within the noise of a
+  single 4 h replay at the p95 tail. The 8.9 h test split (74.7 % vs 30.7 %) is the
+  larger sample.
+* **Test and replay differ.** The replay's plan mix had more strong precursors (25
+  of 38) than average (about 55 % of excursions), which is why it scores above the
+  test split.
+* **v4 does well too.** It does well on this scenario because it learned a
+  vibration precursor from its own synthetic data. v6's gain is mostly on weak
+  precursors and a longer lead.
+
+**Still to do: the live measurement.** Once the producer is redeployed with this
+change, measure over at least 60 minutes from the alert tables. For breaches, take
+`excursion_started_at`; for predicted alerts, take `opened_at` and `cleared_at`. Then
+compute the same `lead_metrics.event_report`.
 
 **Limitations.**
 
-* Trained on synthetic data; the precursor physics is assumed. Retrain on real
-  telemetry (`--data-source real`) before using the score for anything but the demo.
-* Probabilities are uncalibrated, and calm-running scores rise with wear: 0.11–0.16
-  below 1000 h, up to about 0.27 at 1950 h or more. A precision floor of 0.8 put
-  the cut-off at 0.26, inside that calm range, so a worn spindle could open
-  predicted alerts while running calm. The floor is 0.9 (cut-off 0.47); about 1 in 10
-  predicted windows still has no excursion within 2 min. `RISK_ALERT_THRESHOLD`
-  overrides the shipped cut-off.
-* Heat events without a precursor are only predictable once the ramp starts. On
-  the live producer's scheduled event, which has none, v4 first crosses the
-  cut-off 12 s into the ramp, **7 s before the onset** (about 9 s ahead of the
-  rule): seconds, not minutes (`docs/evidence/ml/endpoint_query_no_precursor_ramp.json`).
-* `hours_since_maintenance` comes from the catalog fixture. With no maintenance
-  feed it would grow without bound, so it is clipped at 3000 h; past that the
-  model cannot tell more wear apart.
-* Top features are TreeSHAP contributions in log-odds, which explain the model,
-  not the physics.
+* **Simulated precursor physics.** The lead exists because the simulated scenario
+  has a precursor most of the time. It shows that the pipeline (features, model,
+  thresholds, alerting) can turn a noisy precursor into a lead. It does **not** show
+  that real spindles behave like this. Retrain on real telemetry
+  (`--data-source real`) before using the score for anything but the demo.
+* **No precursor, no early warning.** Breaches with no precursor (about 14 % of
+  cycles) are only predictable once the ramp starts: seconds, not minutes.
+* **False alarms are structural.** Fading precursors are indistinguishable from
+  real ones until the ramp, so false alarms of about 2–2.5 per hour (about 1 in 5
+  predicted alerts) are built into the scenario. The 3 per hour budget is a demo
+  choice.
+* **Uncalibrated scores.** Probabilities are not calibrated. v6 scores about 0.2 in
+  steady running and above 0.4 in a precursor; `RISK_ALERT_THRESHOLD` overrides the
+  shipped cut-off.
+* **Clipped maintenance age.** `hours_since_maintenance` comes from the catalog
+  fixture and is clipped at 3000 h. With live-format data it carries no signal.
+* **Scoring delay.** The app scores at most every `RISK_SCORE_INTERVAL_S` (5 s), so
+  an alert can open up to 5 s after the score crosses the cut-off. The replay uses
+  the same cadence.
+* **Top features.** These are TreeSHAP contributions in log-odds. They explain the
+  model, not the physics.
+
+**History.**
+
+* **v1–v4:** trained on 1 Hz synthetic data. v4's only live lead was 7 s before onset
+  on the old ramp-only event (`endpoint_query_no_precursor_ramp.json`).
+* **v5:** the first live-format version, superseded the same day. The first gate
+  promoted it, but its event cut-off search had picked a clear level of 0.14. That
+  is below steady-running scores (median 0.21), so a predicted alert would almost
+  never clear: it inflated the measured leads and the chance baseline.
+  * `champion` was moved back to v4 by hand;
+  * the endpoint was never repointed;
+  * the search gained the steady-running clear floor and the gate gained the
+    skill-over-chance condition.
+
+  Its run is `docs/evidence/ml/training_run_v5.json`.
+* **v6:** the same features, data and booster settings as v5, with the corrected
+  cut-off / clear search.
 
 ## Serving and the app
 
@@ -210,14 +358,15 @@ badge shows the same quantity for the live episode: the breach alert's
 
 The training job repoints the endpoint to the new champion. A later
 `databricks bundle deploy` **reverts** it to `var.risk_model_version`, because the
-bundle owns the endpoint config. The default is `4`, the current champion. **After
+bundle owns the endpoint config. The default is `6`, the current champion. **After
 every training run, update it** (or always deploy with `--var risk_model_version=N`):
 the job log and its summary print the override to use. While the endpoint serves
 a version that is not `@champion`, the app does two things:
 
 * it logs `serves … but @champion is v…`;
 * it **ignores that version's embedded cut-off and clear level**, logging one
-  warning that names them, and falls back to the contract defaults (0.47 / 0.42).
+  warning that names them, and falls back to the contract defaults (0.47 / 0.42,
+  v4's levels; v6 ships 0.40 / 0.35).
   `RISK_ALERT_THRESHOLD` still overrides either way.
 
 ### Prerequisites and grants
@@ -245,7 +394,7 @@ training run before the first `bundle deploy` (which creates the endpoint and th
 
 ```bash
 python scripts/submit_risk_model_training.py --profile <cli-profile> \
-  --catalog <uc_catalog> --schema pharma_twin --data-source synthetic --wait
+  --catalog <uc_catalog> --schema pharma_twin --data-source live_format --wait
 databricks bundle deploy -t dev --profile <cli-profile>
 databricks bundle run risk_model_train -t dev --profile <cli-profile>   # later retrains
 ```
