@@ -30,7 +30,12 @@ from databricks.sdk import WorkspaceClient
 from iot_twin.core.workspace_config import get_pipelines_project
 from iot_twin.models.sensor_schema import pg_chronotable_ddl
 from iot_twin.services import cdf_reconciliation_service
-from iot_twin.services.lakets import insert_triggers, lakets_deploy_service, lakets_service
+from iot_twin.services.lakets import (
+    insert_triggers,
+    lakets_deploy_service,
+    lakets_service,
+    retention,
+)
 from iot_twin.services.resource_ledger import record_resource
 
 logger = logging.getLogger("pharma_twin.services.industry_setup")
@@ -217,6 +222,11 @@ async def setup_lakets_on_branch(
         triggers.get("status", "failed"),
         error=triggers.get("error"),
     )
+
+    # 4e. Stall-safe retention: hot-tier tiering + tiered retention and shadow pruning
+    #     (both gated on the sync's committed position).
+    kept = await retention.ensure_retention(conn, table=SENSOR_TABLE, schema="public")
+    _step("retention", kept.get("status", "failed"), error=kept.get("error"))
 
     # 5. Deploy the LakeTS operational jobs (partition manager / rollup /
     #    tiering / retention).

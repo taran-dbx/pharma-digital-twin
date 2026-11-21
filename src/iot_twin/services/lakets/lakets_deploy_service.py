@@ -572,6 +572,42 @@ for schema, table in tables:
     results[key] = {"tiered": tiered, "deferred": deferred, "errors": errors}
     print(f"Tiering on {key}: tiered={tiered} deferred={deferred} errors={len(errors)}")
 
+# Stall-safe CDF shadow pruning (lakets.prune_cdf_shadow, installed by the app). Each
+# call deletes at most one batch in its own transaction, only rows the sync has already
+# committed to Delta, and nothing while the shadow is not STREAMING.
+SHADOW_KEEP = "2 hours"
+SHADOW_PRUNE_BATCH = 50000
+SHADOW_PRUNE_MAX_BATCHES = 80  # <= 4 M rows per 30-min run (~2,200 rows/s)
+has_prune = run_with_backoff(
+    "SELECT to_regprocedure('lakets.prune_cdf_shadow(text,interval,integer)') IS NOT NULL",
+    fetch="one",
+)
+if has_prune:
+    shadows = run_with_backoff(
+        "SELECT shadow_table_name FROM lakets._chronotable_registry "
+        "WHERE sync_enabled AND shadow_table_name IS NOT NULL",
+        fetch="all",
+    )
+    for (shadow,) in shadows:
+        pruned, last, errors = 0, None, []
+        try:
+            for _ in range(SHADOW_PRUNE_MAX_BATCHES):
+                last = run_with_backoff(
+                    "SELECT lakets.prune_cdf_shadow(%s, %s::interval, %s)",
+                    (shadow, SHADOW_KEEP, SHADOW_PRUNE_BATCH),
+                    fetch="one",
+                )
+                deleted = int((last or {}).get("deleted", 0))
+                pruned += deleted
+                if deleted == 0:
+                    break
+        except (psycopg2.OperationalError, psycopg2.InterfaceError):
+            raise
+        except Exception as exc:
+            errors.append(f"{shadow}: {exc}")
+        results[f"prune:{shadow}"] = {"deleted": pruned, "last": last, "errors": errors}
+        print(f"Shadow prune {shadow}: deleted={pruned} last={last}")
+
 conn.close()
 
 print("\\n==== Summary ====")
