@@ -263,14 +263,18 @@ def period_event_report(
     rule_delay_s: float,
     step_s: float = DEFAULT_STEP_S,
     significance: bool = True,
+    seed: int = 0,
 ) -> EventReport:
     """Per-breach lead, false alarms, cycle counts and nulls over the test period, per run.
+
+    The permutation null of run ``i`` (sorted by run id) uses seed ``seed + i``.
 
     Scores are replayed through the predicted alert's open / clear hysteresis in
     time order, one lane per run, as the app's scorer would see them.
     """
     reports: list[EventReport] = []
-    for run_id, (start, end, pairs) in sorted(_run_spans(test_rows, scores, step_s).items()):
+    spans = sorted(_run_spans(test_rows, scores, step_s).items())
+    for index, (run_id, (start, end, pairs)) in enumerate(spans):
         breaches = run_breaches(
             training_set,
             run_id,
@@ -293,9 +297,34 @@ def period_event_report(
                 end=end,
                 rule_delay_s=rule_delay_s,
                 significance=significance,
+                seed=seed + index,
             )
         )
     return combine(reports)
+
+
+def period_alerts(
+    rows: Sequence[LabelledRow],
+    scores: Sequence[float],
+    *,
+    open_at: float,
+    clear_at: float,
+    step_s: float = DEFAULT_STEP_S,
+) -> dict[str, tuple[float, float, list[tuple[float, float | None]]]]:
+    """``{run_id: (start, end, predicted-alert episodes)}`` of scored rows."""
+    out = {}
+    for run_id, (start, end, pairs) in _run_spans(rows, scores, step_s).items():
+        out[run_id] = (
+            start,
+            end,
+            alert_episodes(
+                [at for at, _ in pairs],
+                [score for _, score in pairs],
+                open_at=open_at,
+                clear_at=clear_at,
+            ),
+        )
+    return out
 
 
 @dataclass(frozen=True)
@@ -370,6 +399,30 @@ DEFAULT_FALSE_ALARM_BUDGET_PER_H = 3.0
 CALM_LOOKAHEAD_S = 240.0
 CALM_SETTLE_S = 60.0
 CALM_CLEAR_QUANTILE = 0.9
+# The cut-off search keeps the clear level at least this far above the gate's
+# steady-running p90, so a champion does not flip on the next run's validation
+# sample. (p95 was tried first: its top tail is fading false-alarm precursors,
+# not calm running, and it pushed v9's cut-off to 0.91, where it never alerts.)
+SEARCH_CLEAR_MARGIN = 0.02
+
+
+def scenario_calm(at: float, *, window_s: float = WINDOW_S, step_s: float = DEFAULT_STEP_S) -> bool:
+    """True when the simulated scenario has no precursor or heat episode anywhere in
+    the feature window ``(at - window_s, at]``: ground-truth calm running."""
+    from iot_twin.scenario_engine.spindle_scenario import (
+        SPINDLE_CYCLE_S,
+        spindle_cycle_plan,
+        spindle_heat_phase,
+        spindle_precursor_level,
+    )
+
+    t = at - window_s
+    while t <= at + 1e-9:
+        plan = spindle_cycle_plan(int(t // SPINDLE_CYCLE_S))
+        if spindle_precursor_level(t) > 0.0 or spindle_heat_phase(t, plan)[1] > 0.0:
+            return False
+        t += step_s
+    return True
 
 
 def calm_mask(
@@ -379,14 +432,18 @@ def calm_mask(
     lookahead_s: float = CALM_LOOKAHEAD_S,
     settle_s: float = CALM_SETTLE_S,
 ) -> list[bool]:
-    """Rows of steady running: no breach onset within ``lookahead_s`` ahead, none open,
-    and at least ``settle_s`` after the last breach cleared.
+    """Rows of calm running, for the steady-running clear floor.
 
-    Uses only the temperature record (breach episodes), not the scenario plan, so
-    the same definition works on real telemetry. Precursor-like false alarms that
-    fade without a breach count as calm: the model should not keep an alert open
-    through them.
+    Every row must be at least ``settle_s`` after the last breach cleared. For
+    live-format (simulated) data the scenario is known, so a row is calm only
+    when its feature window holds no precursor and no heat episode
+    (``scenario_calm``). Without the scenario (real telemetry) it falls back to
+    the temperature record: no breach onset within ``lookahead_s`` ahead. That
+    fallback also counts fading precursor-like false alarms as calm, which made
+    the floor swing with how many of them a validation sample held (v4's p90
+    ranged 0.18-0.69 over four fresh samples).
     """
+    simulated = training_set.data_origin == "live_format_simulated"
     mask: list[bool] = []
     breaches: dict[str, tuple[tuple[float, float | None], ...]] = {}
     for row in rows:
@@ -395,9 +452,12 @@ def calm_mask(
             row.run_id, run_breaches(training_set, row.run_id)
         ):
             end = float("inf") if cleared is None else cleared
-            if onset - lookahead_s <= row.at <= end + settle_s:
+            lead = 0.0 if simulated else lookahead_s
+            if onset - lead <= row.at <= end + settle_s:
                 calm = False
                 break
+        if calm and simulated:
+            calm = scenario_calm(row.at)
         mask.append(calm)
     return mask
 

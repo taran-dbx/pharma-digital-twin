@@ -181,12 +181,11 @@ class TestBreachLabels:
 QUALIFIED = {
     "clear_threshold": 0.35,
     "steady_clear_floor": 0.30,
+    "false_alarms_per_hour": 2.0,
     "warned_30s_share": 0.6,
     "clock_warned_30s_share": 0.4,
     "permutation_p": 0.001,
-    "discrimination": 0.5,
-    "false_alarms_per_hour": 2.0,
-    "pr_auc": 0.6,
+    "discrimination_std_lo95": 0.05,
 }
 
 
@@ -195,9 +194,10 @@ class TestPromotionRule:
         assert qualifies(QUALIFIED) == (True, [])
         for key, bad, word in (
             ("clear_threshold", 0.2, "steady-running"),
+            ("false_alarms_per_hour", 3.5, "false alarms"),
             ("clock_warned_30s_share", 0.6, "clock"),
             ("permutation_p", 0.2, "permutation"),
-            ("discrimination", 0.1, "discrimination"),
+            ("discrimination_std_lo95", -0.01, "lower 95"),
         ):
             ok, problems = qualifies({**QUALIFIED, key: bad})
             assert ok is False and word in problems[0]
@@ -208,18 +208,30 @@ class TestPromotionRule:
         assert beats is False and "does not qualify" in reason
 
     def test_a_non_qualifying_champion_is_replaced(self) -> None:
-        champion = {**QUALIFIED, "discrimination": -0.2, "warned_30s_share": 0.9}
+        champion = {**QUALIFIED, "discrimination_std_lo95": -0.2}
         beats, reason = challenger_beats_champion(QUALIFIED, champion)
         assert beats is True and "champion does not qualify" in reason
 
-    def test_against_a_qualified_champion(self) -> None:
-        base = {**QUALIFIED, "warned_30s_share": 0.5}
-        assert challenger_beats_champion(QUALIFIED, base)[0] is True
-        noisy = {**QUALIFIED, "false_alarms_per_hour": 3.5}
-        assert challenger_beats_champion(noisy, base)[0] is False
-        assert challenger_beats_champion({**QUALIFIED, "warned_30s_share": 0.5}, base)[0] is False
-        beats, reason = challenger_beats_champion({**QUALIFIED, "pr_auc": 0.5}, base)
-        assert beats is False and "PR-AUC" in reason
+    def test_against_a_qualified_champion_only_a_significant_gain_wins(self) -> None:
+        base = {**QUALIFIED, "discrimination_std_lo95": 0.02}
+        assert challenger_beats_champion(QUALIFIED, base, paired=(0.05, 0.01, 0.09))[0] is True
+        beats, reason = challenger_beats_champion(QUALIFIED, base, paired=(0.003, -0.08, 0.09))
+        assert beats is False and "paired" in reason
+        assert challenger_beats_champion(QUALIFIED, base)[0] is False  # no pairing: keep
+        noisy = {**QUALIFIED, "false_alarms_per_hour": 3.0}
+        champion = {**base, "false_alarms_per_hour": 1.0}
+        assert challenger_beats_champion(noisy, champion, paired=(0.1, 0.05, 0.2))[0] is False
+
+    def test_best_by_gate_prefers_the_metric_then_the_newer_version(self) -> None:
+        from iot_twin.ml.evaluation import best_by_gate
+
+        table = {
+            "4": {"discrimination_std_lo95": 0.01},
+            "6": {"discrimination_std_lo95": 0.03},
+            "7": {"discrimination_std_lo95": 0.03},
+        }
+        assert best_by_gate(table) == "7"
+        assert best_by_gate({}) is None
 
 
 class TestNulls:
@@ -338,3 +350,124 @@ class TestCycleTable:
         assert sum(row["breaches"] for row in table.values()) == len(breaches)
         assert sum(row["warned_30s"] for row in table.values()) == len(breaches)
         assert table["quiet"]["false_alarm"] == table["fade"]["false_alarm"] == 0
+
+
+class TestGateStats:
+    def _records(self):
+        from iot_twin.ml.gate_stats import CycleOutcome
+
+        rows = []
+        rows += [CycleOutcome("strong", True, True, 0)] * 11 + [
+            CycleOutcome("strong", True, False, 0)
+        ]
+        rows += [CycleOutcome("weak", True, True, 0)] * 3 + [
+            CycleOutcome("weak", True, False, 0)
+        ] * 2
+        rows += [CycleOutcome("none", True, False, 0)] * 4
+        rows += [CycleOutcome("fade", False, False, 2)] * 6
+        rows += [CycleOutcome("bump", False, False, 0)] * 2
+        rows += [CycleOutcome("quiet", False, False, 0)] * 6
+        return rows
+
+    def test_standardisation_reweights_to_the_nominal_mix(self) -> None:
+        from iot_twin.ml.gate_stats import summarise
+
+        out = summarise(self._records())
+        assert out["warned_30s_share"] == pytest.approx(14 / 21)
+        assert out["false_alarm_cycle_share"] == pytest.approx(6 / 14)
+        assert out["warned_30s_share_std"] == pytest.approx(0.55 * 11 / 12 + 0.25 * 3 / 5)
+        assert out["false_alarm_cycle_share_std"] == pytest.approx(0.30)
+        assert out["false_alarms_per_hour"] == pytest.approx(12 / (35 * 300 / 3600))
+        assert out["discrimination_std"] == pytest.approx(
+            out["warned_30s_share_std"] - out["false_alarm_cycle_share_std"]
+        )
+
+    def test_bootstrap_brackets_the_estimate_and_is_seeded(self) -> None:
+        from iot_twin.ml.gate_stats import bootstrap
+
+        a = bootstrap(self._records(), draws=300, seed=1)
+        b = bootstrap(self._records(), draws=300, seed=1)
+        assert a == b
+        est, lo, hi = a["discrimination_std"]
+        assert lo <= est <= hi and hi - lo > 0.05
+
+    def test_cycle_outcomes_and_group_counts(self) -> None:
+        from iot_twin.ml.gate_stats import cycle_outcomes, group_counts
+
+        breaches = [(230.0, 280.0)]
+        alerts = [(150.0, 260.0), (700.0, 720.0), (750.0, 760.0)]
+        records = cycle_outcomes(
+            breaches,
+            alerts,
+            start=0.0,
+            end=900.0,
+            group_of=lambda i: "strong" if i == 0 else "quiet",
+        )
+        assert [(r.group, r.breach, r.warned_30s, r.false_alarms) for r in records] == [
+            ("strong", True, True, 0),
+            ("quiet", False, False, 0),
+            ("quiet", False, False, 2),
+        ]
+        assert group_counts(records)["quiet"]["false_alarms"] == 2
+
+    def test_oracle_constant_matches_the_mix(self) -> None:
+        from iot_twin.ml.gate_stats import NOMINAL_WEIGHTS, ORACLE_DISCRIMINATION
+
+        warned = NOMINAL_WEIGHTS["strong"] + NOMINAL_WEIGHTS["weak"]
+        alarms = NOMINAL_WEIGHTS["fade"] + NOMINAL_WEIGHTS["bump"]
+        assert warned - alarms == pytest.approx(ORACLE_DISCRIMINATION)
+
+
+class TestScenarioCalm:
+    def test_calm_excludes_precursors_and_heat_but_keeps_quiet_running(self) -> None:
+        from iot_twin.ml.training_set import scenario_calm
+        from iot_twin.scenario_engine.spindle_scenario import spindle_cycle_plan
+
+        first = 1_796_000_000 // 300
+        strong = next(
+            spindle_cycle_plan(i)
+            for i in range(first, first + 400)
+            if spindle_cycle_plan(i).precursor == "strong"
+        )
+        ramp = strong.index * 300 + strong.ramp_start_s
+        assert not scenario_calm(ramp - 5)  # inside the precursor
+        assert not scenario_calm(ramp + 40)  # inside the heat episode
+        quiet = next(
+            i
+            for i in range(first, first + 400)
+            if spindle_cycle_plan(i).kind == "quiet"
+            and spindle_cycle_plan(i + 1).precursor == "none"
+            and spindle_cycle_plan(i - 1).kind != "excursion"
+        )
+        assert scenario_calm(quiet * 300 + 150)
+
+
+class TestPairingAndShortPeriods:
+    def test_paired_difference_cancels_shared_noise(self) -> None:
+        from iot_twin.ml.gate_stats import CycleOutcome, paired_difference
+
+        champion = [CycleOutcome("strong", True, i % 3 == 0, 0) for i in range(30)]
+        champion += [CycleOutcome("quiet", False, False, int(i % 5 == 0)) for i in range(20)]
+        same = paired_difference(champion, champion, draws=200)
+        assert same == (0.0, 0.0, 0.0)
+        better = [
+            CycleOutcome(r.group, r.breach, r.breach or r.warned_30s, r.false_alarms)
+            for r in champion
+        ]
+        diff, lo, hi = paired_difference(better, champion, draws=200)
+        assert diff > 0 and lo > 0
+        with pytest.raises(ValueError):
+            paired_difference(better[:-1], champion)
+
+    def test_a_period_too_short_to_permute_keeps_its_count_in_the_null(self) -> None:
+        short = lm.event_report(
+            [(100.0, 150.0)],
+            [(40.0, 120.0)],
+            start=0.0,
+            end=400.0,
+            rule_delay_s=2.0,
+            permutations=50,
+        )
+        assert short.warned_30s == 1
+        assert short.permutation_counts == (1,) * 50
+        assert short.permutation_p == 1.0

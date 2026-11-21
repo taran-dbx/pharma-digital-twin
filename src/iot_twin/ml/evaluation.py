@@ -145,32 +145,35 @@ def choose_threshold(
 
 # A challenger may raise false alarms by at most this much per hour of running.
 FALSE_ALARM_TOLERANCE_PER_H = 1.0
-# Qualification: what any version must show on held-out rows to be champion.
+# Qualification: what any version must show on pooled held-out cycles (the
+# test split plus a fresh replay; see iot_twin.ml.gate_stats).
 SIGNIFICANCE_P = 0.05
-DISCRIMINATION_FLOOR = 0.30
+FALSE_ALARM_CEILING_PER_H = 3.0  # the design budget, counting every flap
+GATE_METRIC = "discrimination_std_lo95"
 
 
 def qualifies(metrics: Mapping[str, float]) -> tuple[bool, list[str]]:
-    """Absolute checks for one model on held-out rows: ``(passes, problems)``.
+    """Absolute checks for one model: ``(passes, problems)``. All are blocking.
 
-    ``metrics`` carries ``clear_threshold`` and ``steady_clear_floor`` (p90 of
-    its steady-running validation scores), ``warned_30s_share``,
-    ``clock_warned_30s_share`` (the best fixed in-cycle window chosen on
-    validation at this model's alert duty), ``permutation_p`` (cycle
-    permutation) and ``discrimination``.
-
-    * the clear level is at or above steady-running scores (else an alert
-      would stay open through calm running);
-    * it warns more breaches >= 30 s ahead than the clock baseline;
-    * its warnings are tied to *which* cycles breach: cycle-permutation p < 0.05;
-    * discrimination (warned >= 30 s minus breach-free cycles with a false
-      alarm) is at least ``DISCRIMINATION_FLOOR``.
+    * ``clear_threshold`` >= ``steady_clear_floor`` (steady-running p90 on
+      validation), else the alert would stay open through calm running;
+    * pooled ``false_alarms_per_hour`` <= ``FALSE_ALARM_CEILING_PER_H``;
+    * pooled ``warned_30s_share`` > ``clock_warned_30s_share`` (the best fixed
+      in-cycle window chosen on validation at this model's alert duty);
+    * pooled cycle-permutation ``permutation_p`` < ``SIGNIFICANCE_P``;
+    * ``discrimination_std_lo95`` > 0: the lower 95 % bootstrap bound of
+      discrimination standardised to the scenario's nominal plan mix.
     """
     problems: list[str] = []
     if metrics["clear_threshold"] < metrics["steady_clear_floor"]:
         problems.append(
             f"clear level {metrics['clear_threshold']:.3f} < steady-running p90 "
             f"{metrics['steady_clear_floor']:.3f}"
+        )
+    if metrics["false_alarms_per_hour"] > FALSE_ALARM_CEILING_PER_H:
+        problems.append(
+            f"false alarms {metrics['false_alarms_per_hour']:.2f}/h > "
+            f"{FALSE_ALARM_CEILING_PER_H:g}/h"
         )
     if metrics["warned_30s_share"] <= metrics["clock_warned_30s_share"]:
         problems.append(
@@ -179,8 +182,10 @@ def qualifies(metrics: Mapping[str, float]) -> tuple[bool, list[str]]:
         )
     if metrics["permutation_p"] >= SIGNIFICANCE_P:
         problems.append(f"cycle-permutation p {metrics['permutation_p']:.4f} >= {SIGNIFICANCE_P}")
-    if metrics["discrimination"] < DISCRIMINATION_FLOOR:
-        problems.append(f"discrimination {metrics['discrimination']:.3f} < {DISCRIMINATION_FLOOR}")
+    if metrics[GATE_METRIC] <= 0.0:
+        problems.append(
+            f"standardised discrimination lower 95 % bound {metrics[GATE_METRIC]:.3f} <= 0"
+        )
     return not problems, problems
 
 
@@ -188,14 +193,18 @@ def challenger_beats_champion(
     challenger: Mapping[str, float],
     champion: Mapping[str, float] | None,
     *,
+    paired: tuple[float, float, float] | None = None,
     false_alarm_tolerance_per_h: float = FALSE_ALARM_TOLERANCE_PER_H,
 ) -> tuple[bool, str]:
-    """Promotion rule on the same held-out rows: ``(beats, reason)``.
+    """Promotion rule on the same pooled held-out cycles: ``(beats, reason)``.
 
-    The challenger must pass ``qualifies``. Against a champion that also
-    qualifies it must warn strictly more breaches >= 30 s ahead, keep false
-    alarms within ``false_alarm_tolerance_per_h`` and not rank worse (PR-AUC).
-    A champion that fails ``qualifies`` is beaten by any qualifying challenger.
+    The challenger must pass ``qualifies``. A champion that fails it is beaten
+    by any qualifying challenger. Against a qualifying champion the improvement
+    must be real, not noise: ``paired`` is the paired-bootstrap difference
+    (challenger minus champion) of standardised discrimination on the same
+    cycles, ``(estimate, lo95, hi95)``, and its lower bound must be above 0;
+    false alarms must stay within ``false_alarm_tolerance_per_h``. Ties keep
+    the incumbent.
     """
     ok, problems = qualifies(challenger)
     if not ok:
@@ -205,16 +214,23 @@ def challenger_beats_champion(
     champion_ok, champion_problems = qualifies(champion)
     if not champion_ok:
         return True, "champion does not qualify: " + "; ".join(champion_problems)
-    warned = challenger["warned_30s_share"] > champion["warned_30s_share"]
+    if paired is None:
+        return False, "no paired comparison available; keeping the qualifying champion"
+    better = paired[1] > 0.0
     alarms = (
         challenger["false_alarms_per_hour"]
         <= champion["false_alarms_per_hour"] + false_alarm_tolerance_per_h
     )
-    ranking = challenger["pr_auc"] >= champion["pr_auc"]
     summary = (
-        f"warned>=30s {challenger['warned_30s_share']:.3f} vs {champion['warned_30s_share']:.3f}, "
-        f"false alarms/h {challenger['false_alarms_per_hour']:.2f} vs "
-        f"{champion['false_alarms_per_hour']:.2f}, "
-        f"PR-AUC {challenger['pr_auc']:.3f} vs {champion['pr_auc']:.3f}"
+        f"paired discrimination_std difference {paired[0]:+.3f} "
+        f"(95 % CI {paired[1]:+.3f} to {paired[2]:+.3f}), false alarms/h "
+        f"{challenger['false_alarms_per_hour']:.2f} vs {champion['false_alarms_per_hour']:.2f}"
     )
-    return warned and alarms and ranking, summary
+    return better and alarms, summary
+
+
+def best_by_gate(table: Mapping[str, Mapping[str, float]]) -> str | None:
+    """Version with the highest gate metric (ties: the newer version)."""
+    if not table:
+        return None
+    return max(table, key=lambda version: (table[version][GATE_METRIC], int(version)))
