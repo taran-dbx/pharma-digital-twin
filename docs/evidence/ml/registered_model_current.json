@@ -1,0 +1,94 @@
+{
+  "registered_model": {
+    "aliases": [
+      {
+        "alias_name": "challenger",
+        "id": "7fcffcc9-f933-4a22-8a59-8a13f3e44862",
+        "version_num": 12
+      },
+      {
+        "alias_name": "champion",
+        "id": "3e0b9d82-2904-4ffb-aab1-be3e5e131a50",
+        "version_num": 7
+      }
+    ],
+    "full_name": "<catalog>.pharma_twin.spindle_thermal_risk"
+  },
+  "versions": {
+    "10": {
+      "aliases": null,
+      "created_at": 1795258772762,
+      "run_id": "5f6eddac43864e93a0fd9a147c39f97f",
+      "status": "READY",
+      "version": 10
+    },
+    "11": {
+      "aliases": null,
+      "created_at": 1795259331291,
+      "run_id": "61a03b86164f42ee854fbeabcd1a7ff7",
+      "status": "READY",
+      "version": 11
+    },
+    "12": {
+      "aliases": [
+        {
+          "alias_name": "challenger",
+          "id": "7fcffcc9-f933-4a22-8a59-8a13f3e44862",
+          "version_num": 12
+        }
+      ],
+      "created_at": 1795260000408,
+      "run_id": "e9d1b0ed46fd4637b0384366f90de85f",
+      "status": "READY",
+      "version": 12
+    },
+    "4": {
+      "aliases": null,
+      "created_at": 1795192712195,
+      "run_id": "db985118d81e43ffacc8b5c833324c89",
+      "status": "READY",
+      "version": 4
+    },
+    "5": {
+      "aliases": null,
+      "created_at": 1795248507375,
+      "run_id": "017d8efa59ab474db08e9e0fffb84a35",
+      "status": "READY",
+      "version": 5
+    },
+    "6": {
+      "aliases": null,
+      "created_at": 1795249082536,
+      "run_id": "7fec7a0a5d9f47ebbdcec1acfe4add91",
+      "status": "READY",
+      "version": 6
+    },
+    "7": {
+      "aliases": [
+        {
+          "alias_name": "champion",
+          "id": "3e0b9d82-2904-4ffb-aab1-be3e5e131a50",
+          "version_num": 7
+        }
+      ],
+      "created_at": 1795253436394,
+      "run_id": "3e73ba16c23442e3bf12256ab27c9235",
+      "status": "READY",
+      "version": 7
+    },
+    "8": {
+      "aliases": null,
+      "created_at": 1795257657999,
+      "run_id": "194c9c3b2bc5408e9a4baa07291b06e0",
+      "status": "READY",
+      "version": 8
+    },
+    "9": {
+      "aliases": null,
+      "created_at": 1795258225993,
+      "run_id": "3bc830ccb4fd467b880c580e3530da68",
+      "status": "READY",
+      "version": 9
+    }
+  }
+}

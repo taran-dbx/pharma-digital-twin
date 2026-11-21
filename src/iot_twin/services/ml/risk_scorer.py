@@ -62,7 +62,12 @@ ENDPOINT_ENV = "RISK_ENDPOINT_NAME"
 MODEL_NAME_ENV = "RISK_MODEL_NAME"
 # RISK_ALERT_THRESHOLD=model (or unset) uses the served model's cut-off.
 MODEL_THRESHOLD = "model"
-_BUFFER_MAX = 10_000
+# The lane keeps 2 x WINDOW_S of readings for the spindle sensors. Sized for a
+# per-sensor rate up to SCORER_MAX_RATE_HZ (the live producer sends ~25.7 Hz);
+# above it the oldest readings drop first, and the 60 s feature window stays
+# full up to 2 x SCORER_MAX_RATE_HZ.
+SCORER_MAX_RATE_HZ = 30.0
+_BUFFER_MAX = int(2 * WINDOW_S * len(SPINDLE_SENSOR_NAMES) * SCORER_MAX_RATE_HZ)
 _MAX_LANES = 32
 _VERSION_TTL_S = 300.0
 # An identity that could not be read ("unknown") is retried soon, not in 5 min.

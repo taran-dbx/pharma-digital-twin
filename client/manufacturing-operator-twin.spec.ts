@@ -220,7 +220,7 @@ test.describe("[Windsor] Manufacturing operator twin", () => {
       await expect(page.getByTestId("station-status")).toHaveText("Normal");
       await expect(page.getByTestId("device-event-time")).toContainText("09:41:04.000");
       await expect(page.getByTestId("spindle-trend")).toBeVisible();
-      await expect(page.getByTestId("heat-event")).toContainText(/next in \d+:\d{2}|in progress/);
+      await expect(page.getByTestId("heat-event")).toContainText(/next scheduled in \d+:\d{2}|in progress/);
       await expect(page.getByText("Reference · MES not connected")).toBeVisible();
       await expect(page.getByText("Spindle bearing inspection · 2026-09-01")).toBeVisible();
 
