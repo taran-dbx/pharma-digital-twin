@@ -8,9 +8,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from iot_twin.ml.lead_metrics import (
+    CYCLE_S,
     EventReport,
     alert_episodes,
     breach_episodes,
+    clock_alerts,
     combine,
     event_report,
 )
@@ -22,6 +24,9 @@ from iot_twin.ml.spindle_features import (
     excursion_onsets,
     feature_rows,
     sample_times,
+    threshold_rule_delay_s,
+    threshold_rule_hysteresis_c,
+    validated_limit_c,
 )
 
 DEFAULT_STEP_S = 5.0
@@ -207,6 +212,45 @@ def onsets_in_period(
     return sorted(onsets)
 
 
+def run_breaches(
+    training_set: TrainingSet,
+    run_id: str,
+    *,
+    limit_c: float | None = None,
+    hysteresis_c: float | None = None,
+    rule_delay_s: float | None = None,
+) -> tuple[tuple[float, float | None], ...]:
+    """Threshold-rule episodes of one run: stored for live-format data, else from its series."""
+    stored = training_set.breaches_by_run.get(run_id)
+    if stored is not None:
+        return stored
+    series = training_set.series_by_run.get(run_id)
+    if series is None:
+        return ()
+    return tuple(
+        breach_episodes(
+            *series.points["temp"],
+            limit_c=validated_limit_c() if limit_c is None else limit_c,
+            hysteresis_c=threshold_rule_hysteresis_c() if hysteresis_c is None else hysteresis_c,
+            duration_s=threshold_rule_delay_s() if rule_delay_s is None else rule_delay_s,
+        )
+    )
+
+
+def _run_spans(
+    rows: Sequence[LabelledRow], scores: Sequence[float] | None, step_s: float
+) -> dict[str, tuple[float, float, list[tuple[float, float]]]]:
+    by_run: dict[str, list[tuple[float, float]]] = {}
+    values = scores if scores is not None else [0.0] * len(rows)
+    for row, score in zip(rows, values, strict=True):
+        by_run.setdefault(row.run_id, []).append((row.at, float(score)))
+    spans = {}
+    for run_id, pairs in by_run.items():
+        ordered = sorted(pairs)
+        spans[run_id] = (ordered[0][0], ordered[-1][0] + step_s, ordered)
+    return spans
+
+
 def period_event_report(
     training_set: TrainingSet,
     test_rows: Sequence[LabelledRow],
@@ -218,29 +262,22 @@ def period_event_report(
     hysteresis_c: float,
     rule_delay_s: float,
     step_s: float = DEFAULT_STEP_S,
+    significance: bool = True,
 ) -> EventReport:
-    """Per-breach lead, false alarms and chance baseline over the test period, per run.
+    """Per-breach lead, false alarms, cycle counts and nulls over the test period, per run.
 
     Scores are replayed through the predicted alert's open / clear hysteresis in
     time order, one lane per run, as the app's scorer would see them.
     """
-    by_run: dict[str, list[tuple[float, float]]] = {}
-    for row, score in zip(test_rows, scores, strict=True):
-        by_run.setdefault(row.run_id, []).append((row.at, float(score)))
     reports: list[EventReport] = []
-    for run_id in sorted(by_run):
-        pairs = sorted(by_run[run_id])
-        start, end = pairs[0][0], pairs[-1][0] + step_s
-        breaches = training_set.breaches_by_run.get(run_id)
-        if breaches is None:
-            breaches = tuple(
-                breach_episodes(
-                    *training_set.series_by_run[run_id].points["temp"],
-                    limit_c=limit_c,
-                    hysteresis_c=hysteresis_c,
-                    duration_s=rule_delay_s,
-                )
-            )
+    for run_id, (start, end, pairs) in sorted(_run_spans(test_rows, scores, step_s).items()):
+        breaches = run_breaches(
+            training_set,
+            run_id,
+            limit_c=limit_c,
+            hysteresis_c=hysteresis_c,
+            rule_delay_s=rule_delay_s,
+        )
         in_period = [episode for episode in breaches if start <= episode[0] < end]
         alerts = alert_episodes(
             [at for at, _ in pairs],
@@ -249,9 +286,83 @@ def period_event_report(
             clear_at=clear_at,
         )
         reports.append(
-            event_report(in_period, alerts, start=start, end=end, rule_delay_s=rule_delay_s)
+            event_report(
+                in_period,
+                alerts,
+                start=start,
+                end=end,
+                rule_delay_s=rule_delay_s,
+                significance=significance,
+            )
         )
     return combine(reports)
+
+
+@dataclass(frozen=True)
+class ClockWindow:
+    open_offset_s: float
+    duration_s: float
+
+
+def period_clock_report(
+    training_set: TrainingSet,
+    rows: Sequence[LabelledRow],
+    window: ClockWindow,
+    *,
+    rule_delay_s: float,
+    step_s: float = DEFAULT_STEP_S,
+    significance: bool = False,
+) -> EventReport:
+    """The sensor-blind clock baseline (one fixed in-cycle window) over the rows' period."""
+    reports: list[EventReport] = []
+    for run_id, (start, end, _) in sorted(_run_spans(rows, None, step_s).items()):
+        breaches = run_breaches(training_set, run_id, rule_delay_s=rule_delay_s)
+        in_period = [episode for episode in breaches if start <= episode[0] < end]
+        alerts = clock_alerts(
+            start, end, open_offset_s=window.open_offset_s, duration_s=window.duration_s
+        )
+        reports.append(
+            event_report(
+                in_period,
+                alerts,
+                start=start,
+                end=end,
+                rule_delay_s=rule_delay_s,
+                significance=significance,
+            )
+        )
+    return combine(reports)
+
+
+def choose_clock_window(
+    training_set: TrainingSet,
+    rows: Sequence[LabelledRow],
+    *,
+    max_duty: float,
+    rule_delay_s: float,
+    step_s: float = DEFAULT_STEP_S,
+    offset_step_s: float = 10.0,
+    duration_step_s: float = 10.0,
+) -> ClockWindow:
+    """Best fixed in-cycle window (most breaches warned >= 30 s ahead, then fewer false
+    alarms) whose duty is at most ``max_duty``. Run on validation rows only."""
+    longest = max(duration_step_s, min(CYCLE_S, max_duty * CYCLE_S))
+    best: tuple[tuple[float, float], ClockWindow] | None = None
+    offset = 0.0
+    while offset < CYCLE_S:
+        duration = duration_step_s
+        while duration <= longest + 1e-9:
+            window = ClockWindow(offset, duration)
+            report = period_clock_report(
+                training_set, rows, window, rule_delay_s=rule_delay_s, step_s=step_s
+            )
+            key = (report.warned_30s_share, -report.false_alarms_per_hour)
+            if best is None or key > best[0]:
+                best = (key, window)
+            duration += duration_step_s
+        offset += offset_step_s
+    assert best is not None
+    return best[1]
 
 
 DEFAULT_FALSE_ALARM_BUDGET_PER_H = 3.0
@@ -277,9 +388,12 @@ def calm_mask(
     through them.
     """
     mask: list[bool] = []
+    breaches: dict[str, tuple[tuple[float, float | None], ...]] = {}
     for row in rows:
         calm = True
-        for onset, cleared in training_set.breaches_by_run.get(row.run_id, ()):
+        for onset, cleared in breaches.setdefault(
+            row.run_id, run_breaches(training_set, row.run_id)
+        ):
             end = float("inf") if cleared is None else cleared
             if onset - lookahead_s <= row.at <= end + settle_s:
                 calm = False
@@ -314,11 +428,14 @@ def choose_event_threshold(
     step_s: float = DEFAULT_STEP_S,
     grid: Sequence[float] | None = None,
 ) -> EventThreshold:
-    """Cut-off and clear band that warn the most breaches >= 30 s ahead within a budget.
+    """Cut-off and clear band with the best discrimination within a false-alarm budget.
 
     Run on validation rows only. Each (cut-off, band) pair is replayed through
-    the predicted alert's open / clear hysteresis (clear = cut-off - band). Ties
-    go to fewer false alarms, then the higher cut-off, then the narrower band.
+    the predicted alert's open / clear hysteresis (clear = cut-off - band).
+    Discrimination is breaches warned >= 30 s ahead minus breach-free cycles
+    with a false alarm, so an alert that is simply open more often does not
+    win. Ties go to more breaches warned, fewer false alarms, then the higher
+    cut-off.
     When no pair meets ``false_alarm_budget_per_h``, the pair with the fewest
     false alarms per hour wins. Pairs whose clear level is below ``min_clear``
     (use a high quantile of calm-running scores, see ``calm_mask``) are skipped:
@@ -342,17 +459,18 @@ def choose_event_threshold(
                 hysteresis_c=hysteresis_c,
                 rule_delay_s=rule_delay_s,
                 step_s=step_s,
+                significance=False,
             )
             alarms = report.false_alarms_per_hour
             within = alarms <= false_alarm_budget_per_h
             rule = (
-                f"max_warned_30s_at_false_alarms_per_h<={false_alarm_budget_per_h:g}"
+                f"max_discrimination_at_false_alarms_per_h<={false_alarm_budget_per_h:g}"
                 if within
                 else "min_false_alarms_per_h"
             )
             choice = EventThreshold(threshold, band, rule, report.warned_30s_share, alarms)
             if within:
-                key = (report.warned_30s_share, -alarms, threshold, -band)
+                key = (report.discrimination, report.warned_30s_share, -alarms, threshold)
                 if best is None or key > best[0]:
                     best = (key, choice)
             fallback_key = (-alarms, threshold, -band)
@@ -363,3 +481,24 @@ def choose_event_threshold(
     if fallback is None:
         raise ValueError("no threshold candidates")
     return fallback[1]
+
+
+def steady_clear_floor(
+    training_set: TrainingSet,
+    rows: Sequence[LabelledRow],
+    scores: Sequence[float],
+    *,
+    quantile_q: float = CALM_CLEAR_QUANTILE,
+) -> float:
+    """``quantile_q`` of the scores in steady running (``calm_mask``); 0.0 if none."""
+    steady = sorted(
+        float(score)
+        for score, calm in zip(scores, calm_mask(training_set, rows), strict=True)
+        if calm
+    )
+    if not steady:
+        return 0.0
+    pos = (len(steady) - 1) * quantile_q
+    lo = int(pos)
+    hi = min(lo + 1, len(steady) - 1)
+    return steady[lo] + (steady[hi] - steady[lo]) * (pos - lo)

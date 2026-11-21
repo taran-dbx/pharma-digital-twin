@@ -15,20 +15,35 @@ These follow the app's alert semantics rather than per-row classification:
   alert means the breach was missed (no lead).
 * **False alarm**: a predicted alert that opens outside any breach and is not
   followed by a breach onset within ``lookback_s``.
-* **Chance baseline**: the same alert episodes circularly shifted in time by
+* **Shift baseline**: the same alert episodes circularly shifted in time by
   many offsets. It keeps the alerting rate and durations but breaks their
-  alignment with the episode cycle, so "warned >= 30 s ahead" by luck is visible.
+  alignment with time of day. It is *not* a valid null for a periodic schedule:
+  a sensor-blind clock that opens at a fixed point of every 300 s cycle keeps
+  its phase under most shifts, so beating it shows little.
+* **Cycle permutation** (the null used for significance): each alert keeps its
+  offset inside its 300 s cycle, but alerts are moved to randomly permuted
+  cycles. A clock is unchanged by it; an alert that tracks *which* cycles have a
+  precursor is not. ``permutation_p`` is ``(1 + #perms warning at least as many
+  breaches >= 30 s ahead) / (1 + perms)``.
+* **Clock baseline** (``clock_alerts``): one fixed in-cycle window per cycle, the
+  best window chosen on validation at the model's alert duty.
+* **Discrimination**: breaches warned >= 30 s ahead minus the share of
+  breach-free cycles with a false alarm. A clock alerts every cycle alike, so
+  its discrimination is about zero or negative.
 """
 
 from __future__ import annotations
 
 import bisect
+import random
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 DEFAULT_LOOKBACK_S = 240.0
 EARLY_WARNING_S = 30.0
 CHANCE_OFFSETS = 200
+CYCLE_S = 300.0
+PERMUTATIONS = 1000
 
 Episode = tuple[float, float | None]
 
@@ -193,6 +208,89 @@ def _chance_summary(counts: Sequence[int], breaches: int) -> tuple[float, float]
     return sum(shares) / len(shares), _quantile(shares, 0.95)
 
 
+def permuted_by_cycle(
+    alerts: Sequence[Episode], order: Sequence[int], cycles: Sequence[int], cycle_s: float
+) -> list[Episode]:
+    """Alerts moved from cycle ``cycles[i]`` to ``order[i]``, keeping their in-cycle offset."""
+    mapping = dict(zip(cycles, order, strict=True))
+    moved: list[Episode] = []
+    for opened, cleared in alerts:
+        index = int(opened // cycle_s)
+        target = mapping.get(index, index)
+        new_open = opened + (target - index) * cycle_s
+        moved.append((new_open, None if cleared is None else new_open + (cleared - opened)))
+    return sorted(moved, key=lambda episode: episode[0])
+
+
+def full_cycles(start: float, end: float, cycle_s: float = CYCLE_S) -> list[int]:
+    """Indices of the cycles that lie entirely inside ``[start, end)``."""
+    first = int(-(-start // cycle_s))
+    last = int(end // cycle_s) - 1
+    return list(range(first, last + 1))
+
+
+def cycle_permutation_counts(
+    onsets: Sequence[float],
+    alerts: Sequence[Episode],
+    *,
+    start: float,
+    end: float,
+    cycle_s: float = CYCLE_S,
+    permutations: int = PERMUTATIONS,
+    seed: int = 0,
+    min_lead_s: float = EARLY_WARNING_S,
+    lookback_s: float = DEFAULT_LOOKBACK_S,
+) -> tuple[int, ...]:
+    """Breaches warned >= ``min_lead_s`` under each of ``permutations`` random cycle permutations."""
+    cycles = full_cycles(start, end, cycle_s)
+    if len(cycles) < 2 or permutations <= 0:
+        return ()
+    rng = random.Random(seed)
+    counts = []
+    for _ in range(permutations):
+        order = list(cycles)
+        rng.shuffle(order)
+        moved = permuted_by_cycle(alerts, order, cycles, cycle_s)
+        leads = breach_leads(onsets, moved, lookback_s=lookback_s)
+        counts.append(sum(1 for lead in leads if lead is not None and lead >= min_lead_s))
+    return tuple(counts)
+
+
+def clock_alerts(
+    start: float, end: float, *, open_offset_s: float, duration_s: float, cycle_s: float = CYCLE_S
+) -> list[Episode]:
+    """A sensor-blind clock: one alert per cycle, open ``[offset, offset + duration)``."""
+    episodes: list[Episode] = []
+    index = int(start // cycle_s) - 1
+    while index * cycle_s < end:
+        opened = index * cycle_s + open_offset_s
+        cleared = opened + duration_s
+        if cleared > start and opened < end:
+            episodes.append((max(start, opened), min(end, cleared)))
+        index += 1
+    return episodes
+
+
+def cycle_counts(
+    breaches: Sequence[Episode],
+    alerts: Sequence[Episode],
+    *,
+    start: float,
+    end: float,
+    cycle_s: float = CYCLE_S,
+    lookback_s: float = DEFAULT_LOOKBACK_S,
+) -> tuple[int, int, int]:
+    """``(breach cycles, breach-free cycles, breach-free cycles with a false alarm)``."""
+    cycles = set(full_cycles(start, end, cycle_s))
+    with_breach = {int(onset // cycle_s) for onset, _ in breaches} & cycles
+    alarm_cycles = {
+        int(opened // cycle_s)
+        for opened, _ in false_alarms(alerts, breaches, lookback_s=lookback_s)
+    }
+    free = cycles - with_breach
+    return len(with_breach), len(free), len(free & alarm_cycles)
+
+
 @dataclass(frozen=True)
 class EventReport:
     breaches: int
@@ -208,6 +306,10 @@ class EventReport:
     leads: tuple[float | None, ...]
     chance_counts: tuple[int, ...]
     alert_open_s: float = 0.0
+    permutation_counts: tuple[int, ...] = ()
+    breach_cycles: int = 0
+    breach_free_cycles: int = 0
+    false_alarm_cycles: int = 0
 
     @property
     def chance_warned_30s_mean(self) -> float:
@@ -218,12 +320,37 @@ class EventReport:
         return _chance_summary(self.chance_counts, self.breaches)[1]
 
     @property
+    def permutation_warned_30s_mean(self) -> float:
+        return _chance_summary(self.permutation_counts, self.breaches)[0]
+
+    @property
+    def permutation_warned_30s_p95(self) -> float:
+        return _chance_summary(self.permutation_counts, self.breaches)[1]
+
+    @property
+    def permutation_p(self) -> float:
+        """One-sided p-value of ``warned_30s`` under the cycle-permutation null (1.0 if not run)."""
+        if not self.permutation_counts:
+            return 1.0
+        at_least = sum(1 for count in self.permutation_counts if count >= self.warned_30s)
+        return (1 + at_least) / (1 + len(self.permutation_counts))
+
+    @property
     def warned_30s_share(self) -> float:
         return self.warned_30s / self.breaches if self.breaches else 0.0
 
     @property
     def false_alarms_per_hour(self) -> float:
         return self.false_alarms / self.hours if self.hours else 0.0
+
+    @property
+    def false_alarm_cycle_share(self) -> float:
+        return self.false_alarm_cycles / self.breach_free_cycles if self.breach_free_cycles else 0.0
+
+    @property
+    def discrimination(self) -> float:
+        """Breaches warned >= 30 s ahead minus breach-free cycles with a false alarm."""
+        return self.warned_30s_share - self.false_alarm_cycle_share
 
     @property
     def alert_open_fraction(self) -> float:
@@ -242,8 +369,15 @@ class EventReport:
             f"{prefix}false_alarms": float(self.false_alarms),
             f"{prefix}false_alarms_per_hour": self.false_alarms_per_hour,
             f"{prefix}hours": self.hours,
-            f"{prefix}chance_warned_30s_mean": self.chance_warned_30s_mean,
-            f"{prefix}chance_warned_30s_p95": self.chance_warned_30s_p95,
+            f"{prefix}shift_warned_30s_mean": self.chance_warned_30s_mean,
+            f"{prefix}shift_warned_30s_p95": self.chance_warned_30s_p95,
+            f"{prefix}permutation_warned_30s_mean": self.permutation_warned_30s_mean,
+            f"{prefix}permutation_warned_30s_p95": self.permutation_warned_30s_p95,
+            f"{prefix}permutation_p": self.permutation_p,
+            f"{prefix}breach_cycles": float(self.breach_cycles),
+            f"{prefix}breach_free_cycles": float(self.breach_free_cycles),
+            f"{prefix}false_alarm_cycle_share": self.false_alarm_cycle_share,
+            f"{prefix}discrimination": self.discrimination,
             f"{prefix}rule_lead_s": self.rule_lead_s,
             f"{prefix}alert_open_fraction": self.alert_open_fraction,
         }
@@ -259,17 +393,47 @@ def event_report(
     lookback_s: float = DEFAULT_LOOKBACK_S,
     min_lead_s: float = EARLY_WARNING_S,
     offsets: int = CHANCE_OFFSETS,
+    permutations: int = PERMUTATIONS,
+    seed: int = 0,
+    cycle_s: float = CYCLE_S,
+    significance: bool = True,
 ) -> EventReport:
-    """Per-breach lead distribution, false alarms and the chance baseline over ``[start, end)``.
+    """Per-breach leads, false alarms, cycle counts and the nulls over ``[start, end)``.
 
-    Every report uses the same number of chance ``offsets`` so runs can be pooled.
-
-    The threshold rule opens ``rule_delay_s`` after each onset, so its lead is
+    Every report uses the same ``offsets`` / ``permutations`` so runs can be
+    pooled; ``significance=False`` skips both nulls (threshold search). The
+    threshold rule opens ``rule_delay_s`` after each onset, so its lead is
     ``-rule_delay_s`` for every breach.
     """
     onsets = [onset for onset, _ in breaches]
     leads = breach_leads(onsets, alerts, lookback_s=lookback_s)
     warned = [lead for lead in leads if lead is not None]
+    with_breach, free, alarm_cycles = cycle_counts(
+        breaches, alerts, start=start, end=end, cycle_s=cycle_s, lookback_s=lookback_s
+    )
+    chance: tuple[int, ...] = ()
+    permuted: tuple[int, ...] = ()
+    if significance:
+        chance = chance_warned_counts(
+            onsets,
+            alerts,
+            start=start,
+            span=end - start,
+            min_lead_s=min_lead_s,
+            lookback_s=lookback_s,
+            offsets=offsets,
+        )
+        permuted = cycle_permutation_counts(
+            onsets,
+            alerts,
+            start=start,
+            end=end,
+            cycle_s=cycle_s,
+            permutations=permutations,
+            seed=seed,
+            min_lead_s=min_lead_s,
+            lookback_s=lookback_s,
+        )
     return EventReport(
         breaches=len(onsets),
         warned=len(warned),
@@ -282,25 +446,26 @@ def event_report(
         hours=max(0.0, end - start) / 3600.0,
         rule_lead_s=-float(rule_delay_s),
         leads=tuple(leads),
-        chance_counts=chance_warned_counts(
-            onsets,
-            alerts,
-            start=start,
-            span=end - start,
-            min_lead_s=min_lead_s,
-            lookback_s=lookback_s,
-            offsets=offsets,
-        ),
+        chance_counts=chance,
         alert_open_s=open_fraction(alerts, start=start, end=end) * max(0.0, end - start),
+        permutation_counts=permuted,
+        breach_cycles=with_breach,
+        breach_free_cycles=free,
+        false_alarm_cycles=alarm_cycles,
     )
 
 
+def _pooled(columns: Sequence[tuple[int, ...]]) -> tuple[int, ...]:
+    present = [column for column in columns if column]
+    if not present or len({len(column) for column in present}) != 1:
+        return ()
+    return tuple(sum(values) for values in zip(*present, strict=True))
+
+
 def combine(reports: Sequence[EventReport]) -> EventReport:
-    """Pool per-run reports; chance counts are summed offset by offset."""
+    """Pool per-run reports; null counts are summed draw by draw (one joint draw per index)."""
     leads = tuple(lead for report in reports for lead in report.leads)
     warned = [lead for lead in leads if lead is not None]
-    counts = [report.chance_counts for report in reports if report.chance_counts]
-    pooled = tuple(sum(column) for column in zip(*counts, strict=True)) if counts else ()
     return EventReport(
         breaches=sum(report.breaches for report in reports),
         warned=len(warned),
@@ -313,6 +478,10 @@ def combine(reports: Sequence[EventReport]) -> EventReport:
         hours=sum(report.hours for report in reports),
         rule_lead_s=reports[0].rule_lead_s if reports else 0.0,
         leads=leads,
-        chance_counts=pooled,
+        chance_counts=_pooled([report.chance_counts for report in reports]),
         alert_open_s=sum(report.alert_open_s for report in reports),
+        permutation_counts=_pooled([report.permutation_counts for report in reports]),
+        breach_cycles=sum(report.breach_cycles for report in reports),
+        breach_free_cycles=sum(report.breach_free_cycles for report in reports),
+        false_alarm_cycles=sum(report.false_alarm_cycles for report in reports),
     )

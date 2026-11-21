@@ -145,11 +145,43 @@ def choose_threshold(
 
 # A challenger may raise false alarms by at most this much per hour of running.
 FALSE_ALARM_TOLERANCE_PER_H = 1.0
+# Qualification: what any version must show on held-out rows to be champion.
+SIGNIFICANCE_P = 0.05
+DISCRIMINATION_FLOOR = 0.30
 
 
-def warning_skill(metrics: Mapping[str, float]) -> float:
-    """Breaches warned >= 30 s ahead beyond what the same alerts would warn by luck."""
-    return metrics["warned_30s_share"] - metrics["chance_warned_30s_mean"]
+def qualifies(metrics: Mapping[str, float]) -> tuple[bool, list[str]]:
+    """Absolute checks for one model on held-out rows: ``(passes, problems)``.
+
+    ``metrics`` carries ``clear_threshold`` and ``steady_clear_floor`` (p90 of
+    its steady-running validation scores), ``warned_30s_share``,
+    ``clock_warned_30s_share`` (the best fixed in-cycle window chosen on
+    validation at this model's alert duty), ``permutation_p`` (cycle
+    permutation) and ``discrimination``.
+
+    * the clear level is at or above steady-running scores (else an alert
+      would stay open through calm running);
+    * it warns more breaches >= 30 s ahead than the clock baseline;
+    * its warnings are tied to *which* cycles breach: cycle-permutation p < 0.05;
+    * discrimination (warned >= 30 s minus breach-free cycles with a false
+      alarm) is at least ``DISCRIMINATION_FLOOR``.
+    """
+    problems: list[str] = []
+    if metrics["clear_threshold"] < metrics["steady_clear_floor"]:
+        problems.append(
+            f"clear level {metrics['clear_threshold']:.3f} < steady-running p90 "
+            f"{metrics['steady_clear_floor']:.3f}"
+        )
+    if metrics["warned_30s_share"] <= metrics["clock_warned_30s_share"]:
+        problems.append(
+            f"warned>=30s {metrics['warned_30s_share']:.3f} <= clock baseline "
+            f"{metrics['clock_warned_30s_share']:.3f}"
+        )
+    if metrics["permutation_p"] >= SIGNIFICANCE_P:
+        problems.append(f"cycle-permutation p {metrics['permutation_p']:.4f} >= {SIGNIFICANCE_P}")
+    if metrics["discrimination"] < DISCRIMINATION_FLOOR:
+        problems.append(f"discrimination {metrics['discrimination']:.3f} < {DISCRIMINATION_FLOOR}")
+    return not problems, problems
 
 
 def challenger_beats_champion(
@@ -160,17 +192,20 @@ def challenger_beats_champion(
 ) -> tuple[bool, str]:
     """Promotion rule on the same held-out rows: ``(beats, reason)``.
 
-    Both maps carry ``warned_30s_share``, ``chance_warned_30s_mean``,
-    ``false_alarms_per_hour`` and ``pr_auc``, each model at its own shipped
-    cut-off and clear level. The challenger must warn strictly more breaches
-    >= 30 s ahead *and* more beyond its chance baseline (so an alert that is
-    simply open more often cannot win), keep false alarms within
-    ``false_alarm_tolerance_per_h`` of the champion, and not rank worse.
+    The challenger must pass ``qualifies``. Against a champion that also
+    qualifies it must warn strictly more breaches >= 30 s ahead, keep false
+    alarms within ``false_alarm_tolerance_per_h`` and not rank worse (PR-AUC).
+    A champion that fails ``qualifies`` is beaten by any qualifying challenger.
     """
+    ok, problems = qualifies(challenger)
+    if not ok:
+        return False, "challenger does not qualify: " + "; ".join(problems)
     if champion is None:
-        return True, "no champion to compare against"
+        return True, "challenger qualifies; no champion to compare against"
+    champion_ok, champion_problems = qualifies(champion)
+    if not champion_ok:
+        return True, "champion does not qualify: " + "; ".join(champion_problems)
     warned = challenger["warned_30s_share"] > champion["warned_30s_share"]
-    skill = warning_skill(challenger) > warning_skill(champion)
     alarms = (
         challenger["false_alarms_per_hour"]
         <= champion["false_alarms_per_hour"] + false_alarm_tolerance_per_h
@@ -178,9 +213,8 @@ def challenger_beats_champion(
     ranking = challenger["pr_auc"] >= champion["pr_auc"]
     summary = (
         f"warned>=30s {challenger['warned_30s_share']:.3f} vs {champion['warned_30s_share']:.3f}, "
-        f"skill over chance {warning_skill(challenger):.3f} vs {warning_skill(champion):.3f}, "
         f"false alarms/h {challenger['false_alarms_per_hour']:.2f} vs "
         f"{champion['false_alarms_per_hour']:.2f}, "
         f"PR-AUC {challenger['pr_auc']:.3f} vs {champion['pr_auc']:.3f}"
     )
-    return warned and skill and alarms and ranking, summary
+    return warned and alarms and ranking, summary

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from iot_twin.ml import lead_metrics as lm
-from iot_twin.ml.evaluation import challenger_beats_champion
+from iot_twin.ml.evaluation import challenger_beats_champion, qualifies
 from iot_twin.ml.spindle_features import SpindleSeries
 from iot_twin.ml.training_set import (
     LabelledRow,
@@ -99,7 +99,8 @@ class TestEventReport:
         assert metrics["test_event_breaches_warned_30s"] == 0.0
         assert set(metrics) >= {
             "test_event_false_alarms_per_hour",
-            "test_event_chance_warned_30s_mean",
+            "test_event_shift_warned_30s_mean",
+            "test_event_permutation_p",
         }
 
     def test_combine_pools_leads_and_chance_offset_by_offset(self) -> None:
@@ -151,7 +152,7 @@ class TestPeriodReportAndThreshold:
         )
         assert chosen.threshold == 0.5
         assert chosen.warned_30s_share == 1.0
-        assert chosen.rule.startswith("max_warned_30s")
+        assert chosen.rule.startswith("max_discrimination")
 
     def test_event_threshold_falls_back_to_fewest_false_alarms(self) -> None:
         ts, rows, _ = _training_set(4, 90.0)
@@ -177,42 +178,106 @@ class TestBreachLabels:
         assert labels == [0, 1, 1, None, 0]
 
 
+QUALIFIED = {
+    "clear_threshold": 0.35,
+    "steady_clear_floor": 0.30,
+    "warned_30s_share": 0.6,
+    "clock_warned_30s_share": 0.4,
+    "permutation_p": 0.001,
+    "discrimination": 0.5,
+    "false_alarms_per_hour": 2.0,
+    "pr_auc": 0.6,
+}
+
+
 class TestPromotionRule:
-    base = {
-        "warned_30s_share": 0.3,
-        "chance_warned_30s_mean": 0.1,
-        "false_alarms_per_hour": 2.0,
-        "pr_auc": 0.5,
-    }
+    def test_qualification_checks_each_condition(self) -> None:
+        assert qualifies(QUALIFIED) == (True, [])
+        for key, bad, word in (
+            ("clear_threshold", 0.2, "steady-running"),
+            ("clock_warned_30s_share", 0.6, "clock"),
+            ("permutation_p", 0.2, "permutation"),
+            ("discrimination", 0.1, "discrimination"),
+        ):
+            ok, problems = qualifies({**QUALIFIED, key: bad})
+            assert ok is False and word in problems[0]
 
-    def test_no_champion_promotes(self) -> None:
-        assert challenger_beats_champion(self.base, None)[0] is True
+    def test_no_champion_promotes_a_qualifying_challenger_only(self) -> None:
+        assert challenger_beats_champion(QUALIFIED, None)[0] is True
+        beats, reason = challenger_beats_champion({**QUALIFIED, "permutation_p": 0.5}, None)
+        assert beats is False and "does not qualify" in reason
 
-    def test_must_warn_more_without_extra_false_alarms_or_worse_ranking(self) -> None:
-        better = {
-            "warned_30s_share": 0.6,
-            "chance_warned_30s_mean": 0.2,
-            "false_alarms_per_hour": 2.5,
-            "pr_auc": 0.6,
-        }
-        assert challenger_beats_champion(better, self.base)[0] is True
-        noisy = {**better, "false_alarms_per_hour": 3.5}
-        assert challenger_beats_champion(noisy, self.base)[0] is False
-        same = {**better, "warned_30s_share": 0.3}
-        assert challenger_beats_champion(same, self.base)[0] is False
-        worse_rank = {**better, "pr_auc": 0.4}
-        beats, reason = challenger_beats_champion(worse_rank, self.base)
+    def test_a_non_qualifying_champion_is_replaced(self) -> None:
+        champion = {**QUALIFIED, "discrimination": -0.2, "warned_30s_share": 0.9}
+        beats, reason = challenger_beats_champion(QUALIFIED, champion)
+        assert beats is True and "champion does not qualify" in reason
+
+    def test_against_a_qualified_champion(self) -> None:
+        base = {**QUALIFIED, "warned_30s_share": 0.5}
+        assert challenger_beats_champion(QUALIFIED, base)[0] is True
+        noisy = {**QUALIFIED, "false_alarms_per_hour": 3.5}
+        assert challenger_beats_champion(noisy, base)[0] is False
+        assert challenger_beats_champion({**QUALIFIED, "warned_30s_share": 0.5}, base)[0] is False
+        beats, reason = challenger_beats_champion({**QUALIFIED, "pr_auc": 0.5}, base)
         assert beats is False and "PR-AUC" in reason
 
-    def test_an_alert_that_is_simply_open_more_cannot_win(self) -> None:
-        lucky = {
-            "warned_30s_share": 0.6,
-            "chance_warned_30s_mean": 0.45,  # skill 0.15 < champion's 0.2
-            "false_alarms_per_hour": 2.0,
-            "pr_auc": 0.6,
-        }
-        beats, reason = challenger_beats_champion(lucky, self.base)
-        assert beats is False and "skill over chance" in reason
+
+class TestNulls:
+    def _periodic(self, cycles: int):
+        breaches = [(c * 300.0 + 230.0, c * 300.0 + 280.0) for c in range(cycles)]
+        return breaches
+
+    def test_a_clock_survives_cycle_permutation_but_a_cycle_tracker_does_not(self) -> None:
+        cycles = 24
+        # Breaches only in even cycles, at a fixed phase (the old periodic schedule).
+        breaches = [(c * 300.0 + 230.0, c * 300.0 + 280.0) for c in range(0, cycles, 2)]
+        clock = lm.clock_alerts(0.0, cycles * 300.0, open_offset_s=140.0, duration_s=130.0)
+        tracker = [(onset - 90.0, onset + 30.0) for onset, _ in breaches]
+        start, end = 0.0, cycles * 300.0
+        for alerts, significant in ((clock, False), (tracker, True)):
+            report = lm.event_report(
+                breaches, alerts, start=start, end=end, rule_delay_s=2.0, permutations=300
+            )
+            assert report.warned_30s == len(breaches)
+            assert (report.permutation_p < 0.05) is significant
+        clock_report = lm.event_report(breaches, clock, start=start, end=end, rule_delay_s=2.0)
+        tracker_report = lm.event_report(breaches, tracker, start=start, end=end, rule_delay_s=2.0)
+        assert clock_report.false_alarm_cycle_share == 1.0
+        assert clock_report.discrimination == pytest.approx(0.0)
+        assert tracker_report.false_alarm_cycle_share == 0.0
+        assert tracker_report.discrimination == pytest.approx(1.0)
+        assert tracker_report.breach_cycles == 12 and tracker_report.breach_free_cycles == 12
+
+    def test_permutation_keeps_in_cycle_offsets(self) -> None:
+        moved = lm.permuted_by_cycle([(310.0, 320.0), (650.0, None)], [2, 0, 1], [0, 1, 2], 300.0)
+        assert moved == [(10.0, 20.0), (350.0, None)]  # cycle 1 -> 0, cycle 2 -> 1
+
+    def test_full_cycles_and_clock_alerts(self) -> None:
+        assert lm.full_cycles(10.0, 910.0) == [1, 2]
+        assert lm.clock_alerts(0.0, 600.0, open_offset_s=280.0, duration_s=40.0) == [
+            (0.0, 20.0),
+            (280.0, 320.0),
+            (580.0, 600.0),
+        ]
+
+    def test_combine_pools_permutations_draw_by_draw(self) -> None:
+        a = lm.event_report(
+            self._periodic(4), [(130.0, 260.0)], start=0.0, end=1200.0, rule_delay_s=2.0
+        )
+        pooled = lm.combine([a, a])
+        assert len(pooled.permutation_counts) == lm.PERMUTATIONS
+        assert pooled.permutation_counts[0] == 2 * a.permutation_counts[0]
+
+
+class TestClockChoice:
+    def test_clock_window_is_chosen_within_the_duty_cap(self) -> None:
+        from iot_twin.ml.training_set import choose_clock_window, period_clock_report
+
+        ts, rows, _ = _training_set(12, 90.0)
+        window = choose_clock_window(ts, rows, max_duty=0.4, rule_delay_s=2.0)
+        assert window.duration_s <= 0.4 * 300 + 1e-9
+        report = period_clock_report(ts, rows, window, rule_delay_s=2.0)
+        assert report.warned_30s_share == 1.0  # the fixed-phase schedule is clock-predictable
 
 
 class TestCalmAndDuty:
@@ -251,3 +316,25 @@ class TestCalmAndDuty:
             min_clear=0.3,
         )
         assert chosen.clear_band == 0.05
+
+
+class TestCycleTable:
+    def test_groups_cycles_by_scenario_plan(self) -> None:
+        from iot_twin.ml.replay import CYCLE_GROUPS, cycle_table
+        from iot_twin.scenario_engine.spindle_scenario import spindle_cycle_plan
+
+        first = 1_796_000_000 // 300
+        start, end = first * 300.0, (first + 40) * 300.0
+        breaches = []
+        for i in range(first, first + 40):
+            plan = spindle_cycle_plan(i)
+            if plan.kind == "excursion":
+                onset = i * 300 + plan.ramp_start_s + 18
+                breaches.append((onset, onset + 50))
+        alerts = [(onset - 60.0, onset + 20.0) for onset, _ in breaches]
+        table = cycle_table(breaches, alerts, start=start, end=end)
+        assert set(table) == set(CYCLE_GROUPS)
+        assert sum(row["cycles"] for row in table.values()) == 40
+        assert sum(row["breaches"] for row in table.values()) == len(breaches)
+        assert sum(row["warned_30s"] for row in table.values()) == len(breaches)
+        assert table["quiet"]["false_alarm"] == table["fade"]["false_alarm"] == 0

@@ -170,3 +170,12 @@ class TestProducerParity:
                 assert {k: v for k, v in live["metadata"].items() if k in shared["metadata"]} == (
                     shared["metadata"]
                 )
+
+
+def test_scorer_buffer_holds_two_windows_at_the_live_rate() -> None:
+    from iot_twin.services.ml import risk_scorer
+
+    live_hz = 25.7  # measured per spindle sensor on the live pipeline
+    needed = 2 * 60.0 * len(SPINDLE_SENSOR_NAMES) * live_hz
+    assert needed <= risk_scorer._BUFFER_MAX
+    assert int(2 * 60 * 4 * risk_scorer.SCORER_MAX_RATE_HZ) == risk_scorer._BUFFER_MAX

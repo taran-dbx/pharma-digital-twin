@@ -6,11 +6,15 @@ Generates Spindle 3 readings with the live producer's own code path
 shared scenario) on cycles no training run used, builds the scorer's feature
 rows every 5 s, queries each endpoint with ``dataframe_records`` and reports
 per-breach lead times, false alarms per hour, the chance baseline and the
-threshold rule. Output is redacted JSON (no host, user or catalog).
+threshold rule. It also scores sensor-blind clock baselines (one fixed in-cycle
+window per cycle; pass the windows the training job chose on validation with
+``--clock offset:duration``, one per endpoint), the cycle-permutation p-value,
+discrimination and a per-plan cycle table. Output is redacted JSON (no host,
+user or catalog).
 
     python scripts/replay_risk_endpoint.py --profile <cli-profile> \\
         --endpoint dev_<user>_pharma-twin-spindle-risk --endpoint pharma-twin-spindle-risk \\
-        --hours 4 --output docs/evidence/ml/replay_v4_vs_v5.json
+        --clock 30:60 --clock 0:120 --hours 4 --output docs/evidence/ml/replay_fresh.json
 """
 
 from __future__ import annotations
@@ -39,6 +43,12 @@ def _args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=9001)
     parser.add_argument("--start-epoch", type=float, default=0.0, help="default: replay epoch")
     parser.add_argument("--output", default="")
+    parser.add_argument(
+        "--clock",
+        action="append",
+        default=[],
+        help="offset:duration of a clock baseline chosen on validation (repeatable)",
+    )
     return parser.parse_args(argv)
 
 
@@ -91,14 +101,25 @@ def _false_alarm_plans(report_alerts: list[Any], breaches: list[Any]) -> dict[st
 def main(argv: list[str]) -> int:
     from databricks.sdk import WorkspaceClient
 
-    from iot_twin.ml.lead_metrics import EARLY_WARNING_S, alert_episodes, breach_episodes
+    from iot_twin.ml.lead_metrics import (
+        EARLY_WARNING_S,
+        alert_episodes,
+        breach_episodes,
+        clock_alerts,
+        event_report,
+    )
     from iot_twin.ml.live_format_telemetry import (
         DATA_ORIGIN,
         LIVE_RATE_HZ,
         REPLAY_START_EPOCH,
         live_format_readings,
     )
-    from iot_twin.ml.replay import replay_report, replay_rows, warned_share_by_precursor
+    from iot_twin.ml.replay import (
+        cycle_table,
+        replay_report,
+        replay_rows,
+        warned_share_by_precursor,
+    )
     from iot_twin.ml.spindle_features import (
         SpindleSeries,
         last_spindle_maintenance_epoch,
@@ -176,7 +197,32 @@ def main(argv: list[str]) -> int:
                 "metrics": {k: round(v, 4) for k, v in report.as_metrics().items()},
                 "warned_by_precursor": warned_share_by_precursor(details, EARLY_WARNING_S),
                 "false_alarms_by_cycle_plan": _false_alarm_plans(alerts, breaches),
+                "cycle_table": cycle_table(
+                    [b for b in breaches if times[0] <= b[0] < times[-1] + 5.0],
+                    alerts,
+                    start=times[0],
+                    end=times[-1] + 5.0,
+                ),
+                "null_counts": {
+                    "permutation": list(report.permutation_counts),
+                    "shift": list(report.chance_counts),
+                },
                 "breaches": details,
+            }
+        )
+    span_start, span_end = times[0], times[-1] + 5.0
+    in_period = [b for b in breaches if span_start <= b[0] < span_end]
+    result["clock_baselines"] = []
+    for spec in args.clock:
+        offset, duration = (float(part) for part in spec.split(":"))
+        alerts = clock_alerts(span_start, span_end, open_offset_s=offset, duration_s=duration)
+        report = event_report(in_period, alerts, start=span_start, end=span_end, rule_delay_s=delay)
+        result["clock_baselines"].append(
+            {
+                "open_offset_s": offset,
+                "duration_s": duration,
+                "metrics": {k: round(v, 4) for k, v in report.as_metrics().items()},
+                "cycle_table": cycle_table(in_period, alerts, start=span_start, end=span_end),
             }
         )
     text = json.dumps(result, indent=2, sort_keys=True)

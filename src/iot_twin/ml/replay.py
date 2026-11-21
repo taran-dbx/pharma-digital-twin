@@ -112,3 +112,47 @@ def warned_share_by_precursor(details: Sequence[Mapping[str, Any]], min_lead_s: 
         }
         for name, items in sorted(groups.items())
     }
+
+
+CYCLE_GROUPS = ("strong", "weak", "none", "fade", "bump", "quiet")
+
+
+def cycle_table(
+    breaches: Sequence[tuple[float, float | None]],
+    alerts: Sequence[tuple[float, float | None]],
+    *,
+    start: float,
+    end: float,
+    min_lead_s: float = 30.0,
+) -> dict[str, dict[str, int]]:
+    """Per scenario plan group: cycles, breaches, breaches warned >= ``min_lead_s``,
+    cycles where a predicted alert opened, and cycles with a false alarm.
+
+    Groups: excursion cycles by precursor (strong / weak / none), false-alarm
+    cycles (fade / bump) and quiet cycles. Uses the scenario plan, so it only
+    works on simulated data.
+    """
+    from iot_twin.ml.lead_metrics import breach_leads, false_alarms, full_cycles
+
+    table = {
+        group: {"cycles": 0, "breaches": 0, "warned_30s": 0, "alerted": 0, "false_alarm": 0}
+        for group in CYCLE_GROUPS
+    }
+    cycles = full_cycles(start, end, SPINDLE_CYCLE_S)
+    onsets = [onset for onset, _ in breaches]
+    leads = dict(zip(onsets, breach_leads(onsets, alerts), strict=True))
+    opened_in = {int(opened // SPINDLE_CYCLE_S) for opened, _ in alerts}
+    alarm_in = {int(opened // SPINDLE_CYCLE_S) for opened, _ in false_alarms(alerts, breaches)}
+    for index in cycles:
+        plan = spindle_cycle_plan(index)
+        group = "quiet" if plan.kind == "quiet" else plan.precursor
+        row = table[group]
+        row["cycles"] += 1
+        row["alerted"] += int(index in opened_in)
+        row["false_alarm"] += int(index in alarm_in)
+        for onset in onsets:
+            if int(onset // SPINDLE_CYCLE_S) == index:
+                row["breaches"] += 1
+                lead = leads[onset]
+                row["warned_30s"] += int(lead is not None and lead >= min_lead_s)
+    return table
