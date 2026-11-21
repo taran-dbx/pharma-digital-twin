@@ -69,10 +69,18 @@ parity test checks each SQL row against the function.
 duration. This is the number the three pipeline flavors compete on.
 
 **Time to acknowledge (TTA).** The first of (the `acknowledged` event, the first signed
-decision) minus `opened_at`. Signing a decision implies the alert was seen.
+decision) minus `opened_at`. Signing a decision implies the alert was seen. The statistics cover
+**only acknowledged excursions**; an excursion never acknowledged (cleared or still open) has no
+TTA and is left out, never counted as 0 s. The response reports the coverage next to the
+statistics: `acknowledged_count` of `episodes_total`, `unacknowledged_count`, and
+`oldest_open_unacknowledged_age_s` (window end − `opened_at` of the oldest excursion that is still
+open and unacknowledged, `null` when there is none). With nothing acknowledged, `p50` / `p90` /
+`mean` / `max` are `null` and the view shows "None of *n* excursions acknowledged".
 
 **Time to disposition.** The first **containment** decision (`quarantine_lot` or
 `request_cmm_inspection`, or the legacy `hold_batch` / `send_to_inspect`) minus `opened_at`.
+Like TTA, it covers only contained excursions and reports `dispositioned_count` of
+`episodes_total`, `undispositioned_count` and `oldest_open_undispositioned_age_s`.
 
 **Release deadline.** `max(end of the onset part's lot cycle, opened_at + grace)`. The lot
 cycle end is when the lot leaves the mill for CMM and clean / pack. The grace
@@ -107,7 +115,15 @@ because no CMM results exist yet. The A×P×Q figure is the **process health ind
 approximation)**, not FPY.
 
 **MTTR.** Mean `cleared_at − opened_at` over cleared excursions: the time to bring Spindle 3
-back inside its validated limit.
+back inside its validated limit. Excursions still open are left out, not counted as 0 s; the
+response reports `cleared_count` and `open_count` of `episodes_total`.
+
+**Coverage rule for every duration.** TTD, TTA, time to disposition and MTTR are computed over
+the excursions whose end event exists. Missing timestamps are excluded (`NULL`), never
+zero-filled, in both the SQL totals (`percentile_cont`, `AVG`, `MAX` with
+`FILTER (WHERE … IS NOT NULL)`) and the Python episode path (`ops_metrics.duration_stats`), and a
+parity test keeps the two equal. `count` is the number of excursions a statistic covers. TTD
+always covers every excursion, because every excursion has an onset.
 
 ## Savings model
 

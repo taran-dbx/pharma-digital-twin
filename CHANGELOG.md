@@ -101,6 +101,20 @@ All notable changes to this project are documented here. The format follows
   removed; added `docs/api.md`, `docs/README.md`, an inline architecture diagram and sections for
   alerts, the Genie copilot, the intelligence catalog and production control.
 
+### Fixed
+- `GET /api/ops/summary`: time to acknowledge, time to disposition and MTTR counted
+  excursions that were never acknowledged, never contained or still open as 0 s
+  (Postgres `GREATEST(NULL, 0)` is 0), which dragged p50 / p90 / mean toward zero. The
+  statistics now cover only excursions whose end event exists, in the SQL totals and
+  the Python episode path alike. Each one reports its coverage
+  (`acknowledged_count` / `unacknowledged_count`, `dispositioned_count` /
+  `undispositioned_count`, `cleared_count` / `open_count`, all of `episodes_total`) and
+  the age of the oldest open excursion still waiting
+  (`oldest_open_unacknowledged_age_s`, `oldest_open_undispositioned_age_s`). The
+  operations view shows the coverage next to TTA, time to disposition and MTTR, and an
+  empty state instead of "0 s" when nothing was acknowledged or contained. See
+  `docs/value-model.md`.
+
 ### Removed
 - Legacy static pages and `/legacy` routes, unused modules, the duplicate simulator wheel,
   `.databricksignore` (replaced by bundle `sync` rules) and committed agent/IDE files.
