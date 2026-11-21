@@ -30,7 +30,7 @@ from databricks.sdk import WorkspaceClient
 from iot_twin.core.workspace_config import get_pipelines_project
 from iot_twin.models.sensor_schema import pg_chronotable_ddl
 from iot_twin.services import cdf_reconciliation_service
-from iot_twin.services.lakets import lakets_deploy_service, lakets_service
+from iot_twin.services.lakets import insert_triggers, lakets_deploy_service, lakets_service
 from iot_twin.services.resource_ledger import record_resource
 
 logger = logging.getLogger("pharma_twin.services.industry_setup")
@@ -205,6 +205,17 @@ async def setup_lakets_on_branch(
         sync_result.get("status", "failed"),
         shadow=f"{CDF_SHADOW_SCHEMA}.{shadow}",
         error=sync_result.get("error"),
+    )
+
+    # 4d. Replace LakeTS's per-row LVC / shadow INSERT triggers with set-based
+    #     statement triggers (~7.5x less Postgres time per inserted row).
+    triggers = await insert_triggers.ensure_statement_insert_triggers(
+        conn, table=SENSOR_TABLE, schema="public"
+    )
+    _step(
+        "statement_insert_triggers",
+        triggers.get("status", "failed"),
+        error=triggers.get("error"),
     )
 
     # 5. Deploy the LakeTS operational jobs (partition manager / rollup /

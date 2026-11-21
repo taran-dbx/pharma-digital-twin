@@ -28,3 +28,5 @@ LIB_DIR = REPO_ROOT / "lib"
 
 ASSETS_DIR = PACKAGE_ROOT / "assets"
 LAKETS_SQL_PATH = ASSETS_DIR / "lakets.sql"
+# App-owned LakeTS extension: statement-level INSERT triggers (see the file header).
+LAKETS_INSERT_TRIGGERS_SQL_PATH = ASSETS_DIR / "lakets_insert_triggers.sql"

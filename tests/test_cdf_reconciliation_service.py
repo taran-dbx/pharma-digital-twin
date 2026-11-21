@@ -98,6 +98,16 @@ async def test_reconcile_updates_metadata_and_deduplicates_ledger_c7237(monkeypa
         AsyncMock(return_value={"status": "migrated"}),
     )
 
+    async def swap_triggers(conn, **kwargs):
+        # Runs on the migration (write) connection, before it is closed.
+        assert conn is migration_conn
+        assert migration_conn.close.await_count == 0
+        assert kwargs == {"table": "sensor_readings", "schema": "public"}
+        return {"status": "ok"}
+
+    swap = AsyncMock(side_effect=swap_triggers)
+    monkeypatch.setattr(cdf.insert_triggers, "ensure_statement_insert_triggers", swap)
+
     def ensure_config(*_args, **_kwargs):
         assert migration_conn.close.await_count == 1
         return {
@@ -131,6 +141,8 @@ async def test_reconcile_updates_metadata_and_deduplicates_ledger_c7237(monkeypa
     binding = await cdf.reconcile_realtime_cdf(db, "s1")
 
     assert binding["status"] == "streaming"
+    assert binding["insert_triggers"] == "ok"
+    swap.assert_awaited_once()
     assert binding["shadow_table"] == ("lakets_cdf._shadow_manufacturing_sensor_readings")
     assert binding["delta_table"].endswith(".lb__shadow_manufacturing_sensor_readings_history")
     record.assert_not_awaited()
