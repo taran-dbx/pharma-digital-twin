@@ -141,8 +141,8 @@ producer. No earlier latency figure is reused.
   - Shadow: `lakets.prune_cdf_shadow()` deletes only rows whose inserting transaction finished before a WAL
     mark the sync has committed. It fails closed when the shadow is not STREAMING; covered by local-Postgres
     tests for a stall and an in-flight writer.
-  - Applied by CDF reconciliation; the shadow is pruned by the Tiering job. Live effect needs the ops jobs
-    redeployed and the reconcile endpoint re-run.
+  - Off by default (`LAKETS_RETENTION_ENABLED`): when enabled, CDF reconciliation installs it and the
+    Tiering job prunes the shadow. Kept off live pending a data-loss review of the shadow deletes.
 - *2026-11-21, fixed in code (live proof pending a redeploy):* at its default target the producer sent
   ~1,780 rows/s. The simulator's sleep-per-tick loop lost ~11 %; a wall-clock pacer now meets the target
   (unit-tested to within 0.5 %).

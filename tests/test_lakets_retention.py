@@ -52,6 +52,29 @@ def test_tiering_job_prunes_in_bounded_batches_c9402_regression() -> None:
             "tiering", "exec")  # fmt: skip
 
 
+@pytest.fixture(autouse=True)
+def _retention_on(monkeypatch, request):
+    """Tests exercise the enabled path unless they opt out with the 'retention_off' mark."""
+    if request.node.get_closest_marker("retention_off") is None:
+        monkeypatch.setenv(retention.RETENTION_ENABLED_ENV, "true")
+
+
+@pytest.mark.retention_off
+@pytest.mark.asyncio
+async def test_retention_is_off_by_default_and_touches_nothing_c9412_regression(
+    monkeypatch,
+) -> None:
+    """[C9412][regression] Without LAKETS_RETENTION_ENABLED nothing is installed or applied."""
+    monkeypatch.delenv(retention.RETENTION_ENABLED_ENV, raising=False)
+    conn = MagicMock()
+    conn.execute = AsyncMock()
+    conn.fetchval = AsyncMock()
+    result = await retention.ensure_retention(conn)
+    assert result["status"] == "disabled" and result["applied"] == []
+    conn.execute.assert_not_awaited()
+    conn.fetchval.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_ensure_retention_never_raises_c9403_regression() -> None:
     """[C9403][regression] A failing policy call is reported, not raised."""

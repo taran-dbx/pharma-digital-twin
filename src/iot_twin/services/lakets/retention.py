@@ -11,7 +11,10 @@ the CDF shadow 6.6 GB after one day, growing ~1.7 GB/h together at 2000 Hz.
 - Shadow: ``lakets.prune_cdf_shadow()`` (``assets/lakets_cdf_prune.sql``) deletes only
   rows whose inserting transaction finished before a WAL mark the sync has committed.
 
-:func:`ensure_retention` is idempotent and never raises.
+:func:`ensure_retention` is idempotent and never raises. It is OFF unless
+``LAKETS_RETENTION_ENABLED=true``: while off it changes nothing (no policy, no prune
+function), so the Tiering job's prune step is a no-op too. Enabling it is a separate,
+reviewed decision (data-loss review of the shadow deletes, 2026-11-21).
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ logger = logging.getLogger("pharma_twin.services.lakets.retention")
 # read at most the last 24 h of the hot tier. Override per workspace via env.
 DEFAULT_TIER_AFTER = "1 hour"
 DEFAULT_DROP_AFTER = "24 hours"
+RETENTION_ENABLED_ENV = "LAKETS_RETENTION_ENABLED"
 TIER_AFTER_ENV = "LAKETS_HOT_TIER_AFTER"
 DROP_AFTER_ENV = "LAKETS_HOT_DROP_AFTER"
 
@@ -52,6 +56,10 @@ def prune_sql() -> str:
     return LAKETS_CDF_PRUNE_SQL_PATH.read_text(encoding="utf-8")
 
 
+def retention_enabled() -> bool:
+    return os.getenv(RETENTION_ENABLED_ENV, "").strip().lower() in {"1", "true", "yes"}
+
+
 def hot_tier_window() -> tuple[str, str]:
     return (
         os.getenv(TIER_AFTER_ENV) or DEFAULT_TIER_AFTER,
@@ -67,6 +75,13 @@ async def ensure_retention(
 ) -> dict:
     """Install shadow pruning and the hot-tier tiering + tiered-retention policies."""
     resource = f"LakeTS retention on {schema}.{table}"
+    if not retention_enabled():
+        return {
+            "resource": resource,
+            "status": "disabled",
+            "applied": [],
+            "detail": f"set {RETENTION_ENABLED_ENV}=true to install retention and shadow pruning",
+        }
     tier_after, drop_after = hot_tier_window()
     applied: list[str] = []
     try:
