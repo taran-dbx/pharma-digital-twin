@@ -81,8 +81,8 @@ utc_time | rows_inserted_total | rows_per_s | newest_event_time | ingest_lag_s |
 ## Summary
 RUN 1 steady window 08:24:01-08:56:02 (33 samples, 32 min): rows/s min 1,752 / median ~1,780 / max 1,787; ingest lag
   -0.2..0.1 s (no backlog); WAL 1.29-1.30 MB/s (~760 B per row incl. rollup, LVC and catalog traffic); slot retained
-  14.8-51.8 MB (no growth); wal2delta write age ~11 s; Delta 2099 -> 2227 (4 versions/min = every 15 s, through the
-  checkpoint boundaries 2000 and 2200).
+  14.8-51.8 MB (no growth); wal2delta write age ~11 s; Delta 2099 -> 2227 (4 versions/min = every 15 s). The run
+  crossed ONE checkpoint boundary, 2200, cleanly; version 2000 is stall 3 (07:44-07:54, before the fix, 10_sync_after.txt).
 RUN 2 steady window 09:05:08-09:22:40 (18 min): rows/s min 2,114 / ~2,138 / max 2,150 (>= 2,000 in every sample);
   ingest lag 0.0-0.1 s; WAL 1.53-1.56 MB/s; slot retained 11.2-44.8 MB; Delta 2242 -> 2312 every 15 s.
 No compute restart (pg_start 05:12:50 throughout), no connect errors.

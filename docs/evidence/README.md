@@ -26,6 +26,8 @@ swap ran live through `POST /api/admin/pipelines/<setup-id>/realtime/reconcile-c
 | After, at the default 2000 Hz target for 32 min: ~1,780 rows/s written, which is all the producer sends (0 s lag); at a 2400 target for 18 min: 2,114-2,150 rows/s, 0 s lag. WAL 1.3-1.56 MB/s; the slot holds 11-52 MB; Delta commits every 15 s | [`08_run_samples_after.txt`](2026-11-21/08_run_samples_after.txt) |
 | e2e latency after the fix (Spark per-batch percentiles) | [`09_latency_after.txt`](2026-11-21/09_latency_after.txt) |
 | Lakebase vs Delta exact over closed windows (2,136,493 and 1,922,667 rows) | [`10_sync_after.txt`](2026-11-21/10_sync_after.txt) |
+| Escalation brief for the Lakebase / Lakehouse Sync owners (pattern, timestamps, file counts, what we cannot see, the ask) | [`12_lakehouse_sync_escalation.md`](2026-11-21/12_lakehouse_sync_escalation.md) |
+| Producer shortfall diagnosed (sleep-per-tick drift, ~11 %) and fixed with a wall-clock pacer; sensors pinned round-robin to partitions (36.8 % busiest on 3, 21.1 % on 6); 6-partition plan. Code and tests only: live proof waits for the next redeploy | [`13_producer_rate_and_partitions.md`](2026-11-21/13_producer_rate_and_partitions.md) |
 | Health check re-run on the live deployment | [`11_health_check_summary.txt`](2026-11-21/11_health_check_summary.txt), snapshot [`ops/notebooks/runs/manufacturing_realtime_2026-11-21.ipynb`](../../ops/notebooks/runs/manufacturing_realtime_2026-11-21.ipynb) |
 
 ### Measured throughput and latency (from `<catalog>.pharma_twin.manufacturing_metrics` and the hot-tier samples)
@@ -129,10 +131,22 @@ producer. No earlier latency figure is reused.
 - The real-time job cluster uses `SPOT_WITH_FALLBACK` availability (see the health-check snapshot).
 - The shared copilot space reports `manual_required` (the SP has CAN_VIEW only); the per-pipeline
   Genie space works and now includes `intelligence_genai_audit`.
-- *New 2026-11-21:* with 3 partitions keyed by `sensor_name`, one partition carries 47.4 % of the rows
-  ([`03`](2026-11-21/03_partition_skew.txt)). There is headroom now (one writer ~8,000 rows/s), so the topic
-  was not changed. Six partitions would cut the busiest to 26 %.
-- *New 2026-11-21:* the CDF shadow `lakets_cdf._shadow_<industry>_sensor_readings` is never trimmed
-  (6.6 GB, 28 M rows), and the hot tier has no retention policy (240 chunks, 7.2 GB). Both grow by ~1.7 GB/h at 2000 Hz.
-- *New 2026-11-21:* at its default target the producer sends ~1,780 rows/s, not 2,000. `TARGET_RECORDS_PER_SEC`
-  is not met by the simulator loop.
+- *2026-11-21, fixed in code (live proof pending a redeploy):* with 3 partitions keyed by `sensor_name`,
+  one partition carried 47.4 % of the rows ([`03`](2026-11-21/03_partition_skew.txt)). The producer now pins
+  each sensor to one partition round-robin (7/6/6, busiest 36.8 %; ordering per sensor kept). A 3 -> 6
+  partition plan is written but NOT executed ([`13`](2026-11-21/13_producer_rate_and_partitions.md)).
+- *2026-11-21, fixed in code (live proof pending a redeploy):* the CDF shadow (6.6 GB, 28 M rows) and the
+  hot tier (240 chunks, 7.2 GB) had no retention, ~1.7 GB/h at 2000 Hz.
+  - Hot tier: LakeTS tiering + tiered retention, tier after 1 h, drop after 24 h, only once durable in Delta.
+  - Shadow: `lakets.prune_cdf_shadow()` deletes only rows whose inserting transaction finished before a WAL
+    mark the sync has committed. It fails closed when the shadow is not STREAMING; covered by local-Postgres
+    tests for a stall and an in-flight writer.
+  - Applied by CDF reconciliation; the shadow is pruned by the Tiering job. Live effect needs the ops jobs
+    redeployed and the reconcile endpoint re-run.
+- *2026-11-21, fixed in code (live proof pending a redeploy):* at its default target the producer sent
+  ~1,780 rows/s. The simulator's sleep-per-tick loop lost ~11 %; a wall-clock pacer now meets the target
+  (unit-tested to within 0.5 %).
+- *2026-11-21, fixed:* `metrics_batch_duration` FAILed on Real-Time Mode's normal 300 s trigger. For RTM it
+  now judges the per-record processing p99 (WARN 250 ms / FAIL 1 s); micro-batch keeps the batch-duration rule.
+- *2026-11-21, fixed:* the app's `cdf_sync` check reported a stuck sync as "STREAMING (idle)" (PASS). It now
+  FAILs after 10 min without a wal2delta write while rows keep landing.

@@ -186,16 +186,25 @@ the stream held e2e p50 7 ms and p99 median 13 ms (worst 29 ms) over 41 batches 
 trigger. The measurements are in [`docs/evidence/2026-11-20/`](../docs/evidence/README.md). The
 first attempt of a run on serverless can abort with the known psycopg2 SIGABRT; re-run it.
 
-## Runbook: stuck Lakehouse Sync (`lakets_sync_slot` WARN/FAIL)
+## Runbook: stuck Lakehouse Sync (`lakets_sync_slot` / app `cdf_sync` FAIL)
 
-Lakehouse Sync (`wal2delta`) commits to the UC history table every ~15 s while rows flow. The
-health check reads the slot from `pg_replication_slots` and the shadow's
-`wal2delta.tables.last_write_time`. It WARNs after 2 min without a write, FAILs after 10 min,
-and also FAILs when the slot retains >= 1 GB of WAL. On 2026-11-20/21 the sync stopped twice,
-right after Delta versions 1000 and 1800. Both are multiples of `wal2delta.checkpoint_interval`
-(200), and nothing in Postgres showed an error. Both times the slot held WAL until the writer
-resumed on its own: after 146 min, and after 354 min. The second stall lasted through a compute
-restart. Details: [`docs/evidence/2026-11-21/`](../docs/evidence/README.md).
+Lakehouse Sync (`wal2delta`) commits to the UC history table every ~15 s while rows flow.
+Two checks read the shadow's `wal2delta.tables.last_write_time`:
+- the health check `lakets_sync_slot`, which also reads the slot from `pg_replication_slots`.
+  It WARNs after 2 min without a write and FAILs after 10 min, or when the slot retains >= 1 GB of WAL;
+- the app's `cdf_sync` check, which FAILs after 10 min without a write while rows keep landing.
+
+On 2026-11-20/21 the sync stopped **three** times, right after Delta versions 1000, 1800 and 2000.
+All three are multiples of `wal2delta.checkpoint_interval` (200), each with ~770-1,000
+uncompacted files in the history table, and nothing in Postgres showed an error:
+
+| Stall | Length | How it ended |
+|---|---|---|
+| 1 | 146 min | seconds after a predictive-optimization OPTIMIZE |
+| 2 | 354 min | on its own, through a compute restart |
+| 3 | 9.7 min | seconds after a predictive-optimization OPTIMIZE |
+
+Brief for the owners: [`docs/evidence/2026-11-21/12_lakehouse_sync_escalation.md`](../docs/evidence/2026-11-21/12_lakehouse_sync_escalation.md).
 
 1. **Confirm the stall from both sides** (read-only, as a `databricks_superuser` member):
    `SELECT slot_name, active, restart_lsn, confirmed_flush_lsn,
@@ -204,17 +213,36 @@ restart. Details: [`docs/evidence/2026-11-21/`](../docs/evidence/README.md).
    list-cdf-statuses <cdf-config> --profile <p>` (`last_sync_time`), and `DESCRIBE HISTORY` on the
    `lb__shadow_<industry>_sensor_readings_history` table (newest version and timestamp).
    Hot-tier freshness PASS while all of these stand still means the sync is stuck, not idle.
-2. **Keep the primary alive while WAL accumulates.** At ~600 B of WAL per row (statement
-   triggers), 2,000 rows/s retains ~4.3 GB/h. If the retained WAL nears the compute's local
-   disk, stop the producer (the Kafka topic buffers the data; the consumer resumes from its
-   checkpoint) rather than letting the compute restart.
-3. **Do not drop the `wal2delta_main_slot_*` slot or delete the CDF config** as a first
-   response. Both force a full re-snapshot of the shadow, which holds every row ever synced
-   (6.6 GB on 2026-11-21), and the slot is owned by the managed service, not by us. Dropping it is
-   only safe after the Lakebase owners confirm the sync for that slot is dead.
-4. **Escalate** to the Lakebase / Lakehouse Sync owners with the slot name, the committed LSN, the
-   last Delta version and timestamp, and `SHOW wal2delta.checkpoint_interval`.
-   `wal2delta.info()` is not readable by workspace users.
-5. **After it resumes**, check that `DESCRIBE HISTORY` advances every ~15 s again and the
+2. **Keep the primary alive while WAL accumulates.** The live ratio is ~760 B of WAL per row
+   (statement triggers, plus rollup, LVC and catalog traffic; 1.3-1.56 MB/s at 1,780-2,140 rows/s).
+   At 2,000 rows/s a stuck slot therefore retains ~1.5 MB/s, about **5.5 GB per hour**. If the
+   retained WAL nears the compute's local disk, stop the producer rather than letting the compute
+   restart. The Kafka topic buffers the data, and the consumer resumes from its checkpoint.
+3. **Optional, opt-in: compact the history table.** OPTIMIZE ended stalls 1 and 3 within
+   seconds. That is a correlation, not a proven fix, but it is data-safe: it rewrites files
+   only, and the writer's appends do not conflict with it. With `CDF_HISTORY_OPTIMIZE_ENABLED=true`
+   on the app, `POST /api/admin/pipelines/<setup-id>/realtime/optimize-history` runs `OPTIMIZE`
+   on this deployment's own `lb__shadow_<industry>_sensor_readings_history` only; it is
+   refused for any other schema or industry.
+4. **Do not drop the `wal2delta_main_slot_*` slot or delete the CDF config** as a first
+   response. Both force a full re-snapshot of the shadow, and the slot is owned by the managed
+   service, not by us. Dropping it is only safe after the Lakebase owners confirm the sync for
+   that slot is dead.
+5. **Escalate** with the brief above: slot name, committed LSN, last Delta version and
+   timestamp, `SHOW wal2delta.checkpoint_interval`. `wal2delta.info()` is not readable by
+   workspace users.
+6. **After it resumes**, check that `DESCRIBE HISTORY` advances every ~15 s again and the
    retained WAL drains, then re-run the health check. `xc_reconciliation` passes once the backlog
-   has been committed.
+   has been committed. Retention (hot-tier drops and shadow pruning) waits for the sync on its
+   own: both are gated on the committed LSN, so nothing synced-but-not-yet-committed is lost.
+
+### INSERT triggers (`lakets_insert_triggers`)
+
+CDF reconciliation (`POST .../realtime/reconcile-cdf`, every realtime deploy) installs the
+statement-level INSERT triggers. Exactly one INSERT path into the shadow must exist; the check
+FAILs on zero or two. If a per-row LakeTS INSERT trigger comes back next to the statement one
+(e.g. `lakets.enable_sync` or `lakets.enable_lvc` re-run by hand), the statement functions stand
+down, so no row is copied twice. Re-running reconciliation restores the single statement path.
+To go back to LakeTS 0.1.0's per-row triggers (e.g. before reinstalling LakeTS), run, as the
+table owner: `SELECT lakets.use_row_insert_triggers('sensor_readings');`. It is one locked
+transaction, idempotent, and reversed by `lakets.use_statement_insert_triggers('sensor_readings')`.
