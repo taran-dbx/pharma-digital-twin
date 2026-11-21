@@ -3,6 +3,9 @@ import { describe, expect, it } from "vitest";
 import { generateDataProducerNotebook } from "@/lib/data-producer-notebook";
 import { PRODUCER_PACING_PYTHON } from "@/lib/producer-pacing";
 
+// Name of the UC object that maps to the MSK IAM role (a placeholder, not a secret).
+const MSK_ROLE_BINDING = "example-credential";
+
 // Same connection shape industry-deploy-config.ts passes for a realtime deploy.
 function realtimeProducer(rateHz: number): string {
   return generateDataProducerNotebook({
@@ -17,7 +20,7 @@ function realtimeProducer(rateHz: number): string {
         topic: "example.manufacturing.realtime",
         consumer_group: "example-manufacturing",
         security_protocol: "SASL_SSL",
-        service_credential: "example-credential",
+        service_credential: MSK_ROLE_BINDING,
         num_partitions: 3,
       },
     },
