@@ -1,0 +1,38 @@
+{
+  "4": {
+    "selection_outcome": "worse_than_winner",
+    "known_defect": null,
+    "maintenance_pinned": "false",
+    "status": null
+  },
+  "6": {
+    "selection_outcome": "not_qualified",
+    "known_defect": null,
+    "maintenance_pinned": "false",
+    "status": null
+  },
+  "7": {
+    "selection_outcome": "not_qualified",
+    "known_defect": "depends on hours_since_maintenance (14 % of split gain, 579 splits) although the simulated producer never varies it; at the clipped 3000 h the seed-11 test cycles show false alarms 12 -> 17 and weak-precursor warnings 15/17 -> 7/17; the live scorer sends ~1950 h today, rising to 3000 h on 2027-01-04",
+    "maintenance_pinned": "false",
+    "status": null
+  },
+  "11": {
+    "selection_outcome": "worse_than_winner",
+    "known_defect": null,
+    "maintenance_pinned": "true",
+    "status": "promotion_reverted"
+  },
+  "12": {
+    "selection_outcome": "tied_with_winner",
+    "known_defect": null,
+    "maintenance_pinned": "true",
+    "status": "not_promoted"
+  },
+  "13": {
+    "selection_outcome": "winner",
+    "known_defect": null,
+    "maintenance_pinned": null,
+    "status": null
+  }
+}

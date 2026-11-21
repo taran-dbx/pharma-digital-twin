@@ -5,16 +5,18 @@ Spindle 3 on CNC-1 (Ti-6Al-4V hip stems) has a validated thermal limit of 60 °C
 once the limit is **breached**. The thermal-risk model scores the spindle every few
 seconds and opens a **predicted** alert *before* the limit trips. That alert goes
 to the same alert table, lifecycle, SSE stream, Genie snapshot and cell UI.
-The early warning was measured on **simulated** data only. The Spindle 3 scenario is
-simulated physics, and the updated producer was **not live yet**. On 19 h of fresh,
-pooled held-out cycles, the champion v7 warned 59 % [95 % CI 54–65 %] of breaches at
-least 30 s ahead at 1.9 [1.5–2.4] false alarms per hour.
+The early warning was measured on **simulated** data only: the Spindle 3 scenario is
+simulated physics, and the updated producer was **not live yet**. In the
+pre-registered deciding run (231 pooled fresh cycles), the champion **v13** warned
+68.5 % [64.2, 72.2] of breaches at least 30 s ahead at 1.35 [0.99, 1.71] false alarms
+per hour.
 
-* Its plan-mix-standardised discrimination is 0.21 [0.12–0.30], against 0.30 for a
-  plan-aware oracle and about 0 for a sensor-blind clock.
+* Its plan-mix-standardised discrimination is 0.375 [0.291, 0.457], or
+  [0.291, 0.460] under the run-level block bootstrap.
 * Cycle permutation gives p ≤ 0.001, the floor of 1,000 permutations.
+* It is invariant to the maintenance age.
 * This is not proof on a real machine; see
-  [Measured early warning](#measured-early-warning-fresh-simulated-data-not-live).
+  [Pre-registered deciding run](#pre-registered-deciding-run).
 
 ```
 readings ─► evaluate_and_emit ─► threshold rules ─────────────► AlertEngine ─► alert / alert_event (Lakebase)
@@ -294,7 +296,36 @@ submitted from that commit, and its `code_sha` param records the SHA:
 * **Compared:** `--compare-versions 4,6,7,11,12`.
 * **Selection:** `--promote if_better` (neutral).
 
-No earlier run used these seeds or epochs. The numbers below come from that run.
+No earlier run used these seeds or epochs.
+
+**Result** (`docs/evidence/ml/training_run_v13.json`, `deciding_run_*.json`). The run
+has `code_sha=eec0bbc`, `code_dirty=false`, and `source_hash` equal to
+`source_hash_runtime`. It pools 231 cycles with 162 breaches, every model measured at
+the 3000 h maintenance age, plus the invariance re-scores. Values are point estimates
+with the stratified [95 % CI], which is conditional on the realised plan mix; the
+block line is the run-level block bootstrap.
+
+| | **v13 (champion)** | v12 | v11 | v7 | v6 | v4 | Clock, any duty |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Cut-off / clear level | 0.64 / 0.44 | 0.54 / 0.34 | 0.73 / 0.53 | 0.59 / 0.54 | 0.40 / 0.35 | 0.47 / 0.42 | 0 s + 230 s |
+| Warned ≥ 30 s ahead | 68.5 % [64.2, 72.2] | 73.5 % [69.8, 76.5] | 63.6 % [58.0, 68.5] | 63.6 % [58.6, 67.9] | 77.8 % [75.9, 79.6] | 64.2 % [59.3, 68.5] | 100 % |
+| False alarms per hour | 1.35 [0.99, 1.71] | 1.71 [1.35, 2.08] | 1.66 [1.30, 2.08] | 1.71 [1.25, 2.18] | 2.55 [2.08, 3.07] | 2.23 [1.77, 2.75] | 3.58 |
+| Standardised discrimination | **0.375 [0.291, 0.457]** | 0.323 [0.238, 0.415] | 0.272 [0.185, 0.364] | 0.283 [0.189, 0.376] | 0.259 [0.160, 0.360] | 0.214 [0.149, 0.286] | 0.000 |
+| … block bootstrap | [0.291, 0.460] | [0.237, 0.413] | [0.171, 0.374] | [0.211, 0.372] | [0.177, 0.338] | [0.147, 0.288] | – |
+| Invariance range: discrimination / false alarms per hour (1500–3000 h) | 0.000 / 0.00 | 0.000 / 0.00 | 0.000 / 0.00 | **0.145 / 0.52** | **0.048 / 0.78** | 0.006 / 0.05 | – |
+| Cycle permutation | p ≤ 0.001 | p ≤ 0.001 | p ≤ 0.001 | p ≤ 0.001 | p ≤ 0.001 | p ≤ 0.001 | – |
+| Qualifies | yes | yes | yes | **no** (invariance) | **no** (invariance) | yes | – |
+| Paired vs v13 | – | −0.052 [−0.148, +0.045], tied | −0.103 [−0.193, −0.017], worse | – | – | −0.161 [−0.245, −0.074], worse | – |
+| `selection_outcome` tag | `winner` | `tied_with_winner` | `worse_than_winner` | `not_qualified` | `not_qualified` | `worse_than_winner` | – |
+
+* **v7** is tagged `known_defect`: at 1500 h its discrimination would be 0.429; at
+  3000 h it is 0.283.
+* **v13 cycle level.** Breaches warned ≥ 30 s: strong 83 / 86, weak 28 / 41, none
+  0 / 35. Cycles with a false alarm: fade 16 / 19, bump 5 / 17, quiet 1 / 33.
+* **Champion.** `@champion` is v13, the dev endpoint serves it, and the bundle
+  default is `risk_model_version=13`.
+
+The v12 section below is history, under the incumbent rule.
 
 ### Measured early warning (fresh, simulated data, not live)
 
@@ -456,14 +487,17 @@ open episode would break the episode semantics above.
 | v1–v4 | – | 1 Hz synthetic data. v4's only live lead was 7 s on the old ramp-only event |
 | v5 | `rolled_back`, `superseded_by=6` | its clear level of 0.14 was below calm scores |
 | v6 | `superseded_by=7` | the fixed-phase scenario; replaced by v7 at seed 11 under the old plan-free floor; qualifies at v12 but is not the incumbent |
-| **v7** | **champion** | the jittered scenario, seed 11; qualifies on the v11 and v12 pooled runs |
+| v7 | `known_defect`, `not_qualified` | the jittered scenario, seed 11; depends on the maintenance age and fails invariance |
 | v8 | `rejected` | average-precision early stopping stopped at 5 trees, so it never alerts |
 | v9 | `rejected` | the p95 search margin set its cut-off at 0.91, so it never alerts |
 | v10 | `rejected` | gate lower bound −0.013 |
 | v11 | `promotion_reverted` | promoted over v7 by 0.003; not significant under the paired rule |
-| v12 | `not_promoted` | qualifies; its paired gain over v7 is not significant |
+| v12 | `not_promoted`, then `tied_with_winner` | tied with v13 in the deciding run |
+| **v13** | **champion**, `winner` | pre-registered deciding run; neutral selection |
 
-The dev endpoint serves v7, and the bundle default is `risk_model_version=7`.
+v7 is also tagged `known_defect` and `not_qualified`, and v6 `not_qualified`, both
+failing the invariance check. The dev endpoint serves v13, and the bundle default is
+`risk_model_version=13`.
 
 ## Serving and the app
 

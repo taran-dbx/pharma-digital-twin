@@ -88,7 +88,7 @@ variables:
     default: spindle_thermal_risk
   risk_model_version:
     description: "Model version the endpoint serves after a bundle deploy (keep it at the current @champion: every training run prints the --var to use)."
-    default: "7"
+    default: "13"
   risk_endpoint_name:
     description: Model Serving endpoint for the thermal-risk model.
     default: pharma-twin-spindle-risk

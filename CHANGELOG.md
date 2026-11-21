@@ -8,12 +8,14 @@ All notable changes to this project are documented here. The format follows
 ### Added
 - Spindle 3 risk model: an early warning on a SIMULATED, noisy precursor, measured
   offline on fresh simulated data, not live.
-  - **Champion v7.** On 231 pooled held-out cycles (test plus a fresh 12 h replay)
-    it warned 59 % [95 % CI 54–65 %] of breaches ≥ 30 s ahead at 1.9 [1.5–2.4] false
-    alarms/h. Its plan-mix-standardised discrimination is 0.21 [0.12–0.30] (a
-    plan-aware oracle scores 0.30, a clock about 0). Cycle permutation gives
-    p ≤ 0.001, the floor of 1,000 permutations.
-  - **An earlier 4 h endpoint replay** gave v7 19 / 26 breaches warned at 5.0 false
+  - **Champion v13**, chosen by a pre-registered, neutral selection run. On 231
+    pooled fresh cycles it warned 68.5 % [64.2, 72.2] of breaches ≥ 30 s ahead at
+    1.35 [0.99, 1.71] false alarms/h. Its plan-mix-standardised discrimination is
+    0.375 [0.291, 0.457] (block bootstrap [0.291, 0.460]); a plan-aware oracle
+    reference scores 0.30, a clock about 0. Cycle permutation gives p ≤ 0.001, the
+    floor of 1,000 permutations, and it is invariant to the maintenance age. v7
+    fails that invariance check and is tagged `known_defect`.
+  - **An earlier 4 h endpoint replay (v7)** gave v7 19 / 26 breaches warned at 5.0 false
     alarms/h. Its raw discrimination was 0.16 [0.04, 0.29], or 0.24 [0.14, 0.34]
     standardised to the plan mix. The gap is diagnosed: a spurious maintenance-age
     dependence at the clipped catalog value, plus an alarm-heavy sample.

@@ -1,6 +1,15 @@
 # Thermal-risk model: evidence
 
-## 2026-11-21: pooled, CI-based gate; v7 champion
+## 2026-11-21: pre-registered deciding run; v13 champion
+
+| File | What it shows |
+| --- | --- |
+| `training_run_v13.json` | The deciding run: seeds named in the model card at `code_sha` eec0bbc **before** submission, with `code_dirty=false` and matching upload and runtime source hashes. It holds the neutral selection over v4, v6, v7, v11, v12 and v13 on 231 pooled cycles (CIs, block CIs, invariance at 1500 / 2500 / 3000 h). The winner is v13 |
+| `deciding_run_promotion_decision.json` | The decision artifact: per-version metrics, problems, and paired differences against the winner |
+| `deciding_run_null_counts.json` | Per-version cycle records (group, breach, warned, false alarms, period) and the permutation and shift null counts, so every claim can be recomputed |
+| `deciding_run_version_tags.json` | `selection_outcome`, `known_defect`, `maintenance_pinned` and `status` tags per version |
+
+## 2026-11-21 (earlier): pooled, CI-based gate; v7 champion (superseded)
 
 These files are redacted: `<workspace-host>`, `<user>`, `<catalog>`. The scenario
 physics is **SIMULATED** (`src/iot_twin/scenario_engine/spindle_scenario.py`), and
