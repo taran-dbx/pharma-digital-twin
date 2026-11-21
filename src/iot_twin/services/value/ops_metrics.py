@@ -9,13 +9,18 @@ episodes and say so in ``meta``.
   decision) - ``opened_at``; a signed decision implies acknowledgement.
 * **time to disposition** = first containment decision (quarantine or CMM) - ``opened_at``.
 * **MTTR** = mean ``cleared_at - opened_at`` over cleared episodes.
+* Every duration statistic covers only the episodes whose end event exists
+  (never zero-filled) and reports that coverage: e.g. ``acknowledged_count`` of
+  ``episodes_total``, ``unacknowledged_count`` and the age of the oldest open
+  episode still waiting (``oldest_open_unacknowledged_age_s``).
 * **projected right-first-time** = ``PROJECTED_RFT_DEFINITION`` with lots and
   parts deduped across the window's excursions.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Iterable, Sequence
+from datetime import datetime
 from typing import Any
 
 from iot_twin.domain.lot_context import PROJECTED_RFT_DEFINITION, PROJECTED_RFT_LABEL
@@ -33,6 +38,48 @@ def percentile(values: Sequence[float], pct: float) -> float | None:
     low = int(rank)
     high = min(low + 1, len(ordered) - 1)
     return ordered[low] + (ordered[high] - ordered[low]) * (rank - low)
+
+
+def duration_stats(values: Iterable[float | None]) -> dict[str, Any]:
+    """count / mean / p50 / p90 / max over the measured values, as the SQL totals.
+
+    ``None`` (the end event never happened) is excluded, never counted as 0 s;
+    negative durations clamp to 0, as ``GREATEST(x, 0)`` does in SQL.
+    """
+    measured = [max(0.0, float(v)) for v in values if v is not None]
+
+    def r(value: float | None) -> float | None:
+        return round(value, 3) if value is not None else None
+
+    return {
+        "count": len(measured),
+        "mean": r(sum(measured) / len(measured)) if measured else None,
+        "p50": r(percentile(measured, 50)),
+        "p90": r(percentile(measured, 90)),
+        "max": r(max(measured)) if measured else None,
+    }
+
+
+def oldest_open_age(
+    episodes: Iterable[Episode], now: datetime, measure: Callable[[Episode], float | None]
+) -> float | None:
+    """Seconds since the oldest still-open episode whose ``measure`` is missing opened."""
+    ages = [
+        max(0.0, (now - e.opened_at).total_seconds())
+        for e in episodes
+        if e.cleared_at is None and measure(e) is None
+    ]
+    return max(ages) if ages else None
+
+
+def _coverage(stats: dict[str, Any], total: int, measured: str, missing: str) -> dict[str, Any]:
+    """A statistic plus how many episodes it covers (``measured``) and leaves out."""
+    count = int(stats.get("count") or 0)
+    return {**stats, "episodes_total": total, measured: count, missing: max(0, total - count)}
+
+
+def _age(value: float | None) -> float | None:
+    return round(value, 3) if value is not None else None
 
 
 def projected_rft(totals: WindowTotals) -> dict[str, Any]:
@@ -96,13 +143,21 @@ def ops_summary(window: EpisodeWindow) -> dict[str, Any]:
         "open_episodes": t.open_episodes,
         "time_to_detect": {
             **t.ttd,
+            "episodes_total": t.episodes,
             "from_first_reading": t.onset_from_reading,
             "from_rule_duration": t.episodes - t.onset_from_reading,
             "samples": [round(v, 3) for v in window.ttd_samples],
         },
-        "time_to_acknowledge": {**t.tta, "samples": [round(v, 3) for v in window.tta_samples]},
-        "time_to_disposition": t.ttdisp,
-        "mttr": t.restore,
+        "time_to_acknowledge": {
+            **_coverage(t.tta, t.episodes, "acknowledged_count", "unacknowledged_count"),
+            "oldest_open_unacknowledged_age_s": _age(t.oldest_open_unacknowledged_s),
+            "samples": [round(v, 3) for v in window.tta_samples],
+        },
+        "time_to_disposition": {
+            **_coverage(t.ttdisp, t.episodes, "dispositioned_count", "undispositioned_count"),
+            "oldest_open_undispositioned_age_s": _age(t.oldest_open_undispositioned_s),
+        },
+        "mttr": _coverage(t.restore, t.episodes, "cleared_count", "open_count"),
         "ncrs_opened": t.ncrs_opened,
         "cmm_inspections": t.cmm_inspections,
         "lots_quarantined_events": t.quarantine_events,

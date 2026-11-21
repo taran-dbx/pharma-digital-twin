@@ -26,6 +26,7 @@ class FakeDb:
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.fail = fail
         self.realtime_since = realtime_since
+        self.totals_extra: dict[str, Any] = {}
 
     def _check(self, sql: str, args: tuple[Any, ...]) -> None:
         self.calls.append((sql, args))
@@ -82,6 +83,7 @@ class FakeDb:
             "ttd_p50": 3.0,
             "ttd_p90": 3.0,
             "ttd_max": 3.0,
+            **self.totals_extra,
         }
 
 
@@ -130,6 +132,49 @@ class TestEnvelope:
         assert data["ncrs_opened"] == 1
         assert data["projected_rft"]["label"] == "Projected right-first-time"
         assert data["recent_events"][0]["caught_in_time"] is True
+
+    @pytest.mark.asyncio
+    async def test_ops_summary_reports_coverage_c7966_regression(self, client_db) -> None:
+        """[C7966][regression] TTA / disposition / MTTR carry their coverage; none acked is null."""
+        client, db, _ = client_db
+        db.totals_extra = {
+            "episodes": 73,
+            "open_episodes": 2,
+            "tta_count": 1,
+            "tta_mean": 11.0,
+            "tta_p50": 11.0,
+            "tta_p90": 11.0,
+            "tta_max": 11.0,
+            "restore_count": 71,
+            "restore_mean": 40.0,
+            "oldest_open_unacknowledged_s": 125.5,
+            "oldest_open_undispositioned_s": 125.5,
+        }
+        data = (await client.get("/api/ops/summary", params=_q())).json()["data"]
+        tta = data["time_to_acknowledge"]
+        assert tta["p50"] == 11
+        assert tta["episodes_total"] == 73
+        assert tta["acknowledged_count"] == 1
+        assert tta["unacknowledged_count"] == 72
+        assert tta["oldest_open_unacknowledged_age_s"] == 125.5
+        disp = data["time_to_disposition"]
+        assert disp["count"] == 0 and disp["p50"] is None and disp["mean"] is None
+        assert (disp["dispositioned_count"], disp["undispositioned_count"]) == (0, 73)
+        assert disp["oldest_open_undispositioned_age_s"] == 125.5
+        mttr = data["mttr"]
+        assert (mttr["cleared_count"], mttr["open_count"], mttr["episodes_total"]) == (71, 2, 73)
+        assert data["time_to_detect"]["episodes_total"] == 73
+
+    @pytest.mark.asyncio
+    async def test_ops_summary_without_waiting_episode_has_no_age_c7967_regression(
+        self, client_db
+    ) -> None:
+        """[C7967][regression] No open unacknowledged episode → the age is null, not 0."""
+        client, _, _ = client_db
+        data = (await client.get("/api/ops/summary", params=_q())).json()["data"]
+        assert data["time_to_acknowledge"]["oldest_open_unacknowledged_age_s"] is None
+        assert data["time_to_acknowledge"]["unacknowledged_count"] == 1
+        assert data["time_to_acknowledge"]["p50"] is None
 
     @pytest.mark.asyncio
     async def test_overrides_apply_c7942_smoke(self, client_db) -> None:

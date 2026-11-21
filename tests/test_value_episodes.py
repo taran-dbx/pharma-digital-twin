@@ -36,7 +36,12 @@ from iot_twin.services.value.episodes import (
     rule_durations,
     validate_pipeline_id,
 )
-from iot_twin.services.value.ops_metrics import ops_summary, percentile
+from iot_twin.services.value.ops_metrics import (
+    duration_stats,
+    oldest_open_age,
+    ops_summary,
+    percentile,
+)
 from tests._local_pg import local_postgres
 
 LOT_START = datetime.fromtimestamp(LOT_CYCLE_S * 6_000_000, tz=UTC)
@@ -480,6 +485,168 @@ class TestSql:
         window = await fetch_episode_window(None, _scope("p"), now - timedelta(days=1), now)
         assert not window.available
         assert window.totals.episodes == 0
+
+
+async def _seed_coverage(conn, pipeline_id: str) -> dict[str, datetime]:
+    """Four episodes, one per alert row, five lots apart.
+
+    * acked: acknowledged at +11 s, cleared at +60 s, never contained.
+    * silent: never acknowledged or contained, cleared at +40 s.
+    * open_idle: still open, never acknowledged or contained.
+    * open_held: still open, quarantined at +30 s (a signed decision implies ack).
+    """
+    t0 = LOT_START + timedelta(seconds=40)
+    opened = {
+        name: t0 + timedelta(seconds=LOT_CYCLE_S * 5 * i)
+        for i, name in enumerate(("acked", "silent", "open_idle", "open_held"))
+    }
+    for name, at in opened.items():
+        alert_id = await _alert(conn, pipeline_id)
+        onset = (at - timedelta(seconds=3)).isoformat()
+        await _event(conn, alert_id, "opened", at, at, **{EXCURSION_STARTED_KEY: onset})
+        if name == "acked":
+            await _event(conn, alert_id, "acknowledged", at + timedelta(seconds=11), at)
+            await _event(conn, alert_id, "cleared", at + timedelta(seconds=60), at)
+        elif name == "silent":
+            await _event(conn, alert_id, "cleared", at + timedelta(seconds=40), at)
+        elif name == "open_held":
+            await _decision(conn, alert_id, at, "quarantine_lot", at + timedelta(seconds=30))
+    return opened
+
+
+class TestDurationCoverage:
+    """Missing end events are excluded from the statistics, never counted as 0 s."""
+
+    @pytest.mark.asyncio
+    async def test_percentiles_exclude_missing_end_events_c7960_regression(self, pg) -> None:
+        """[C7960][regression] Unacked / uncontained / open episodes are not zero-filled."""
+        pid = str(uuid.uuid4())
+        opened = await _seed_coverage(pg, pid)
+        end = opened["open_held"] + timedelta(minutes=10)
+        window = await fetch_episode_window(pg, _scope(pid), LOT_START - timedelta(hours=1), end)
+        t = window.totals
+        assert t.episodes == 4 and t.open_episodes == 2
+        assert t.tta == {"count": 2, "mean": 20.5, "p50": 20.5, "p90": 28.1, "max": 30.0}
+        assert t.ttdisp == {"count": 1, "mean": 30.0, "p50": 30.0, "p90": 30.0, "max": 30.0}
+        assert t.restore == {"count": 2, "mean": 50.0, "p50": 50.0, "p90": 58.0, "max": 60.0}
+        assert t.ttd["count"] == 4 and t.ttd["p50"] == pytest.approx(3)
+        idle_age = (end - opened["open_idle"]).total_seconds()
+        assert t.oldest_open_unacknowledged_s == pytest.approx(idle_age)
+        assert t.oldest_open_undispositioned_s == pytest.approx(idle_age)
+        assert sorted(window.tta_samples) == [11.0, 30.0]
+
+    @pytest.mark.asyncio
+    async def test_summary_reports_coverage_c7961_regression(self, pg) -> None:
+        """[C7961][regression] Each response-time statistic says how many episodes it covers."""
+        pid = str(uuid.uuid4())
+        opened = await _seed_coverage(pg, pid)
+        end = opened["open_held"] + timedelta(minutes=10)
+        window = await fetch_episode_window(pg, _scope(pid), LOT_START - timedelta(hours=1), end)
+        summary = ops_summary(window)
+        idle_age = round((end - opened["open_idle"]).total_seconds(), 3)
+        tta = summary["time_to_acknowledge"]
+        assert tta["p50"] == 20.5
+        assert (tta["episodes_total"], tta["acknowledged_count"], tta["unacknowledged_count"]) == (
+            4,
+            2,
+            2,
+        )
+        assert tta["oldest_open_unacknowledged_age_s"] == idle_age
+        disp = summary["time_to_disposition"]
+        assert (
+            disp["episodes_total"],
+            disp["dispositioned_count"],
+            disp["undispositioned_count"],
+        ) == (4, 1, 3)
+        assert disp["oldest_open_undispositioned_age_s"] == idle_age
+        mttr = summary["mttr"]
+        assert (mttr["episodes_total"], mttr["cleared_count"], mttr["open_count"]) == (4, 2, 2)
+        ttd = summary["time_to_detect"]
+        assert (ttd["episodes_total"], ttd["count"]) == (4, 4)
+
+    @pytest.mark.asyncio
+    async def test_sql_stats_match_python_episodes_c7962_smoke(self, pg) -> None:
+        """[C7962][smoke] Parity: SQL statistics and coverage equal the Python episode path."""
+        pid = str(uuid.uuid4())
+        opened = await _seed_coverage(pg, pid)
+        await _seed(pg, pid)
+        end = opened["open_held"] + timedelta(minutes=10)
+        window = await fetch_episode_window(pg, _scope(pid), LOT_START - timedelta(hours=1), end)
+        recent = window.recent
+        assert len(recent) == window.totals.episodes == 6
+        t = window.totals
+        assert t.ttd == duration_stats(e.time_to_detect_s for e in recent)
+        assert t.tta == duration_stats(e.time_to_acknowledge_s for e in recent)
+        assert t.ttdisp == duration_stats(e.time_to_disposition_s for e in recent)
+        assert t.restore == duration_stats(e.time_to_restore_s for e in recent)
+        assert t.oldest_open_unacknowledged_s == pytest.approx(
+            oldest_open_age(recent, end, lambda e: e.time_to_acknowledge_s)
+        )
+        assert t.oldest_open_undispositioned_s == pytest.approx(
+            oldest_open_age(recent, end, lambda e: e.time_to_disposition_s)
+        )
+
+    @pytest.mark.asyncio
+    async def test_nothing_acknowledged_is_null_not_zero_c7963_regression(self, pg) -> None:
+        """[C7963][regression] With no acknowledgement the statistics are null, coverage 0 of n."""
+        pid = str(uuid.uuid4())
+        t0 = LOT_START + timedelta(seconds=40)
+        for i in range(3):
+            at = t0 + timedelta(seconds=LOT_CYCLE_S * 5 * i)
+            alert_id = await _alert(pg, pid)
+            await _event(pg, alert_id, "opened", at, at)
+            await _event(pg, alert_id, "cleared", at + timedelta(seconds=20), at)
+        window = await fetch_episode_window(
+            pg, _scope(pid), t0 - timedelta(hours=1), t0 + timedelta(hours=2)
+        )
+        summary = ops_summary(window)
+        tta = summary["time_to_acknowledge"]
+        assert {k: tta[k] for k in ("count", "mean", "p50", "p90", "max")} == {
+            "count": 0,
+            "mean": None,
+            "p50": None,
+            "p90": None,
+            "max": None,
+        }
+        assert (tta["acknowledged_count"], tta["unacknowledged_count"]) == (0, 3)
+        # all cleared: nothing is still waiting for an acknowledgement
+        assert tta["oldest_open_unacknowledged_age_s"] is None
+        assert summary["time_to_disposition"]["p50"] is None
+        assert summary["mttr"]["mean"] == 20.0
+
+
+class TestPythonStats:
+    def test_duration_stats_skip_missing_c7964_regression(self) -> None:
+        """[C7964][regression] None is excluded; negatives clamp to 0 like the SQL."""
+        assert duration_stats([None, None]) == {
+            "count": 0,
+            "mean": None,
+            "p50": None,
+            "p90": None,
+            "max": None,
+        }
+        assert duration_stats([11.0, None, 30.0, None]) == {
+            "count": 2,
+            "mean": 20.5,
+            "p50": 20.5,
+            "p90": 28.1,
+            "max": 30.0,
+        }
+        assert duration_stats([-2.0, 4.0])["p50"] == 2.0
+
+    def test_oldest_open_age_ignores_cleared_and_measured_c7965_regression(self) -> None:
+        """[C7965][regression] Only open episodes still missing the end event have an age."""
+        opened = LOT_START + timedelta(seconds=10)
+        end = opened + timedelta(minutes=5)
+        cleared = _ep(opened, cleared_at=opened + timedelta(seconds=9), window_end=end)
+        acked = _ep(opened, acknowledged_at=opened + timedelta(seconds=2), window_end=end)
+        idle = _ep(opened + timedelta(seconds=60), window_end=end)
+
+        def tta(e: Episode) -> float | None:
+            return e.time_to_acknowledge_s
+
+        assert oldest_open_age([cleared, acked], end, tta) is None
+        assert oldest_open_age([cleared, acked, idle], end, tta) == 240.0
 
 
 class TestPredictedAlertsAreNotExcursions:

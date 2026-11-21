@@ -253,13 +253,28 @@ episodes AS (
 
 
 def _stats(prefix: str, column: str) -> str:
+    # Postgres GREATEST ignores NULLs, so GREATEST(NULL, 0) is 0: without the
+    # FILTER an episode that never got its end event (no ack, no containment,
+    # still open) would count as 0 s. Only measured episodes enter the stats.
     value = f"GREATEST({column}, 0)"
+    measured = f"FILTER (WHERE {column} IS NOT NULL)"
     return f"""
        COUNT({column}) AS {prefix}_count,
-       AVG({value}) AS {prefix}_mean,
-       percentile_cont(0.5) WITHIN GROUP (ORDER BY {value}) AS {prefix}_p50,
-       percentile_cont(0.9) WITHIN GROUP (ORDER BY {value}) AS {prefix}_p90,
-       MAX({value}) AS {prefix}_max"""
+       AVG({value}) {measured} AS {prefix}_mean,
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY {value}) {measured} AS {prefix}_p50,
+       percentile_cont(0.9) WITHIN GROUP (ORDER BY {value}) {measured} AS {prefix}_p90,
+       MAX({value}) {measured} AS {prefix}_max"""
+
+
+def _oldest_open_missing(name: str, column: str) -> str:
+    """Seconds from the oldest still-open episode with no ``column`` to the window end.
+
+    NULL when no such episode exists; clamped at 0 in Python, not with
+    GREATEST (which would turn that NULL into 0).
+    """
+    return f"""
+       EXTRACT(epoch FROM $6::timestamptz - MIN(opened)
+               FILTER (WHERE {column} IS NULL AND cleared_at IS NULL))::float8 AS {name}"""
 
 
 _TOTALS_SQL = (
@@ -283,6 +298,10 @@ SELECT COUNT(*) AS episodes,
             ("restore", "restore_s"),
         )
     )
+    + ","
+    + _oldest_open_missing("oldest_open_unacknowledged_s", "tta_s")
+    + ","
+    + _oldest_open_missing("oldest_open_undispositioned_s", "ttdisp_s")
     + """,
        (SELECT COUNT(*)
           FROM production_event p
@@ -563,6 +582,9 @@ class WindowTotals:
     tta: dict[str, Any] = field(default_factory=_empty_stats)
     ttdisp: dict[str, Any] = field(default_factory=_empty_stats)
     restore: dict[str, Any] = field(default_factory=_empty_stats)
+    # seconds from the oldest still-open episode with no ack / no containment to the window end
+    oldest_open_unacknowledged_s: float | None = None
+    oldest_open_undispositioned_s: float | None = None
 
     @property
     def parts_released(self) -> int:
@@ -573,6 +595,10 @@ class WindowTotals:
 def totals_from_rows(totals: Mapping[str, Any], parts: Mapping[str, Any]) -> WindowTotals:
     def n(row: Mapping[str, Any], key: str) -> int:
         return int(row.get(key) or 0)
+
+    def age(key: str) -> float | None:
+        value = totals.get(key)
+        return max(0.0, float(value)) if value is not None else None
 
     at_risk = n(parts, "parts_at_risk")
     return WindowTotals(
@@ -597,6 +623,8 @@ def totals_from_rows(totals: Mapping[str, Any], parts: Mapping[str, Any]) -> Win
         tta=_stat_block(totals, "tta"),
         ttdisp=_stat_block(totals, "ttdisp"),
         restore=_stat_block(totals, "restore"),
+        oldest_open_unacknowledged_s=age("oldest_open_unacknowledged_s"),
+        oldest_open_undispositioned_s=age("oldest_open_undispositioned_s"),
     )
 
 
