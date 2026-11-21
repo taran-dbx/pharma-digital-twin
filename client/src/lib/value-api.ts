@@ -129,13 +129,34 @@ export interface RecentEvent {
   decisions: string[];
 }
 
+/**
+ * Duration statistics cover only the excursions whose end event exists
+ * (`count`); the rest are reported, never zero-filled.
+ */
 export interface OpsSummary {
   episodes: number;
   open_episodes: number;
-  time_to_detect: DurationStats & { from_first_reading: number; from_rule_duration: number; samples: number[] };
-  time_to_acknowledge: DurationStats & { samples: number[] };
-  time_to_disposition: DurationStats;
-  mttr: DurationStats;
+  time_to_detect: DurationStats & {
+    episodes_total: number;
+    from_first_reading: number;
+    from_rule_duration: number;
+    samples: number[];
+  };
+  time_to_acknowledge: DurationStats & {
+    episodes_total: number;
+    acknowledged_count: number;
+    unacknowledged_count: number;
+    /** Seconds since the oldest still-open, unacknowledged excursion opened; null when none. */
+    oldest_open_unacknowledged_age_s: number | null;
+    samples: number[];
+  };
+  time_to_disposition: DurationStats & {
+    episodes_total: number;
+    dispositioned_count: number;
+    undispositioned_count: number;
+    oldest_open_undispositioned_age_s: number | null;
+  };
+  mttr: DurationStats & { episodes_total: number; cleared_count: number; open_count: number };
   ncrs_opened: number;
   cmm_inspections: number;
   lots_quarantined_events: number;

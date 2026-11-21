@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { envelopeError, summaryQuery, type Actuals, type OpsSummary, type Projection, type SummaryMeta, type ValueSummary } from "@/lib/value-api";
 import {
+  ackChart,
   binDurations,
   compactUsd,
   decisionsText,
@@ -126,13 +127,39 @@ describe("executive tiles", () => {
 });
 
 describe("operations tiles and bins", () => {
+  const NONE = { count: 0, mean: null, p50: null, p90: null, max: null };
+  const tta = (over: Partial<OpsSummary["time_to_acknowledge"]> = {}): OpsSummary["time_to_acknowledge"] => ({
+    count: 1,
+    mean: 20,
+    p50: 20,
+    p90: 20,
+    max: 20,
+    episodes_total: 2,
+    acknowledged_count: 1,
+    unacknowledged_count: 1,
+    oldest_open_unacknowledged_age_s: null,
+    samples: [20],
+    ...over,
+  });
+  const ttdisp = (over: Partial<OpsSummary["time_to_disposition"]> = {}): OpsSummary["time_to_disposition"] => ({
+    count: 1,
+    mean: 25,
+    p50: 25,
+    p90: 25,
+    max: 25,
+    episodes_total: 2,
+    dispositioned_count: 1,
+    undispositioned_count: 1,
+    oldest_open_undispositioned_age_s: null,
+    ...over,
+  });
   const ops = (over: Partial<OpsSummary> = {}): OpsSummary => ({
     episodes: 2,
     open_episodes: 0,
-    time_to_detect: { count: 2, mean: 3, p50: 3, p90: 4, max: 4, from_first_reading: 1, from_rule_duration: 1, samples: [2, 4] },
-    time_to_acknowledge: { count: 1, mean: 20, p50: 20, p90: 20, max: 20, samples: [20] },
-    time_to_disposition: { count: 1, mean: 25, p50: 25, p90: 25, max: 25 },
-    mttr: { count: 2, mean: 95, p50: 95, p90: 95, max: 100 },
+    time_to_detect: { count: 2, mean: 3, p50: 3, p90: 4, max: 4, episodes_total: 2, from_first_reading: 1, from_rule_duration: 1, samples: [2, 4] },
+    time_to_acknowledge: tta(),
+    time_to_disposition: ttdisp(),
+    mttr: { count: 2, mean: 95, p50: 95, p90: 95, max: 100, episodes_total: 2, cleared_count: 2, open_count: 0 },
     ncrs_opened: 1,
     cmm_inspections: 2,
     lots_quarantined_events: 1,
@@ -162,8 +189,10 @@ describe("operations tiles and bins", () => {
     const empty = opsTiles(
       ops({
         episodes: 0,
-        time_to_detect: { count: 0, mean: null, p50: null, p90: null, max: null, from_first_reading: 0, from_rule_duration: 0, samples: [] },
-        mttr: { count: 0, mean: null, p50: null, p90: null, max: null },
+        time_to_detect: { ...NONE, episodes_total: 0, from_first_reading: 0, from_rule_duration: 0, samples: [] },
+        time_to_acknowledge: tta({ ...NONE, episodes_total: 0, acknowledged_count: 0, unacknowledged_count: 0, samples: [] }),
+        time_to_disposition: ttdisp({ ...NONE, episodes_total: 0, dispositioned_count: 0, undispositioned_count: 0 }),
+        mttr: { ...NONE, episodes_total: 0, cleared_count: 0, open_count: 0 },
         projected_rft: { label: "Projected right-first-time", pct: null, parts_started: 0, parts_at_risk: 0, lots: 0 },
       }),
     );
@@ -172,6 +201,57 @@ describe("operations tiles and bins", () => {
     expect(byId.inspections.value).toBe("—");
     expect(byId.rft.value).toBe("—");
     expect(byId.mttr.foot).toBe("No excursion cleared yet");
+  });
+
+  it("shows TTA coverage: the median covers only the acknowledged excursions", () => {
+    const byId = Object.fromEntries(
+      opsTiles(ops({ episodes: 73, time_to_acknowledge: tta({ p50: 11, p90: 11, episodes_total: 73, acknowledged_count: 1, unacknowledged_count: 72 }) })).map((t) => [t.id, t]),
+    );
+    expect(byId.tta.value).toBe("11 s");
+    expect(byId.tta.foot).toBe("median over 1 of 73 acknowledged · p90 11 s · 72 not acknowledged");
+  });
+
+  it("shows an empty TTA, never 0 s, when nothing was acknowledged", () => {
+    const none = tta({ ...NONE, p50: 0, episodes_total: 73, acknowledged_count: 0, unacknowledged_count: 73, oldest_open_unacknowledged_age_s: 150, samples: [] });
+    const byId = Object.fromEntries(opsTiles(ops({ episodes: 73, time_to_acknowledge: none })).map((t) => [t.id, t]));
+    expect(byId.tta.value).toBe("—");
+    expect(byId.tta.foot).toBe("None of 73 excursions acknowledged · oldest open waiting 2.5 min");
+    expect(ackChart(ops({ episodes: 73, time_to_acknowledge: none }))).toEqual({
+      caption: "Alert open to the first acknowledgement or signed decision. 0 of 73 acknowledged.",
+      empty: "None of 73 excursions acknowledged yet.",
+    });
+  });
+
+  it("shows disposition and MTTR coverage", () => {
+    const byId = Object.fromEntries(
+      opsTiles(
+        ops({
+          episodes: 4,
+          time_to_disposition: ttdisp({ p50: 30, episodes_total: 4, dispositioned_count: 1, undispositioned_count: 3 }),
+          mttr: { count: 2, mean: 50, p50: 50, p90: 58, max: 60, episodes_total: 4, cleared_count: 2, open_count: 2 },
+        }),
+      ).map((t) => [t.id, t]),
+    );
+    expect(byId.ttdisp.value).toBe("30 s");
+    expect(byId.ttdisp.foot).toBe("median over 1 of 4 contained · 3 not contained · 1 in time · 1 with the lot gone before the alert");
+    expect(byId.mttr.foot).toBe("Mean over 2 of 4 cleared · 2 still open");
+    const none = opsTiles(
+      ops({ time_to_disposition: ttdisp({ ...NONE, mean: 0, p50: 0, dispositioned_count: 0, undispositioned_count: 2, oldest_open_undispositioned_age_s: 40 }) }),
+    ).find((t) => t.id === "ttdisp");
+    expect(none?.value).toBe("—");
+    expect(none?.foot).toBe("None of 2 excursions contained · oldest open waiting 40 s · 1 with the lot gone before the alert");
+  });
+
+  it("names the coverage in the acknowledge chart caption", () => {
+    expect(ackChart(ops())).toEqual({
+      caption: "Alert open to the first acknowledgement or signed decision. 1 of 2 acknowledged.",
+      empty: "None of 2 excursions acknowledged yet.",
+    });
+    const none = { ...NONE, episodes_total: 0, acknowledged_count: 0, unacknowledged_count: 0, oldest_open_unacknowledged_age_s: null, samples: [] };
+    expect(ackChart(ops({ episodes: 0, time_to_acknowledge: none }))).toEqual({
+      caption: "Alert open to the first acknowledgement or signed decision.",
+      empty: "No excursions in this window yet.",
+    });
   });
 
   it("bins durations on a nice step and keeps every sample", () => {

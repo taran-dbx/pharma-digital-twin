@@ -106,6 +106,49 @@ export function whatThisMeans(projection: Projection, actuals: Actuals, lines: n
   return `${yearly} ${windowLabel}: ${actuals.caught_in_time} of ${plural(actuals.excursion_events_detected, "excursion")} were contained before the lot moved, ${compactUsd(actuals.cost_avoided_to_date)} avoided.`;
 }
 
+/** The median, or "—" when no excursion was measured (never a zero-filled 0 s). */
+function measuredMedian(stats: { count: number; p50: number | null }): string {
+  return stats.count > 0 ? formatDuration(stats.p50) : EMPTY;
+}
+
+function waitingNote(ageS: number | null): string {
+  return ageS === null ? "" : ` · oldest open waiting ${formatDuration(ageS)}`;
+}
+
+/** "median over 1 of 73 acknowledged · p90 11 s · 72 not acknowledged" and its empty / none variants. */
+function ttaFoot(ops: OpsSummary): string {
+  const t = ops.time_to_acknowledge;
+  if (t.episodes_total === 0) return "No excursions yet";
+  if (t.count === 0) return `None of ${plural(t.episodes_total, "excursion")} acknowledged${waitingNote(t.oldest_open_unacknowledged_age_s)}`;
+  const missing = t.unacknowledged_count ? ` · ${t.unacknowledged_count} not acknowledged` : "";
+  return `median over ${t.acknowledged_count} of ${t.episodes_total} acknowledged · p90 ${formatDuration(t.p90)}${missing}`;
+}
+
+function ttdispFoot(ops: OpsSummary): string {
+  const d = ops.time_to_disposition;
+  const lotGone = ops.deadline_before_alert ? ` · ${ops.deadline_before_alert} with the lot gone before the alert` : "";
+  if (d.episodes_total === 0) return "No excursions yet";
+  if (d.count === 0) return `None of ${plural(d.episodes_total, "excursion")} contained${waitingNote(d.oldest_open_undispositioned_age_s)}${lotGone}`;
+  const missing = d.undispositioned_count ? ` · ${d.undispositioned_count} not contained` : "";
+  return `median over ${d.dispositioned_count} of ${d.episodes_total} contained${missing} · ${ops.caught_in_time} in time${lotGone}`;
+}
+
+function mttrFoot(ops: OpsSummary): string {
+  const m = ops.mttr;
+  if (m.count === 0) return m.open_count ? `No excursion cleared yet · ${m.open_count} still open` : "No excursion cleared yet";
+  return `Mean over ${m.cleared_count} of ${m.episodes_total} cleared${m.open_count ? ` · ${m.open_count} still open` : ""}`;
+}
+
+/** Caption and empty state for the time-to-acknowledge distribution. */
+export function ackChart(ops: OpsSummary): { caption: string; empty: string } {
+  const t = ops.time_to_acknowledge;
+  const base = "Alert open to the first acknowledgement or signed decision.";
+  return {
+    caption: t.episodes_total ? `${base} ${t.acknowledged_count} of ${t.episodes_total} acknowledged.` : base,
+    empty: t.episodes_total ? `None of ${plural(t.episodes_total, "excursion")} acknowledged yet.` : "No excursions in this window yet.",
+  };
+}
+
 /** Operations KPI row. */
 export function opsTiles(ops: OpsSummary): TileView[] {
   const ttd = ops.time_to_detect;
@@ -120,16 +163,14 @@ export function opsTiles(ops: OpsSummary): TileView[] {
     {
       id: "tta",
       label: "Time to acknowledge",
-      value: formatDuration(ops.time_to_acknowledge.p50),
-      foot: ops.time_to_acknowledge.count ? `median · p90 ${formatDuration(ops.time_to_acknowledge.p90)}` : "Nothing acknowledged yet",
+      value: measuredMedian(ops.time_to_acknowledge),
+      foot: ttaFoot(ops),
     },
     {
       id: "ttdisp",
       label: "Time to disposition",
-      value: formatDuration(ops.time_to_disposition.p50),
-      foot:
-        `median · ${ops.caught_in_time} of ${plural(ops.episodes, "excursion")} contained in time` +
-        (ops.deadline_before_alert ? ` · ${ops.deadline_before_alert} with the lot gone before the alert` : ""),
+      value: measuredMedian(ops.time_to_disposition),
+      foot: ttdispFoot(ops),
     },
     {
       id: "inspections",
@@ -146,8 +187,8 @@ export function opsTiles(ops: OpsSummary): TileView[] {
     {
       id: "mttr",
       label: "MTTR",
-      value: formatDuration(ops.mttr.mean),
-      foot: ops.mttr.count ? `Mean over ${plural(ops.mttr.count, "cleared excursion")}` : "No excursion cleared yet",
+      value: ops.mttr.count > 0 ? formatDuration(ops.mttr.mean) : EMPTY,
+      foot: mttrFoot(ops),
     },
   ];
 }

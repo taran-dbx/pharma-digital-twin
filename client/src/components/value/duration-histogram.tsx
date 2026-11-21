@@ -8,7 +8,18 @@ import { useState } from "react";
 
 import { binDurations, type DurationBin } from "@/lib/value-format";
 
-export function DurationHistogram({ title, samples, caption }: { title: string; samples: number[]; caption: string }) {
+export function DurationHistogram({
+  title,
+  samples,
+  caption,
+  emptyText = "No excursions in this window yet.",
+}: {
+  title: string;
+  samples: number[];
+  caption: string;
+  /** Shown instead of the chart when there are no samples. */
+  emptyText?: string;
+}) {
   const bins = binDurations(samples);
   const [active, setActive] = useState<number | null>(null);
   const [table, setTable] = useState(false);
@@ -25,7 +36,7 @@ export function DurationHistogram({ title, samples, caption }: { title: string; 
         )}
       </figcaption>
       {bins.length === 0 ? (
-        <p className="value-empty">No excursions in this window yet.</p>
+        <p className="value-empty">{emptyText}</p>
       ) : table ? (
         <BinTable bins={bins} title={title} />
       ) : (
