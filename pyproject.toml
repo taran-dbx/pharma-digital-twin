@@ -32,9 +32,9 @@ dependencies = [
 # Keep ruff in lockstep with .pre-commit-config.yaml.
 [project.optional-dependencies]
 dev = [
-    "pytest==9.1.1",
-    "pytest-asyncio==1.4.0",
-    "ruff==0.17.4",
+    "pytest==9.2.0",
+    "pytest-asyncio==1.5.0",
+    "ruff==0.17.6",
     "mypy==2.4.1",
     "pre-commit==4.7.0",
     # Executes ops/notebooks/pipeline_health_check.ipynb in sample mode (tests/test_pipeline_health_notebook.py).
